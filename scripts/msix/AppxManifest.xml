@@ -7,9 +7,10 @@
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
-  IgnorableNamespaces="uap rescap desktop">
+  IgnorableNamespaces="uap uap3 rescap desktop">
 
   <Identity
     Name="KaysutoKimiya.CloverLauncher"
@@ -49,12 +50,13 @@
         <desktop:Extension Category="windows.startupTask" Executable="clover-launcher.exe" EntryPoint="Windows.FullTrustApplication">
           <desktop:StartupTask TaskId="CloverLauncherStartup" Enabled="false" DisplayName="Clover Launcher" />
         </desktop:Extension>
-        <!-- Liens clover://play/<mode> (src-tauri/src/shortcut.rs) : le lien arrive en argument. -->
-        <uap:Extension Category="windows.protocol">
-          <uap:Protocol Name="clover" Parameters="&quot;%1&quot;">
+        <!-- Liens clover://play/<mode> (src-tauri/src/shortcut.rs) : le lien arrive en argument.
+             `Parameters` n'existe qu'à partir de uap3. -->
+        <uap3:Extension Category="windows.protocol">
+          <uap3:Protocol Name="clover" Parameters="&quot;%1&quot;">
             <uap:DisplayName>Clover Launcher</uap:DisplayName>
-          </uap:Protocol>
-        </uap:Extension>
+          </uap3:Protocol>
+        </uap3:Extension>
       </Extensions>
     </Application>
   </Applications>
