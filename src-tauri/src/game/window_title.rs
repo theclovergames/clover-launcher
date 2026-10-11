@@ -45,8 +45,8 @@ mod native {
         CREATE_NO_WINDOW, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, PostMessageW, SendMessageTimeoutW,
-        SMTO_ABORTIFHUNG, WM_CLOSE, WM_SETTEXT,
+        EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW,
+        SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_CLOSE, WM_SETTEXT,
     };
 
     const HELPER_ARG: &str = "--minecraft-window-title";
@@ -136,14 +136,19 @@ mod native {
         Ok(())
     }
 
-    /// Fenêtre GLFW (versions récentes) ou LWJGL 2 (1.8/1.12) du processus `pid`.
+    /// Fenêtre visible du processus `pid` : SDL (26.x), GLFW (1.13 à 1.21) ou LWJGL 2 (jusqu'à
+    /// 1.12). SDL ouvre aussi des fenêtres utilitaires cachées de la même classe, ignorées.
     fn is_game_window(window: HWND, pid: u32) -> bool {
         let mut owner = 0;
         unsafe { GetWindowThreadProcessId(window, &mut owner); }
-        if owner != pid { return false; }
+        if owner != pid || unsafe { IsWindowVisible(window) } == 0 { return false; }
         let mut class = [0u16; 32];
         let length = unsafe { GetClassNameW(window, class.as_mut_ptr(), class.len() as i32) };
-        length > 0 && matches!(String::from_utf16_lossy(&class[..length as usize]).as_str(), "GLFW30" | "LWJGL")
+        length > 0 && is_game_class(&String::from_utf16_lossy(&class[..length as usize]))
+    }
+
+    fn is_game_class(class: &str) -> bool {
+        matches!(class, "SDL_app" | "GLFW30" | "LWJGL")
     }
 
     struct CloseRequest {
@@ -185,6 +190,12 @@ mod native {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn recognises_the_window_of_every_minecraft_generation() {
+            assert!(["SDL_app", "GLFW30", "LWJGL"].into_iter().all(is_game_class));
+            assert!(!is_game_class("SunAwtFrame"));
+        }
 
         #[test]
         fn refuses_a_reused_pid_or_a_process_that_is_not_java() {

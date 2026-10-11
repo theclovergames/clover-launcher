@@ -3,7 +3,9 @@
 Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git du dépôt repart de la
 0.4.4 : ce fichier garde la trace de tout ce qui précède.
 
-## Pas encore publié
+## 0.4.5 (11 octobre 2026)
+
+### Nouveautés
 
 - Journaux : durée de conservation réglable dans Paramètres › Stockage (7, 14, 30, 90 jours ou
   toujours), appliquée au démarrage à toutes les instances, personnelles comprises. Chaque
@@ -25,6 +27,11 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
   sa page. Les mods publiés sur Modrinth seront téléchargés à l'import, les autres fichiers sont
   inclus dans l'archive. On choisit d'ajouter ou non les réglages des mods, les packs de
   ressources, les shaders et les réglages du jeu.
+
+### Corrections
+
+- La barre de titre du jeu affiche de nouveau « Minecraft <version> | Clover <version> » en 26.x,
+  dont la fenêtre n'est plus créée par GLFW mais par SDL.
 
 ## 0.4.4 (9 octobre 2026)
 
