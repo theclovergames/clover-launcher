@@ -3,7 +3,7 @@
 Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git du dépôt repart de la
 0.4.4 : ce fichier garde la trace de tout ce qui précède.
 
-## Pas encore publié
+## 0.4.7 (13 octobre 2026)
 
 ### Nouveautés
 
