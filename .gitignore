@@ -36,3 +36,6 @@ progress.md
 
 # Manifeste généré et signé par scripts/manifest.mjs
 /manifest/dist/
+
+# État local de wrangler (relais CurseForge)
+.wrangler/

@@ -1,8 +1,10 @@
 import { Download, ExternalLink, LoaderCircle, RotateCcw } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
+import { LoaderBadges, loaderLabel } from "@/components/LoaderBadges";
 import { ModIcon } from "@/components/ModIcon";
 import { secondaryButton } from "@/lib/buttons";
+import { minecraftRange } from "@/lib/game-versions";
 import { cn } from "@/lib/utils";
 import type { ModrinthKind, ModrinthProject } from "@/types";
 
@@ -74,6 +76,7 @@ export function ModPage({ project, name, icon, version, summary, notice, actions
               </span>
             )}
             {version && <span className="font-pixel text-[10px] text-muted-foreground/70">{version}</span>}
+            <LoaderBadges loaders={page?.loaders} />
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">{actions}</div>
@@ -171,6 +174,7 @@ function Gallery({ images }: { images: ModrinthProject["gallery"] }) {
 function Details({ page, version, kind, onOpenLink }: { page: ModrinthProject; version: string | null; kind: ModrinthKind; onOpenLink: (url: string) => void }) {
   // Licence maison (« LicenseRef-Polyform-Shield-1.0.0 ») : Modrinth ne donne pas de nom.
   const license = page.license && (page.license.name || page.license.id.replace(/^LicenseRef-/, "").replace(/-/g, " "));
+  const minecraft = minecraftRange(page.gameVersions ?? []);
   const links: [string, string | null][] = [
     page.pageUrl ? ["Page CurseForge", page.pageUrl] : ["Page Modrinth", `https://modrinth.com/${kind}/${page.slug}`],
     ["Code source", page.sourceUrl],
@@ -183,6 +187,8 @@ function Details({ page, version, kind, onOpenLink }: { page: ModrinthProject; v
     <aside className="flex flex-col gap-5">
       <dl className="flex flex-col gap-3 text-[13px]">
         {version && <Info label="Version installée">{version}</Info>}
+        {page.loaders && page.loaders.length > 0 && <Info label="Chargeurs">{page.loaders.map(loaderLabel).join(", ")}</Info>}
+        {minecraft && <Info label="Minecraft">{minecraft}</Info>}
         {license && <Info label="Licence">{license}</Info>}
         <Info label="Mis à jour">{day.format(new Date(page.updated))}</Info>
       </dl>

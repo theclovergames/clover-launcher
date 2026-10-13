@@ -37,5 +37,10 @@ test("le fil d'Ariane suit la page ouverte", () => {
   assert.equal(crumbs[2].to, undefined);
   const project = trail({ tab: "discover", kind: "shader", target: "x", project: { id: "bsl", title: "BSL Shaders", icon: null } }, names);
   assert.deepEqual(project.map((crumb) => crumb.label), ["Découvrir", "Shaders", "BSL Shaders"]);
-  assert.deepEqual(project[1].to, { tab: "discover", kind: "shader", target: "x", world: undefined });
+  assert.deepEqual(project[1].to, { tab: "discover", kind: "shader", target: "x", world: undefined, minecraft: undefined });
+});
+
+test("la version voulue pour un modpack reste en revenant à la liste", () => {
+  const pack: Route = { tab: "discover", kind: "modpack", minecraft: "1.20.1", project: { id: "p", title: "P", icon: null } };
+  assert.deepEqual(back([pack]), [{ tab: "discover", kind: "modpack", target: undefined, world: undefined, minecraft: "1.20.1" }]);
 });

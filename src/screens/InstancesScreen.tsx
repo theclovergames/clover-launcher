@@ -2,6 +2,7 @@ import { Check, FolderInput, FolderOpen, Globe, PackageOpen, PackageSearch, Pin,
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { GameButton } from "@/components/GameButton";
+import { InstanceArt } from "@/components/InstanceArt";
 import { type InstanceActions, InstanceMenu } from "@/components/InstanceMenu";
 import { RunningBadge } from "@/components/RunningBadge";
 import { SearchField } from "@/components/SearchField";
@@ -12,13 +13,13 @@ import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
 import { groupVersions, versionFamily } from "@/lib/game-versions";
-import { KINDS, instanceSummary } from "@/lib/instances";
+import { instanceSummary } from "@/lib/instances";
 import { cn } from "@/lib/utils";
 import { versionImage } from "@/lib/version-art";
-import { InstanceDetail, type InstanceSection } from "@/screens/InstanceDetail";
 import { type Confirmation, ConfirmDialog } from "@/screens/Dialogs";
-import type { AvailableVersion, ContentFolder, ExportParts, InstanceEntry, PlayState } from "@/types";
+import { InstanceDetail, type InstanceSection } from "@/screens/InstanceDetail";
 import type { ContentKind } from "@/lib/content-kinds";
+import type { AvailableVersion, ContentFolder, ExportParts, InstanceEntry, PlayState } from "@/types";
 
 type Props = {
   instances: InstanceEntry[];
@@ -260,7 +261,8 @@ type Actions = Props & {
 
 /**
  * Une carte illustrée par famille de versions. Un clic choisit la dernière instance jouée de la
- * famille, que la barre du bas lance ; une version sans instance ouvre sa création.
+ * famille, que la barre du bas lance ; une version sans instance ouvre sa création. Le « + » d'une
+ * carte qui a déjà ses instances en crée une autre de la même version.
  */
 function Simple({ instances, current, viewing, running, playFor, menu, onSelect, onCreate, services = api }: Actions) {
   const [versions, setVersions] = useState<AvailableVersion[]>([]);
@@ -283,7 +285,7 @@ function Simple({ instances, current, viewing, running, playFor, menu, onSelect,
   return (
     <>
       <p className="mt-4 text-sm text-muted-foreground">
-        {failed ? "Liste des versions indisponible : seules tes instances sont affichées." : "Choisis la version à lancer, ou crée une instance pour une autre version."}
+        {failed ? "Liste des versions indisponible : seules tes instances sont affichées." : "Choisis la version à lancer. Le « + » d'une carte crée une autre instance de cette version."}
       </p>
       <ul aria-label="Versions de Minecraft" className="mt-5 grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
         {families.map((family) => {
@@ -296,7 +298,7 @@ function Simple({ instances, current, viewing, running, playFor, menu, onSelect,
           const used = new Set(members.map((entry) => entry.minecraft));
           const shownVersions = [...family.versions].sort((a, b) => Number(used.has(b)) - Number(used.has(a))).slice(0, 2);
           const card = (
-            <li key={family.id}>
+            <li key={family.id} className="relative">
               <button
                 type="button"
                 aria-pressed={active}
@@ -325,11 +327,11 @@ function Simple({ instances, current, viewing, running, playFor, menu, onSelect,
                     <Check className="size-4" strokeWidth={3} aria-hidden />
                   </span>
                 )}
-                <span className="flex h-8 items-end justify-between gap-2 px-3.5">
+                <span className={cn("flex h-8 items-end justify-between gap-2 px-3.5", pick && "pr-12")}>
                   <span className="font-pixel text-lg leading-none">{family.id}</span>
                   {clover && <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">Serveur</span>}
                 </span>
-                <span className="truncate px-3.5 pt-1 pb-3.5 text-xs text-muted-foreground">
+                <span className={cn("truncate px-3.5 pt-1 pb-3.5 text-xs text-muted-foreground", pick && "pr-12")}>
                   {members.length > 0 ? (
                     members.length === 1 ? members[0].name : `${members.length} instances`
                   ) : (
@@ -340,6 +342,18 @@ function Simple({ instances, current, viewing, running, playFor, menu, onSelect,
                   )}
                 </span>
               </button>
+              {/* À côté de la carte, pas dedans : un bouton ne peut pas en contenir un autre. */}
+              {pick && (
+                <button
+                  type="button"
+                  onClick={() => onCreate(family.versions[0])}
+                  title={`Nouvelle instance en ${family.id}`}
+                  aria-label={`Nouvelle instance en ${family.id}`}
+                  className="absolute right-2.5 bottom-2.5 grid size-8 place-items-center rounded-md border border-border bg-sunken text-accent transition-colors hover:border-accent/60 hover:bg-card-hover"
+                >
+                  <Plus className="size-4" strokeWidth={2.5} aria-hidden />
+                </button>
+              )}
             </li>
           );
           // Clic droit : l'instance qu'un clic reprendrait.
@@ -364,7 +378,6 @@ function Simple({ instances, current, viewing, running, playFor, menu, onSelect,
 function LaunchBar({ instances, current, playFor, running, onSelect, onPlay, onStop, onEdit, onOpenSection, onOpenFolder }: Actions & { current: InstanceEntry }) {
   const play = playFor(current.id);
   const siblings = instances.filter((entry) => entry.minecraft && current.minecraft && versionFamily(entry.minecraft) === versionFamily(current.minecraft));
-  const { Icon } = KINDS[current.kind];
   const isRunning = running.includes(current.id);
   const shortcuts = [
     ...(current.kind === "vanilla" ? [] : [{ label: "Mods", Icon: Puzzle, onClick: () => onOpenSection(current, "mods") }]),
@@ -375,10 +388,7 @@ function LaunchBar({ instances, current, playFor, running, onSelect, onPlay, onS
   return (
     <aside aria-label="Instance choisie" className="@container flex shrink-0 items-center gap-4 border-t border-border bg-sunken px-10 py-4">
       <span key={`${current.id}-art`} className="relative shrink-0 motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-300">
-        <img src={versionImage(current.minecraft ?? "")} alt="" className="size-14 rounded-lg object-cover" />
-        <span className={cn("absolute -right-1.5 -bottom-1.5 grid size-6 place-items-center rounded-md border-2 border-sunken", current.kind === "clover" ? "bg-primary text-primary-foreground" : "bg-secondary")}>
-          <Icon className="size-3.5" strokeWidth={2.5} aria-hidden />
-        </span>
+        <InstanceArt entry={current} className="size-14 rounded-lg" badge="absolute -right-1.5 -bottom-1.5 size-6 rounded-md border-2 border-sunken" />
       </span>
       <div key={`${current.id}-info`} className="flex min-w-0 flex-col gap-1.5 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300">
         <span className="flex min-w-0 items-center gap-2.5">
@@ -451,7 +461,6 @@ function Expert({ instances, selected, playFor, running, menu, onOpen, onPlay, o
           const play = playFor(entry.id);
           // Pas de modification ni de suppression pendant le lancement ou la partie de l'instance.
           const locked = play.kind !== "ready";
-          const { Icon } = KINDS[entry.kind];
           return (
             <InstanceMenu key={entry.id} entry={entry} play={play} actions={menu}>
             <li className="relative flex items-center gap-4 px-4 py-3">
@@ -463,10 +472,7 @@ function Expert({ instances, selected, playFor, running, menu, onOpen, onPlay, o
                 className={cn("absolute inset-0 rounded-lg border bg-card transition-colors hover:bg-card-hover", active ? "border-primary" : "border-border")}
               />
               <span className="pointer-events-none relative shrink-0">
-                <img src={versionImage(entry.minecraft ?? "")} alt="" className="size-14 rounded-md object-cover" />
-                <span className={cn("absolute -right-1.5 -bottom-1.5 grid size-6 place-items-center rounded-md border-2 border-card", entry.kind === "clover" ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground")}>
-                  <Icon className="size-3.5" strokeWidth={2.5} aria-hidden />
-                </span>
+                <InstanceArt entry={entry} className="size-14 rounded-md" badge="absolute -right-1.5 -bottom-1.5 size-6 rounded-md border-2 border-card" />
               </span>
               <div className="pointer-events-none relative flex min-w-0 flex-1 flex-col gap-1">
                 <p className="flex items-center gap-2">

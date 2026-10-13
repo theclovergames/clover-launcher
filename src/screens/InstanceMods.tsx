@@ -32,6 +32,8 @@ type Props = Actions & {
   /** Mods ajoutés par le joueur ; `null` pendant leur lecture. */
   personal: PersonalMod[] | null;
   onAddFiles: (files: File[]) => void;
+  /** Met à jour d'un coup les mods qui ont une version à installer. */
+  onUpdateAll: () => Promise<void>;
   /** Ouvre Découvrir › Mods pour cette instance. */
   onAdd: () => void;
   onOpen: (mod: OpenMod) => void;
@@ -40,10 +42,13 @@ type Props = Actions & {
 /** Un mod du joueur ne peut être activé que s'il est fait pour le loader et la version de l'instance. */
 const usable = (mod: PersonalMod) => mod.status.kind === "ok";
 
+/** Une version à installer existe : celle pour la version de l'instance, ou une plus récente. */
+const hasUpdate = (mod: PersonalMod) => mod.status.kind === "update" || mod.newer !== null;
+
 function statusText(mod: PersonalMod, minecraftVersion: string) {
   switch (mod.status.kind) {
     case "ok":
-      return null;
+      return mod.newer && `Version ${mod.newer} disponible.`;
     case "update":
       return `Prévu pour Minecraft ${mod.status.builtFor}. Une version pour ${minecraftVersion} existe : ${mod.status.version}.`;
     case "outdated":
@@ -134,11 +139,13 @@ function Catalogue({ catalogue, minecraftVersion, onToggle, onOpen }: Props & { 
   );
 }
 
-function Personal({ personal, minecraftVersion, onTogglePersonal, onUpdatePersonal, onRemovePersonal, onAddFiles, onAdd, onOpen, onAsk, titled }: Props & { onAsk: (ask: Confirmation) => void; titled: boolean }) {
+function Personal({ personal, minecraftVersion, onTogglePersonal, onUpdatePersonal, onRemovePersonal, onAddFiles, onUpdateAll, onAdd, onOpen, onAsk, titled }: Props & { onAsk: (ask: Confirmation) => void; titled: boolean }) {
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const list = personal ?? [];
   const blocked = list.filter((mod) => !usable(mod)).length;
+  const updates = list.filter(hasUpdate).length;
 
   return (
     <section
@@ -165,6 +172,20 @@ function Personal({ personal, minecraftVersion, onTogglePersonal, onUpdatePerson
           </span>
         </h2>
         <div className="ml-auto flex gap-2">
+          {updates > 0 && (
+            <button
+              type="button"
+              disabled={updating}
+              onClick={() => {
+                setUpdating(true);
+                void onUpdateAll().finally(() => setUpdating(false));
+              }}
+              className={secondaryButton}
+            >
+              <RefreshCw className={cn("size-4", updating && "motion-safe:animate-spin")} aria-hidden />
+              {updating ? "Mise à jour…" : `Tout mettre à jour (${updates})`}
+            </button>
+          )}
           <button type="button" onClick={() => input.current?.click()} className={secondaryButton}>
             <FileUp className="size-4" aria-hidden />
             Ajouter un fichier .jar
@@ -213,11 +234,11 @@ function Personal({ personal, minecraftVersion, onTogglePersonal, onUpdatePerson
                     {mod.name}
                     {mod.version && <span className="truncate font-pixel text-[10px] font-normal text-muted-foreground/70">{mod.version}</span>}
                   </label>
-                  {text && <p className={cn("text-xs leading-snug", mod.status.kind === "update" ? "text-accent" : "text-error")}>{text}</p>}
+                  {text && <p className={cn("text-xs leading-snug", hasUpdate(mod) ? "text-accent" : "text-error")}>{text}</p>}
                   <p className="truncate text-[11px] text-muted-foreground">{mod.source ?? mod.filename}</p>
                 </div>
-                {mod.status.kind === "update" && (
-                  <button type="button" onClick={() => onUpdatePersonal(mod.id)} className={cn(secondaryButton, "relative")}>
+                {hasUpdate(mod) && (
+                  <button type="button" disabled={updating} onClick={() => onUpdatePersonal(mod.id)} className={cn(secondaryButton, "relative")}>
                     <RefreshCw className="size-4" aria-hidden />
                     Mettre à jour
                   </button>
@@ -291,10 +312,10 @@ export function ModDetail({
         name={mod.name}
         icon={mod.icon}
         version={mod.version}
-        notice={text && <Notice tone={mod.status.kind === "update" ? "accent" : "error"}>{text}</Notice>}
+        notice={text && <Notice tone={hasUpdate(mod) ? "accent" : "error"}>{text}</Notice>}
         actions={
           <>
-            {mod.status.kind === "update" && (
+            {hasUpdate(mod) && (
               <button type="button" onClick={() => onUpdatePersonal(mod.id)} className={secondaryButton}>
                 <RefreshCw className="size-4" aria-hidden />
                 Mettre à jour

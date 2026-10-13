@@ -16,7 +16,8 @@ type Props = {
 /**
  * Les modes qui ont une adresse directe dans le manifeste, en cartes : illustration du mode (son nom
  * y est lettré), joueurs connectés. Un mode sans illustration montre le trèfle du launcher et son
- * nom. Un clic lance le jeu connecté à ce mode. Un mode annoncé (« Bientôt ») est grisé, sans clic.
+ * nom. Derrière, la même image floutée teinte toute la carte aux couleurs du mode. Un clic lance le
+ * jeu connecté à ce mode. Un mode annoncé (« Bientôt ») est grisé, sans clic.
  */
 export function ModeGrid({ modes, onPlay, busy = false }: Props) {
   return (
@@ -35,12 +36,22 @@ export function ModeGrid({ modes, onPlay, busy = false }: Props) {
               onClick={() => onPlay(mode.id)}
               aria-label={soon ? `${mode.name}, bientôt` : `Jouer à ${mode.name}${status ? `, ${status}` : ""}`}
               className={cn(
-                "group @container flex h-full w-full flex-col items-stretch gap-1 rounded-lg border border-border bg-card px-1 pt-1 pb-1.5 text-left transition-colors",
-                "enabled:hover:border-[#e9e3d4]/50 enabled:hover:bg-[#262119] disabled:cursor-default",
+                "group @container relative flex h-full w-full flex-col items-stretch gap-1 overflow-hidden rounded-lg border border-border bg-card px-1 pt-1 pb-1.5 text-left transition-colors",
+                "enabled:hover:border-[#e9e3d4]/50 disabled:cursor-default",
                 "motion-safe:enabled:hover:[&_.mode-art]:-translate-y-0.5 motion-safe:enabled:hover:[&_.mode-art]:scale-[1.04]",
                 (offline || soon) && "opacity-60",
               )}
             >
+              <img
+                src={art ?? launcherLogo}
+                alt=""
+                aria-hidden
+                draggable={false}
+                className={cn(
+                  "pointer-events-none absolute inset-0 size-full scale-125 object-cover opacity-55 blur-2xl saturate-150 transition-opacity duration-300 group-enabled:group-hover:opacity-80",
+                  (offline || soon) && "grayscale",
+                )}
+              />
               {/* Carrée, mais plafonnée selon la hauteur de la fenêtre (160 px au plus) : en plein écran, la
                   carte s'élargit sans pousser le reste de l'accueil hors de la fenêtre. */}
               <span className="relative block aspect-square max-h-[clamp(96px,14vh,160px)] w-full">
@@ -61,14 +72,14 @@ export function ModeGrid({ modes, onPlay, busy = false }: Props) {
                 </span>
               </span>
               {soon ? (
-                <span className="text-center text-[11px] font-semibold whitespace-nowrap text-accent">Bientôt</span>
+                <span className="relative text-center text-[11px] font-semibold whitespace-nowrap text-accent">Bientôt</span>
               ) : mode.players === undefined ? null : offline ? (
-                <span className="flex items-center justify-center gap-1.5 text-[11px] whitespace-nowrap text-destructive">
+                <span className="relative flex items-center justify-center gap-1.5 text-[11px] whitespace-nowrap text-destructive">
                   <span aria-hidden className="hidden size-1.5 shrink-0 rounded-full bg-destructive @[5.5rem]:block" />
                   Hors ligne
                 </span>
               ) : (
-                <span className="flex items-center justify-center gap-1.5 text-[11px] whitespace-nowrap text-muted-foreground">
+                <span className="relative flex items-center justify-center gap-1.5 text-[11px] whitespace-nowrap text-foreground/80">
                   <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
                   <span className="font-pixel text-[11px] text-foreground">{mode.players}</span>
                   <span className="hidden @[6rem]:inline">en jeu</span>

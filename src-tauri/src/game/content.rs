@@ -12,6 +12,7 @@ use serde::Deserialize;
 
 use super::download::{download_all, Checksum, Download};
 use super::modrinth::{self, Kind};
+use super::personal::ModLoader;
 use super::{GameError, Result};
 
 /// Hôtes d'où un modpack peut faire télécharger ses fichiers (liste du format `.mrpack`).
@@ -35,7 +36,7 @@ fn primary_download(version: &modrinth::Version, path: PathBuf) -> Result<Downlo
 /// Télécharge la dernière version de `project` (pack de ressources, shader ou datapack) pour
 /// `minecraft` dans `dir` ; renvoie le nom du fichier.
 pub async fn install_archive(http: &reqwest::Client, dir: &Path, kind: Kind, project: &str, minecraft: &str) -> Result<String> {
-    let version = modrinth::compatible_version(http, project, kind.loader(), Some(minecraft)).await?.ok_or(GameError::NoUpdate)?;
+    let version = modrinth::compatible_version(http, project, &[kind.loader()], Some(minecraft)).await?.ok_or(GameError::NoUpdate)?;
     let file = version.primary_file().ok_or(GameError::NoUpdate)?;
     let filename = safe_archive(&file.filename).ok_or_else(|| GameError::InvalidVersion(format!("fichier inattendu « {} »", file.filename)))?.to_owned();
     std::fs::create_dir_all(dir)?;
@@ -146,20 +147,42 @@ struct Env {
 }
 
 impl Index {
-    /// Version de Minecraft et de Fabric demandées ; les autres loaders ne sont pas pris en charge.
-    pub fn versions(&self) -> Result<(String, String)> {
-        if let Some(other) = self.dependencies.keys().find(|key| !matches!(key.as_str(), "minecraft" | "fabric-loader")) {
-            return Err(GameError::InvalidVersion(format!("ce modpack demande « {other} », seul Fabric est pris en charge")));
-        }
+    /// Version de Minecraft, loader (Fabric, Quilt, Forge ou NeoForge) et version du loader demandés.
+    pub fn versions(&self) -> Result<(String, ModLoader, String)> {
         let minecraft = self.dependencies.get("minecraft").ok_or_else(|| GameError::InvalidVersion("modpack sans version de Minecraft".into()))?;
-        let fabric = self.dependencies.get("fabric-loader").ok_or_else(|| GameError::InvalidVersion("modpack sans Fabric".into()))?;
-        Ok((minecraft.clone(), fabric.clone()))
+        let mut loaders = self.dependencies.iter().filter(|(key, _)| key.as_str() != "minecraft").map(|(key, version)| {
+            let loader = match key.as_str() {
+                "fabric-loader" => ModLoader::Fabric,
+                "quilt-loader" => ModLoader::Quilt,
+                "forge" => ModLoader::Forge,
+                "neoforge" => ModLoader::NeoForge,
+                other => return Err(GameError::InvalidVersion(format!("ce modpack demande « {other} », que le launcher ne prend pas en charge"))),
+            };
+            // Certains packs écrivent la version de Forge précédée de celle du jeu (`1.20.1-47.2.0`).
+            Ok((loader, version.strip_prefix(&format!("{minecraft}-")).unwrap_or(version).to_owned()))
+        });
+        let (loader, version) = loaders.next().ok_or_else(|| GameError::InvalidVersion("modpack sans loader".into()))??;
+        if loaders.next().is_some() {
+            return Err(GameError::InvalidVersion("ce modpack demande plusieurs loaders à la fois".into()));
+        }
+        Ok((minecraft.clone(), loader, version))
     }
 }
 
-/// Télécharge le `.mrpack` de `project` dans `dir` et lit son index.
-pub async fn fetch_modpack(http: &reqwest::Client, project: &str, dir: &Path) -> Result<(PathBuf, Index)> {
-    let version = modrinth::compatible_version(http, project, Kind::Modpack.loader(), None).await?.ok_or(GameError::NoUpdate)?;
+/// Télécharge le `.mrpack` de `project` dans `dir` et lit son index : la version `version`
+/// (identifiant Modrinth) ou, sans elle, la dernière stable.
+pub async fn fetch_modpack(http: &reqwest::Client, project: &str, version: Option<&str>, dir: &Path) -> Result<(PathBuf, Index)> {
+    let version = match version {
+        Some(version) => modrinth::project_version(http, project, version).await?,
+        None => {
+            let mut versions = modrinth::modpack_versions(http, project).await?;
+            let stable = versions.iter().position(|version| version.version_type == "release").unwrap_or(0);
+            if versions.is_empty() {
+                return Err(GameError::NoUpdate);
+            }
+            versions.swap_remove(stable)
+        }
+    };
     std::fs::create_dir_all(dir)?;
     let archive = dir.join(format!("{project}.mrpack"));
     download_all(http, vec![primary_download(&version, archive.clone())?], &|_, _| {}).await?;
@@ -265,11 +288,16 @@ mod tests {
     }
 
     #[test]
-    fn only_fabric_modpacks_are_accepted() {
-        let index: Index = serde_json::from_str(r#"{"name":"P","files":[],"dependencies":{"minecraft":"1.21.1","fabric-loader":"0.16.0"}}"#).unwrap();
-        assert_eq!(index.versions().unwrap(), ("1.21.1".into(), "0.16.0".into()));
-        let forge: Index = serde_json::from_str(r#"{"name":"P","files":[],"dependencies":{"minecraft":"1.21.1","forge":"52"}}"#).unwrap();
-        assert!(forge.versions().is_err());
+    fn modpacks_on_every_supported_loader_are_accepted() {
+        let index = |dependencies: &str| -> Index { serde_json::from_str(&format!(r#"{{"name":"P","files":[],"dependencies":{dependencies}}}"#)).unwrap() };
+        assert_eq!(index(r#"{"minecraft":"1.21.1","fabric-loader":"0.16.0"}"#).versions().unwrap(), ("1.21.1".into(), ModLoader::Fabric, "0.16.0".into()));
+        assert_eq!(index(r#"{"minecraft":"1.20.1","forge":"47.2.0"}"#).versions().unwrap(), ("1.20.1".into(), ModLoader::Forge, "47.2.0".into()));
+        assert_eq!(index(r#"{"minecraft":"1.20.1","forge":"1.20.1-47.2.0"}"#).versions().unwrap().2, "47.2.0");
+        assert_eq!(index(r#"{"minecraft":"1.21.1","neoforge":"21.1.77"}"#).versions().unwrap(), ("1.21.1".into(), ModLoader::NeoForge, "21.1.77".into()));
+        assert_eq!(index(r#"{"minecraft":"1.21.1","quilt-loader":"0.26.0"}"#).versions().unwrap(), ("1.21.1".into(), ModLoader::Quilt, "0.26.0".into()));
+        assert!(index(r#"{"minecraft":"1.21.1","liteloader":"1"}"#).versions().is_err());
+        assert!(index(r#"{"minecraft":"1.21.1"}"#).versions().is_err());
+        assert!(index(r#"{"minecraft":"1.21.1","fabric-loader":"0.16.0","forge":"52"}"#).versions().is_err());
     }
 
     /// Réseau : un vrai modpack et un vrai pack de ressources, posés dans un dossier temporaire.
@@ -278,8 +306,8 @@ mod tests {
     async fn installs_a_real_modpack_and_resource_pack() {
         let http = super::super::download::client();
         let dir = std::env::temp_dir().join(format!("clover-content-{}", std::process::id()));
-        let (archive, index) = fetch_modpack(&http, "fabulously-optimized", &dir).await.unwrap();
-        let (minecraft, _) = index.versions().unwrap();
+        let (archive, index) = fetch_modpack(&http, "fabulously-optimized", None, &dir).await.unwrap();
+        let (minecraft, _, _) = index.versions().unwrap();
         install_modpack(&http, &archive, &index, &dir.join("game"), &dir.join("mods"), &|_, _| {}).await.unwrap();
         assert!(std::fs::read_dir(dir.join("mods")).unwrap().count() > 10);
         assert!(dir.join("game/config").is_dir());

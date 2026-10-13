@@ -8,7 +8,7 @@
 //! leur empreinte, sont activés par l'interface plutôt que copiés ; les autres mods Fabric sont
 //! copiés dans « Mes mods » de l'instance Clover, avec les réglages des mods (`config/`).
 //!
-//! Une installation Vanilla, Fabric, Forge ou NeoForge peut aussi devenir une nouvelle instance
+//! Une installation Vanilla, Fabric, Quilt, Forge ou NeoForge peut aussi devenir une nouvelle instance
 //! personnelle (`import_as_instance`) : même version, dossier séparé, tous les mods faits pour son
 //! loader copiés.
 
@@ -831,8 +831,9 @@ pub async fn detect_installations(app: AppHandle, state: State<'_, AppState>, de
         }
         personal.sort_by_key(|name| name.to_lowercase());
         other_mods.sort_by_key(|name| name.to_lowercase());
-        let mut loader_mods: Vec<String> =
-            mods.iter().filter(|file| file.loader.is_some() && file.loader == source.game.loader.as_deref()).map(|file| file.name.clone()).collect();
+        // Mods que le loader de l'installation charge : Quilt charge aussi ceux de Fabric.
+        let loads = |loader: &str| source.game.loader.as_deref().is_some_and(|own| own == loader || (own == "Quilt" && loader == "Fabric"));
+        let mut loader_mods: Vec<String> = mods.iter().filter(|file| file.loader.is_some_and(loads)).map(|file| file.name.clone()).collect();
         loader_mods.sort_by_key(|name| name.to_lowercase());
         let path = source.dir.to_string_lossy().into_owned();
         let catalogue = catalogue_mods.iter().map(|entry| entry.id.clone()).collect();
@@ -873,14 +874,15 @@ fn found(detected: &Detected, id: &str) -> Result<Found, String> {
 }
 
 /// Type d'instance Clover pour le loader d'une installation : l'import reprend Vanilla, Fabric,
-/// Forge et NeoForge.
+/// Quilt, Forge et NeoForge.
 fn instance_kind(loader: Option<&str>) -> Result<instances::Kind, String> {
     let Some(loader) = loader else { return Ok(instances::Kind::Vanilla) };
     match loader.to_ascii_lowercase().as_str() {
         "fabric" => Ok(instances::Kind::Fabric),
+        "quilt" => Ok(instances::Kind::Quilt),
         "forge" => Ok(instances::Kind::Forge),
         "neoforge" => Ok(instances::Kind::NeoForge),
-        _ => Err(format!("Instance {loader} : l'import reprend Vanilla, Fabric, Forge et NeoForge. Crée une instance à la main puis ajoute-y ses mods.")),
+        _ => Err(format!("Instance {loader} : l'import reprend Vanilla, Fabric, Quilt, Forge et NeoForge. Crée une instance à la main puis ajoute-y ses mods.")),
     }
 }
 
@@ -1084,7 +1086,8 @@ mod tests {
         assert_eq!(pick_loader(&versions, None).as_deref(), Some("47.4.0"));
         assert_eq!(pick_loader(&[], Some("47.2.0")), None);
         assert_eq!(instance_kind(Some("NeoForge")), Ok(instances::Kind::NeoForge));
-        assert!(instance_kind(Some("Quilt")).is_err());
+        assert_eq!(instance_kind(Some("Quilt")), Ok(instances::Kind::Quilt));
+        assert!(instance_kind(Some("LiteLoader")).is_err());
     }
 
     #[test]

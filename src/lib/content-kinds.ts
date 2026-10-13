@@ -67,6 +67,19 @@ const SORTS: [SearchSort, string][] = [
 ];
 
 /** Tris proposés : CurseForge (mondes) n'a ni pertinence ni abonnés, la popularité les remplace. */
+/**
+ * Chargeurs proposés à côté du tri, envoyés comme des catégories Modrinth : les modpacks, que le
+ * launcher installe sur Fabric, Quilt, Forge ou NeoForge. Les mods suivent le chargeur de l'instance visée.
+ */
+export const LOADER_FILTERS: Partial<Record<ContentKind, [string, string][]>> = {
+  modpack: [
+    ["fabric", "Fabric"],
+    ["quilt", "Quilt"],
+    ["forge", "Forge"],
+    ["neoforge", "NeoForge"],
+  ],
+};
+
 export const sortsFor = (kind: ContentKind): [SearchSort, string][] =>
   kind === "world" ? [["relevance", "Popularité"], ...SORTS.filter(([id]) => id !== "relevance" && id !== "follows")] : SORTS;
 

@@ -70,7 +70,7 @@
         "https://cdn.clovergames.fr/launcher/prod/latest.json"
       ],
       "windows": {
-        "installMode": "passive"
+        "installMode": "quiet"
       }
     }
   }

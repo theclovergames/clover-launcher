@@ -5,8 +5,7 @@
 # (`v0.4.0-beta.1`) : seuls les testeurs du canal bêta la reçoivent, sans paquet Microsoft Store.
 #
 # Secrets : TAURI_SIGNING_PRIVATE_KEY (Sécurités/clover-launcher-updater.key, sans mot de passe),
-# R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY (jeton limité au bucket clover-launcher),
-# CURSEFORGE_API_KEY (Sécurités/curseforge-api-key.txt, clé de console.curseforge.com).
+# R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY (jeton limité au bucket clover-launcher).
 name: Release
 
 on:
@@ -82,8 +81,6 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
-          # Lue à la compilation par le cœur Rust (import des modpacks CurseForge).
-          CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
 
       - run: node scripts/release.mjs collect src-tauri/target out
 

@@ -1,4 +1,4 @@
-import type { AvailableVersion } from "@/types";
+import type { AvailableVersion, ModpackVersion } from "@/types";
 
 /** Les numéros sont ceux de Mojang ; une famille réunit ses correctifs. */
 export function versionFamily(id: string): string {
@@ -14,6 +14,22 @@ export function opensWorldsDirectly(id: string): boolean {
   const snapshot = /^(\d{2})w(\d{2})/.exec(id);
   if (snapshot) return Number(snapshot[1]) * 100 + Number(snapshot[2]) >= 2314;
   return true;
+}
+
+/** Versions de Minecraft d'un projet, sans les snapshots : « 1.21.1 », « 1.20.1 à 1.21.4 » ; `null` sans aucune. */
+export function minecraftRange(versions: string[]): string | null {
+  const parts = (id: string) => id.split(".").map(Number);
+  const compare = (a: string, b: string) => {
+    const [x, y] = [parts(a), parts(b)];
+    for (let index = 0; index < Math.max(x.length, y.length); index++) {
+      if ((x[index] ?? 0) !== (y[index] ?? 0)) return (x[index] ?? 0) - (y[index] ?? 0);
+    }
+    return 0;
+  };
+  const releases = versions.filter((id) => /^\d+\.\d+(?:\.\d+)?$/.test(id)).sort(compare);
+  if (releases.length === 0) return null;
+  const [first, last] = [releases[0], releases[releases.length - 1]];
+  return first === last ? first : `${first} à ${last}`;
 }
 
 export type VersionFamily = {
@@ -47,4 +63,15 @@ export function groupVersions(
       ),
     }))
     .sort((a, b) => b.id.localeCompare(a.id, "en", { numeric: true }));
+}
+
+/**
+ * Version d'un modpack proposée d'office (`versions` de la plus récente à la plus ancienne) : la
+ * dernière stable pour `minecraft`, sinon la dernière pour lui même en bêta ; sans `minecraft`, ou
+ * s'il n'en a aucune, la dernière stable du pack.
+ */
+export function preferredModpackVersion(versions: ModpackVersion[], minecraft?: string | null): ModpackVersion | undefined {
+  const fitting = minecraft ? versions.filter((version) => version.gameVersions.includes(minecraft)) : [];
+  const pool = fitting.length > 0 ? fitting : versions;
+  return pool.find((version) => version.release) ?? pool[0];
 }

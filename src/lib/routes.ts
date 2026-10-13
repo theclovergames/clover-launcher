@@ -18,7 +18,8 @@ export type OpenProject = { id: string; title: string; icon: string | null };
 export type Route =
   | { tab: Exclude<Tab, "instances" | "discover"> }
   | { tab: "instances"; instance?: string; section?: InstanceSection; mod?: OpenMod }
-  | { tab: "discover"; kind: ContentKind; target?: string; world?: string; project?: OpenProject };
+  /** `minecraft` : version de la nouvelle instance voulue, qui filtre les modpacks. */
+  | { tab: "discover"; kind: ContentKind; target?: string; world?: string; minecraft?: string; project?: OpenProject };
 
 export const route = (tab: Tab): Route => (tab === "discover" ? { tab, kind: "mod" } : { tab } as Route);
 
@@ -28,7 +29,7 @@ export function parent(current: Route): Route | null {
     if (current.mod) return { tab: "instances", instance: current.instance, section: current.section };
     if (current.instance) return { tab: "instances" };
   }
-  if (current.tab === "discover" && current.project) return { tab: "discover", kind: current.kind, target: current.target, world: current.world };
+  if (current.tab === "discover" && current.project) return { tab: "discover", kind: current.kind, target: current.target, world: current.world, minecraft: current.minecraft };
   return null;
 }
 
@@ -64,7 +65,7 @@ export function trail(current: Route, names: Names): Crumb[] {
       if (current.mod) crumbs.push({ label: names.mod(current.mod) });
     }
   } else if (current.tab === "discover") {
-    const list: Route = { tab: "discover", kind: current.kind, target: current.target, world: current.world };
+    const list: Route = { tab: "discover", kind: current.kind, target: current.target, world: current.world, minecraft: current.minecraft };
     crumbs.push({ label: names.tab("discover"), to: list }, { label: names.kind(current.kind), to: list });
     if (current.project) crumbs.push({ label: current.project.title });
   } else {

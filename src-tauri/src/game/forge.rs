@@ -73,7 +73,7 @@ pub(crate) fn neoforge_minecraft(version: &str) -> Option<String> {
 }
 
 /// Numéros d'une version (`47.4.10`, `21.1.77-beta`), pour trier de la plus récente à la plus ancienne.
-fn numeric(version: &str) -> Vec<u64> {
+pub(crate) fn numeric(version: &str) -> Vec<u64> {
     version.split(['.', '-']).map_while(|part| part.parse().ok()).collect()
 }
 

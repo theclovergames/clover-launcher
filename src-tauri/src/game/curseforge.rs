@@ -2,9 +2,9 @@
 //! `manifest.json` (version de Minecraft, loader, fichiers du pack par identifiant CurseForge),
 //! `modlist.html` (nom et page de chacun de ces fichiers) et dossier de fichiers inclus (`overrides`).
 //!
-//! Avec la clé de l'API CurseForge, donnée à la compilation, les mods, packs de ressources et
-//! shaders listés se téléchargent depuis CurseForge, sauf ceux dont l'auteur l'interdit hors de son
-//! application. Ceux-là, et tous les fichiers sans clé ou si l'API est injoignable, sont cherchés sur
+//! Par le relais Clover de l'API CurseForge, les mods, packs de ressources et shaders listés se
+//! téléchargent depuis CurseForge, sauf ceux dont l'auteur l'interdit hors de son application.
+//! Ceux-là, et tous les fichiers si le relais est injoignable, sont cherchés sur
 //! Modrinth sous le même identifiant de page (slug), à condition que le nom concorde, dans leur
 //! version compatible ; les autres sont rendus au joueur avec leur page CurseForge, à ajouter à la main.
 //!
@@ -20,12 +20,12 @@ use serde::{Deserialize, Serialize};
 
 use super::download::{download_all, Checksum, Download};
 use super::modrinth::{self, Kind};
+use super::personal::ModLoader;
 use super::{GameError, Result};
 
-/// Clé de l'API CurseForge, lue à la compilation dans la variable d'environnement
-/// `CURSEFORGE_API_KEY` (secret de la CI) : jamais dans le dépôt.
-const API_KEY: Option<&str> = option_env!("CURSEFORGE_API_KEY");
-const API: &str = "https://api.curseforge.com/v1";
+/// Relais de l'API CurseForge (`relay/`, Worker Cloudflare) : il y ajoute la clé, qui reste dans
+/// ses secrets et que le launcher n'embarque pas.
+const API: &str = "https://curseforge.clovergames.fr/v1";
 const TIMEOUT: Duration = Duration::from_secs(20);
 /// Seuls hôtes acceptés pour les fichiers donnés par l'API.
 const FILE_HOSTS: [&str; 2] = ["edge.forgecdn.net", "mediafilez.forgecdn.net"];
@@ -76,13 +76,18 @@ fn required() -> bool {
 }
 
 impl Manifest {
-    /// Version de Minecraft et de Fabric demandées ; les autres loaders ne sont pas pris en charge.
-    pub fn versions(&self) -> Result<(String, String)> {
+    /// Version de Minecraft, loader (Fabric, Quilt, Forge ou NeoForge) et version du loader demandés.
+    pub fn versions(&self) -> Result<(String, ModLoader, String)> {
         let loader = self.minecraft.mod_loaders.iter().find(|loader| loader.primary).or(self.minecraft.mod_loaders.first());
         let Some(loader) = loader else { return Err(GameError::InvalidVersion("modpack sans loader".into())) };
+        let minecraft = self.minecraft.version.clone();
         match loader.id.split_once('-') {
-            Some(("fabric", version)) if !version.is_empty() => Ok((self.minecraft.version.clone(), version.to_owned())),
-            Some((other, _)) => Err(GameError::InvalidVersion(format!("ce modpack demande {}, seul Fabric est pris en charge", loader_name(other)))),
+            Some((_, "")) => Err(GameError::InvalidVersion(format!("loader sans version « {} »", loader.id))),
+            Some(("fabric", version)) => Ok((minecraft, ModLoader::Fabric, version.to_owned())),
+            Some(("quilt", version)) => Ok((minecraft, ModLoader::Quilt, version.to_owned())),
+            Some(("forge", version)) => Ok((minecraft, ModLoader::Forge, version.to_owned())),
+            Some(("neoforge", version)) => Ok((minecraft, ModLoader::NeoForge, version.to_owned())),
+            Some((other, _)) => Err(GameError::InvalidVersion(format!("ce modpack demande {}, que le launcher ne prend pas en charge", loader_name(other)))),
             None => Err(GameError::InvalidVersion(format!("loader inconnu « {} »", loader.id))),
         }
     }
@@ -181,23 +186,21 @@ pub fn read(archive: &Path) -> Result<Option<(Manifest, Vec<Entry>)>> {
 
 /// Installe les fichiers obligatoires du pack (mods dans `mods`, packs de ressources et shaders dans
 /// le dossier de jeu `game`) : depuis CurseForge quand c'est possible, sinon depuis Modrinth, d'après
-/// les entrées de `modlist.html` sans clé de l'API. Renvoie ceux à ajouter à la main.
-pub async fn install(http: &reqwest::Client, manifest: &Manifest, entries: &[Entry], minecraft: &str, game: &Path, mods: &Path, on_progress: &(dyn Fn(usize, usize) + Sync)) -> Result<Vec<Entry>> {
-    let resolved = match API_KEY.filter(|key| !key.is_empty()) {
-        Some(key) => match resolve(http, key, manifest, game, mods).await {
-            Ok(resolved) => Some(resolved),
-            Err(error) => {
-                eprintln!("[curseforge] API injoignable, repli sur Modrinth : {error}");
-                None
-            }
-        },
-        None => None,
+/// les entrées de `modlist.html` si le relais ne répond pas, pour `loader`. Renvoie ceux à ajouter à la main.
+#[allow(clippy::too_many_arguments)]
+pub async fn install(http: &reqwest::Client, manifest: &Manifest, entries: &[Entry], minecraft: &str, loader: ModLoader, game: &Path, mods: &Path, on_progress: &(dyn Fn(usize, usize) + Sync)) -> Result<Vec<Entry>> {
+    let resolved = match resolve(http, manifest, game, mods).await {
+        Ok(resolved) => Some(resolved),
+        Err(error) => {
+            eprintln!("[curseforge] API injoignable, repli sur Modrinth : {error}");
+            None
+        }
     };
     let (downloads, entries) = resolved.unwrap_or_else(|| (Vec::new(), entries.to_vec()));
     let total = downloads.len() + entries.len();
     download_all(http, downloads, &|done, _| on_progress(done, total)).await?;
     let offset = total - entries.len();
-    from_modrinth(http, &entries, minecraft, game, mods, &|done, _| on_progress(offset + done, total)).await
+    from_modrinth(http, &entries, minecraft, loader, game, mods, &|done, _| on_progress(offset + done, total)).await
 }
 
 #[derive(Deserialize)]
@@ -245,14 +248,14 @@ struct Links {
     website_url: String,
 }
 
-async fn post<T: DeserializeOwned>(http: &reqwest::Client, key: &str, path: &str, body: serde_json::Value) -> Result<Vec<T>> {
-    let response = http.post(format!("{API}/{path}")).header("x-api-key", key).json(&body).timeout(TIMEOUT).send().await?.error_for_status()?;
+async fn post<T: DeserializeOwned>(http: &reqwest::Client, path: &str, body: serde_json::Value) -> Result<Vec<T>> {
+    let response = http.post(format!("{API}/{path}")).json(&body).timeout(TIMEOUT).send().await?.error_for_status()?;
     Ok(response.json::<Data<T>>().await?.data)
 }
 
-async fn get<T: DeserializeOwned>(http: &reqwest::Client, key: &str, path: &str, params: &[(&str, String)]) -> Result<T> {
+async fn get<T: DeserializeOwned>(http: &reqwest::Client, path: &str, params: &[(&str, String)]) -> Result<T> {
     let url = url::Url::parse_with_params(&format!("{API}/{path}"), params).map_err(|e| GameError::InvalidVersion(e.to_string()))?;
-    let response = http.get(url).header("x-api-key", key).timeout(TIMEOUT).send().await?.error_for_status()?;
+    let response = http.get(url).timeout(TIMEOUT).send().await?.error_for_status()?;
     Ok(response.json().await?)
 }
 
@@ -262,11 +265,6 @@ const WORLDS: u32 = 17;
 const PAGE: u32 = 20;
 /// CurseForge refuse une recherche dont `index + pageSize` dépasse 10 000.
 const MAX_INDEX: u32 = 10_000;
-
-/// Clé de l'API, sans laquelle les mondes ne se cherchent pas.
-fn key() -> Result<&'static str> {
-    API_KEY.filter(|key| !key.is_empty()).ok_or_else(|| GameError::Refused("La recherche de mondes n'est pas disponible dans cette version du launcher.".into()))
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -358,6 +356,7 @@ fn hit(listing: Listing, minecraft: &str) -> modrinth::Hit {
         external: (!listing.distributable()).then(|| listing.links.website_url.clone()),
         downloads: listing.download_count as u64,
         size,
+        loaders: Vec::new(),
         provided_by_clover: false,
         slug: listing.slug,
         title: listing.name,
@@ -367,7 +366,6 @@ fn hit(listing: Listing, minecraft: &str) -> modrinth::Hit {
 
 /// Mondes pour `minecraft`. Les catégories CurseForge sont des nombres (248 : Aventure…).
 pub async fn search_worlds(http: &reqwest::Client, query: &str, minecraft: &str, filters: &modrinth::Filters, offset: u32) -> Result<modrinth::SearchPage> {
-    let key = key()?;
     if offset + PAGE > MAX_INDEX {
         return Ok(modrinth::SearchPage { hits: Vec::new(), total_hits: u64::from(offset) });
     }
@@ -385,7 +383,7 @@ pub async fn search_worlds(http: &reqwest::Client, query: &str, minecraft: &str,
     if !categories.is_empty() {
         params.push(("categoryIds", serde_json::to_string(&categories)?));
     }
-    let result: SearchResult = get(http, key, "mods/search", &params).await?;
+    let result: SearchResult = get(http, "mods/search", &params).await?;
     let total_hits = result.pagination.total_count.min(u64::from(MAX_INDEX));
     Ok(modrinth::SearchPage { hits: result.data.into_iter().map(|listing| hit(listing, minecraft)).collect(), total_hits })
 }
@@ -396,10 +394,9 @@ fn world_id(project: &str) -> Result<u64> {
 
 /// Page d'un monde, sous la forme des pages Modrinth : description nettoyée, captures en galerie.
 pub async fn world_page(http: &reqwest::Client, project: &str) -> Result<modrinth::Project> {
-    let key = key()?;
     let id = world_id(project)?;
-    let listing: Listing = get::<Single<Listing>>(http, key, &format!("mods/{id}"), &[]).await?.data;
-    let description: String = get::<Single<String>>(http, key, &format!("mods/{id}/description"), &[]).await.map(|page| page.data).unwrap_or_default();
+    let listing: Listing = get::<Single<Listing>>(http, &format!("mods/{id}"), &[]).await?.data;
+    let description: String = get::<Single<String>>(http, &format!("mods/{id}/description"), &[]).await.map(|page| page.data).unwrap_or_default();
     let mut page: modrinth::Project = serde_json::from_value(serde_json::json!({
         "id": project,
         "slug": listing.slug,
@@ -433,9 +430,8 @@ struct Single<T> {
 /// Télécharge l'archive du dernier fichier de `project` pour `minecraft` (le plus récent sinon) dans
 /// `dir`, vérifiée par son SHA-1 ; renvoie son chemin et le nom du monde.
 pub async fn download_world(http: &reqwest::Client, project: &str, minecraft: &str, dir: &Path, on_bytes: &(dyn Fn(u64, u64) + Sync)) -> Result<(std::path::PathBuf, String)> {
-    let key = key()?;
     let id = world_id(project)?;
-    let listing: Listing = get::<Single<Listing>>(http, key, &format!("mods/{id}"), &[]).await?.data;
+    let listing: Listing = get::<Single<Listing>>(http, &format!("mods/{id}"), &[]).await?.data;
     if !listing.distributable() {
         return Err(GameError::Refused("L'auteur de ce monde ne permet de le télécharger que sur CurseForge.".into()));
     }
@@ -444,9 +440,9 @@ pub async fn download_world(http: &reqwest::Client, project: &str, minecraft: &s
         params.extend(version.map(|version| ("gameVersion", version.to_owned())));
         params
     };
-    let mut files: Vec<File> = get::<Data<File>>(http, key, &format!("mods/{id}/files"), &params(Some(minecraft))).await?.data;
+    let mut files: Vec<File> = get::<Data<File>>(http, &format!("mods/{id}/files"), &params(Some(minecraft))).await?.data;
     if files.is_empty() {
-        files = get::<Data<File>>(http, key, &format!("mods/{id}/files"), &params(None)).await?.data;
+        files = get::<Data<File>>(http, &format!("mods/{id}/files"), &params(None)).await?.data;
     }
     files.sort_by(|a, b| b.file_date.cmp(&a.file_date));
     let file = files.iter().find(|file| file.download_url.as_deref().is_some_and(allowed) && file.hashes.iter().any(|hash| hash.algo == 1));
@@ -471,15 +467,15 @@ fn allowed(url: &str) -> bool {
 
 /// Fichiers obligatoires du pack d'après l'API : téléchargements depuis CurseForge, et entrées des
 /// autres, pour Modrinth puis pour le joueur.
-async fn resolve(http: &reqwest::Client, key: &str, manifest: &Manifest, game: &Path, mods: &Path) -> Result<(Vec<Download>, Vec<Entry>)> {
+async fn resolve(http: &reqwest::Client, manifest: &Manifest, game: &Path, mods: &Path) -> Result<(Vec<Download>, Vec<Entry>)> {
     let wanted: Vec<&PackFile> = manifest.files.iter().filter(|file| file.required).collect();
     if wanted.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
     let file_ids: Vec<u64> = wanted.iter().map(|file| file.file_id).collect();
     let project_ids: Vec<u64> = wanted.iter().map(|file| file.project_id).collect();
-    let files: HashMap<u64, File> = post::<File>(http, key, "mods/files", serde_json::json!({ "fileIds": file_ids })).await?.into_iter().map(|file| (file.id, file)).collect();
-    let projects: HashMap<u64, Project> = post::<Project>(http, key, "mods", serde_json::json!({ "modIds": project_ids })).await?.into_iter().map(|project| (project.id, project)).collect();
+    let files: HashMap<u64, File> = post::<File>(http, "mods/files", serde_json::json!({ "fileIds": file_ids })).await?.into_iter().map(|file| (file.id, file)).collect();
+    let projects: HashMap<u64, Project> = post::<Project>(http, "mods", serde_json::json!({ "modIds": project_ids })).await?.into_iter().map(|project| (project.id, project)).collect();
     let (mut downloads, mut entries) = (Vec::new(), Vec::new());
     for wanted in wanted {
         let project = projects.get(&wanted.project_id);
@@ -509,7 +505,7 @@ fn download(file: &File, project: &Project, game: &Path, mods: &Path) -> Option<
 }
 
 /// Installe depuis Modrinth les entrées qui s'y trouvent ; renvoie celles à ajouter à la main.
-async fn from_modrinth(http: &reqwest::Client, entries: &[Entry], minecraft: &str, game: &Path, mods: &Path, on_progress: &(dyn Fn(usize, usize) + Sync)) -> Result<Vec<Entry>> {
+async fn from_modrinth(http: &reqwest::Client, entries: &[Entry], minecraft: &str, loader: ModLoader, game: &Path, mods: &Path, on_progress: &(dyn Fn(usize, usize) + Sync)) -> Result<Vec<Entry>> {
     let slugs: Vec<String> = entries.iter().filter_map(|entry| entry.target().map(|(_, slug)| slug.to_owned())).collect();
     let titles: HashMap<String, String> = if slugs.is_empty() {
         HashMap::new()
@@ -521,7 +517,7 @@ async fn from_modrinth(http: &reqwest::Client, entries: &[Entry], minecraft: &st
         on_progress(done, entries.len());
         let found = entry.target().filter(|(_, slug)| titles.get(*slug).is_some_and(|title| same_project(&entry.name, title)));
         let installed = match found {
-            Some((Kind::Mod, slug)) => super::personal::install(http, mods, slug, minecraft, super::personal::ModLoader::Fabric, &[]).await.map(drop),
+            Some((Kind::Mod, slug)) => super::personal::install(http, mods, slug, minecraft, loader, &[]).await.map(drop),
             Some((kind, slug)) => {
                 let folder = if kind == Kind::Shader { "shaderpacks" } else { "resourcepacks" };
                 super::content::install_archive(http, &game.join(folder), kind, slug, minecraft).await.map(drop)
@@ -567,14 +563,17 @@ mod tests {
     }
 
     #[test]
-    fn accepts_fabric_packs_only() {
+    fn accepts_packs_on_every_supported_loader() {
         let pack = |loader: &str| -> Manifest {
             serde_json::from_str(&format!(r#"{{"name":"P","minecraft":{{"version":"1.20.4","modLoaders":[{{"id":"{loader}","primary":true}}]}},"files":[{{"projectID":306612,"fileID":1,"required":true}}]}}"#)).unwrap()
         };
-        assert_eq!(pack("fabric-0.19.5").versions().unwrap(), ("1.20.4".into(), "0.19.5".into()));
+        assert_eq!(pack("fabric-0.19.5").versions().unwrap(), ("1.20.4".into(), ModLoader::Fabric, "0.19.5".into()));
         assert_eq!(pack("fabric-0.19.5").overrides, "overrides");
-        assert!(pack("forge-47.2.0").versions().unwrap_err().to_string().contains("Forge"));
-        assert!(pack("neoforge-21.1.77").versions().unwrap_err().to_string().contains("NeoForge"));
+        assert_eq!(pack("forge-47.2.0").versions().unwrap(), ("1.20.4".into(), ModLoader::Forge, "47.2.0".into()));
+        assert_eq!(pack("neoforge-21.1.77").versions().unwrap(), ("1.20.4".into(), ModLoader::NeoForge, "21.1.77".into()));
+        assert_eq!(pack("quilt-0.26.0").versions().unwrap(), ("1.20.4".into(), ModLoader::Quilt, "0.26.0".into()));
+        assert!(pack("liteloader-1").versions().is_err());
+        assert!(pack("forge-").versions().is_err());
         assert_eq!(pack("fabric-0.19.5").pages(), [Entry { name: "Projet CurseForge n° 306612".into(), url: "https://www.curseforge.com/projects/306612".into() }]);
     }
 
@@ -605,8 +604,8 @@ mod tests {
         assert!(download(&file("x/a.jar", cdn), &project(6), game, mods).is_none());
     }
 
-    /// Réseau, avec `CURSEFORGE_API_KEY` à la compilation : recherche, page et installation d'un
-    /// petit monde (« one block to the sky », 250 Ko).
+    /// Réseau, par le relais : recherche, page et installation d'un petit monde (« one block to
+    /// the sky », 250 Ko).
     #[tokio::test]
     #[ignore = "réseau"]
     async fn finds_and_installs_a_world() {
@@ -614,7 +613,7 @@ mod tests {
         let page = search_worlds(&http, "one block to the sky", "1.21.1", &modrinth::Filters::default(), 0).await.unwrap();
         let hit = page.hits.iter().find(|hit| hit.project_id == "1423310").expect("monde trouvé");
         assert!(hit.external.is_none() && hit.size.is_some());
-        let adventure = modrinth::Filters { sort: modrinth::Sort::Downloads, categories: vec!["248".into()] };
+        let adventure = modrinth::Filters { sort: modrinth::Sort::Downloads, categories: vec!["248".into()], version: None };
         assert!(search_worlds(&http, "", "1.21.1", &adventure, 0).await.unwrap().total_hits > 0);
         let project = world_page(&http, "1423310").await.unwrap();
         assert!(project.page_url.as_deref().is_some_and(|url| url.starts_with("https://www.curseforge.com/")));
@@ -648,13 +647,12 @@ mod tests {
         zip.finish().unwrap();
 
         let (manifest, entries) = read(&archive).unwrap().unwrap();
-        let (minecraft, _) = manifest.versions().unwrap();
+        let (minecraft, loader, _) = manifest.versions().unwrap();
         let (game, mods) = (dir.join("game"), dir.join("mods"));
         super::super::content::copy_overrides(&archive, &[&manifest.overrides], &game, &mods).unwrap();
-        let missing = install(&super::super::download::client(), &manifest, &entries, &minecraft, &game, &mods, &|_, _| {}).await.unwrap();
-        // Avec la clé, seuls les fichiers du manifeste comptent : `modlist.html` est ignoré.
-        let expected: &[&str] = if API_KEY.is_some_and(|key| !key.is_empty()) { &[] } else { &["Introuvable"] };
-        assert_eq!(missing.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(), expected);
+        let missing = install(&super::super::download::client(), &manifest, &entries, &minecraft, loader, &game, &mods, &|_, _| {}).await.unwrap();
+        // Par le relais, seuls les fichiers du manifeste comptent : `modlist.html` est ignoré.
+        assert!(missing.is_empty(), "{:?}", missing.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>());
         assert!(mods.join("Arcanis.jar").is_file());
         assert!(game.join("config/arcanis.json").is_file());
         let jars: Vec<String> = std::fs::read_dir(&mods).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect();

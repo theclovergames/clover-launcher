@@ -1,16 +1,18 @@
-import { ArrowLeftRight, Check, Plus, Settings2, TriangleAlert } from "lucide-react";
+import { ArrowLeftRight, Check, ChevronRight, Plus, Settings2, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 
+import { InstanceArt } from "@/components/InstanceArt";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { KINDS, forClover, instanceSummary } from "@/lib/instances";
+import { forClover, instanceSummary } from "@/lib/instances";
 import { cn } from "@/lib/utils";
-import { versionImage } from "@/lib/version-art";
 import type { InstanceEntry } from "@/types";
 
 type Props = {
   instances: InstanceEntry[];
   selected: string;
   onSelect: (id: string) => void;
+  /** Ouvre la page de l'instance, sans la choisir. */
+  onOpen: (id: string) => void;
   onCreate: () => void;
   onManage: () => void;
   /** Ouvert d'office (planche des maquettes). */
@@ -20,9 +22,9 @@ type Props = {
 /**
  * Choix de l'instance, petite dalle à droite du bouton « Jouer » (l'instance lancée est écrite
  * dessous). Seule une instance Clover rejoint le serveur ; les autres ouvrent le menu du jeu et
- * le disent.
+ * le disent. La flèche d'une ligne ouvre la page de son instance.
  */
-export function VersionPicker({ instances, selected, onSelect, onCreate, onManage, defaultOpen }: Props) {
+export function VersionPicker({ instances, selected, onSelect, onOpen, onCreate, onManage, defaultOpen }: Props) {
   const [open, setOpen] = useState(defaultOpen ?? false);
   const current = instances.find((entry) => entry.id === selected) ?? instances[0];
   const close = (action: () => void) => () => {
@@ -59,25 +61,33 @@ export function VersionPicker({ instances, selected, onSelect, onCreate, onManag
         <ul role="radiogroup" aria-label="Instance" className="max-h-[280px] overflow-y-auto p-1.5">
           {instances.map((entry) => {
             const active = entry.id === current?.id;
-            const { Icon } = KINDS[entry.kind];
             return (
-              <li key={entry.id}>
+              <li key={entry.id} className={cn("flex items-center rounded-md transition-colors hover:bg-secondary", active && "bg-[#221e18]")}>
                 <button
                   type="button"
                   role="radio"
                   aria-checked={active}
                   onClick={close(() => onSelect(entry.id))}
-                  className={cn("flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-secondary", active && "bg-[#221e18]")}
+                  className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-2.5 py-2 text-left"
                 >
                   <span className="relative shrink-0">
-                    <img src={versionImage(entry.minecraft ?? "")} alt="" className="size-9 rounded object-cover" />
-                    <Icon className={cn("absolute -right-1 -bottom-1 size-4 rounded-sm border border-card p-0.5", entry.kind === "clover" ? "bg-primary text-primary-foreground" : "bg-secondary")} aria-hidden />
+                    <InstanceArt entry={entry} className="size-9 rounded" badge="absolute -right-1 -bottom-1 size-4 rounded-sm border border-card" icon="size-3" />
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="truncate text-[13px] font-semibold">{entry.name}</span>
                     <span className="truncate font-pixel text-[11px] text-muted-foreground">{instanceSummary(entry)}</span>
                   </span>
                   {active && <Check className="size-4 shrink-0 text-primary" strokeWidth={3} aria-hidden />}
+                </button>
+                {/* À côté de la ligne, pas dedans : un bouton ne peut pas en contenir un autre. */}
+                <button
+                  type="button"
+                  onClick={close(() => onOpen(entry.id))}
+                  title="Ouvrir l'instance"
+                  aria-label={`Ouvrir l'instance ${entry.name}`}
+                  className="mr-1.5 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-card-hover hover:text-foreground"
+                >
+                  <ChevronRight className="size-4" aria-hidden />
                 </button>
               </li>
             );

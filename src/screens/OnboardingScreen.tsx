@@ -448,11 +448,11 @@ function ImportSearch({ scan }: { scan: ImportScan }) {
 }
 
 /** Loaders des instances Clover : une installation sous un autre (Quilt) n'en devient pas une. */
-const INSTANCE_LOADERS = ["Fabric", "Forge", "NeoForge"];
+const INSTANCE_LOADERS = ["Fabric", "Quilt", "Forge", "NeoForge"];
 
 /** Pourquoi une installation ne peut pas devenir une instance Clover, sinon `null`. */
 function unsupported(instance: DetectedInstance): string | null {
-  if (instance.loader && !INSTANCE_LOADERS.includes(instance.loader)) return `Instance ${instance.loader} : l'import reprend Vanilla, Fabric, Forge et NeoForge. Crée une instance à la main puis ajoute-y ses mods.`;
+  if (instance.loader && !INSTANCE_LOADERS.includes(instance.loader)) return `Instance ${instance.loader} : l'import reprend Vanilla, Fabric, Quilt, Forge et NeoForge. Crée une instance à la main puis ajoute-y ses mods.`;
   if (!instance.minecraft) return "Version de Minecraft inconnue : crée l'instance à la main, puis importe ses réglages.";
   return null;
 }

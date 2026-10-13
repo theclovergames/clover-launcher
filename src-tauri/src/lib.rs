@@ -15,6 +15,7 @@ mod presence;
 mod shortcut;
 mod site;
 mod skins;
+mod splash;
 mod status;
 mod steam;
 mod storage;
@@ -454,6 +455,16 @@ async fn install_update(app: AppHandle, pending: State<'_, update::PendingUpdate
     update::install(&app, &pending).await.inspect_err(|e| eprintln!("[update] {e}"))
 }
 
+#[tauri::command]
+fn app_ready(splash: State<'_, splash::Splash>) {
+    splash.ready();
+}
+
+#[tauri::command]
+fn splash_status(splash: State<'_, splash::Splash>) -> splash::Status {
+    splash.status()
+}
+
 #[derive(Serialize)]
 struct SkinLists {
     library: Vec<skins::SkinEntry>,
@@ -585,10 +596,10 @@ async fn search_modrinth(
     let http = game::download::client();
     if kind != game::modrinth::Kind::Mod {
         let (_, _, minecraft) = instances::game_context(&app, &state.snapshot(), instance.as_deref()).await?;
-        return game::modrinth::search(&http, kind, &query, &minecraft, "fabric", &filters, offset).await;
+        return game::modrinth::search(&http, kind, &query, &minecraft, &[], &filters, offset).await;
     }
     let context = instances::mod_context(&app, &state.snapshot(), instance.as_deref()).await?;
-    let mut page = game::modrinth::search(&http, kind, &query, &context.minecraft, context.loader.modrinth(), &filters, offset).await?;
+    let mut page = game::modrinth::search(&http, kind, &query, &context.minecraft, context.loader.modrinth_loaders(), &filters, offset).await?;
     if let Some(manifest) = &context.manifest { page.mark_provided(&manifest.mods_to_install(&context.enabled)); }
     Ok(page)
 }
@@ -604,7 +615,7 @@ async fn install_modrinth_content(kind: game::modrinth::Kind, project: String, w
     let dir = match kind {
         Kind::Resourcepack => paths.game.join("resourcepacks"),
         Kind::Shader if instance.kind == instances::Kind::Vanilla => {
-            return Err(game::GameError::InvalidVersion("les shaders demandent Iris : choisis une instance Clover, Fabric, Forge ou NeoForge".into()));
+            return Err(game::GameError::InvalidVersion("les shaders demandent Iris : choisis une instance Clover, Fabric, Quilt, Forge ou NeoForge".into()));
         }
         Kind::Shader => paths.game.join("shaderpacks"),
         Kind::Datapack => {
@@ -729,20 +740,27 @@ async fn install_personal_dependencies(files: Vec<String>, instance: Option<Stri
     game::personal::install_dependencies(&game::download::client(), &context.paths.personal_mods, &files, &context.minecraft, context.loader, &context.provided()).await
 }
 
-/// Remplace un mod du joueur par sa version pour Minecraft du serveur, trouvée sur Modrinth.
+/// Remplace les mods du joueur qui ont une version à installer depuis Modrinth (seulement `id` s'il
+/// est donné) : celle pour la version de l'instance, ou une plus récente. Renvoie leur nombre.
 #[tauri::command]
-async fn update_personal_mod(id: String, instance: Option<String>, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+async fn update_personal_mods(id: Option<String>, instance: Option<String>, app: AppHandle, state: State<'_, AppState>) -> Result<usize, String> {
     let snapshot = state.snapshot();
     let instance = instances::resolve(&snapshot, instance.as_deref()).map_err(|e| e.to_string())?;
     let context = instances::mod_context(&app, &snapshot, Some(&instance.id)).await.map_err(|e| e.to_string())?;
     let http = game::download::client();
-    let new = game::personal::update(&http, &context.paths.personal_mods, &id, &context.minecraft, context.loader).await.map_err(|e| e.to_string())?;
+    let updated = game::personal::update(&http, &context.paths.personal_mods, id.as_deref(), &context.minecraft, context.loader).await.map_err(|e| e.to_string())?;
+    if id.is_some() && updated.is_empty() {
+        return Err(game::GameError::NoUpdate.to_string());
+    }
     // Le nouveau fichier garde l'état activé ou désactivé de l'ancien.
     state.update(|stored| {
         if let Some(disabled) = instances::disabled_mut(stored, &instance.id) {
-            for name in disabled.iter_mut().filter(|name| **name == id) { name.clone_from(&new); }
+            for name in disabled.iter_mut() {
+                if let Some((_, new)) = updated.iter().find(|(old, _)| old == name) { name.clone_from(new); }
+            }
         }
-    })
+    })?;
+    Ok(updated.len())
 }
 
 /// Applique un skin (et une cape) au compte actif ; seul appel à l'API de skins de Mojang.
@@ -971,7 +989,7 @@ pub fn run() {
         // fenêtre reste cachée au démarrage avec l'ordinateur.
         .plugin(
             tauri_plugin_window_state::Builder::new()
-                .with_denylist(&["tray-menu"])
+                .with_denylist(&["tray-menu", "splash"])
                 .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
                 .build(),
         )
@@ -982,6 +1000,7 @@ pub fn run() {
         .manage(Presence::default())
         .manage(notifications::SiteTokens::default())
         .manage(update::PendingUpdate::default())
+        .manage(splash::Splash::default())
         .setup(|app| {
             // Liens `clover://` : sous macOS, ils arrivent par le plugin et non en argument. Sous
             // Windows et Linux, l'installeur déclare le schéma ; l'AppImage (et le développement
@@ -1117,7 +1136,14 @@ pub fn run() {
                 });
                 let at_login = std::env::args().any(|arg| arg == MINIMIZED_ARG) || msix::started_by_startup_task();
                 if !at_login {
-                    window.show()?;
+                    // Fenêtre de chargement d'abord : la principale la remplace une fois l'interface prête.
+                    match splash::open(app.handle(), "Recherche de mises à jour…") {
+                        Ok(()) => drop(tauri::async_runtime::spawn(splash::startup(app.handle().clone()))),
+                        Err(error) => {
+                            eprintln!("[chargement] {error}");
+                            window.show()?;
+                        }
+                    }
                 } else if !tray_supported() {
                     // Sans icône, une fenêtre cachée serait introuvable : réduite dans la barre.
                     window.show()?;
@@ -1204,7 +1230,7 @@ pub fn run() {
             add_personal_mod,
             remove_personal_mod,
             set_personal_mod_enabled,
-            update_personal_mod,
+            update_personal_mods,
             install_personal_dependencies,
             search_modrinth,
             modrinth_project,
@@ -1215,6 +1241,7 @@ pub fn run() {
             play,
             instances::list_instances,
             instances::install_modpack,
+            instances::modpack_versions,
             instances::import_modpack_file,
             install_modrinth_content,
             instances::instance_content,
@@ -1247,6 +1274,8 @@ pub fn run() {
             import::import_installation,
             check_update,
             install_update,
+            app_ready,
+            splash_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

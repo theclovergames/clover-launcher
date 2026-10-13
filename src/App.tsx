@@ -181,7 +181,7 @@ export default function App() {
   const [launching, setLaunching] = useState<{ instance: string; progress?: Progress } | null>(null);
   const [launchError, setLaunchError] = useState<{ instance: string; message: string } | null>(null);
   const [running, setRunning] = useState<string[]>([]);
-  /** Parties de toutes les instances, pour « Ta semaine » de l'accueil. */
+  /** Parties de toutes les instances, pour l'activité de la page Profil. */
   const [sessions, setSessions] = useState<PlaySession[] | null>(null);
   const [closing, setClosing] = useState<Record<string, "asked" | "slow">>({});
   const closingRef = useRef(closing);
@@ -254,6 +254,12 @@ export default function App() {
     api.getCatalogue().then(setCatalogue).catch((reason) => setNotice(String(reason)));
     api.listSkins().then(setSkins).catch(() => {});
   }, []);
+
+  // Premier écran prêt (session comprise) : la fenêtre de chargement laisse la place.
+  const loaded = phase !== "loading" && Boolean(stored);
+  useEffect(() => {
+    if (loaded) api.appReady().catch(() => {});
+  }, [loaded]);
 
   // ── Fenêtre sans cadre : état agrandi ──
   useEffect(() => {
@@ -819,9 +825,10 @@ export default function App() {
       minecraftVersion={entry.minecraft ?? catalogue?.minecraft.version ?? ""}
       onToggle={toggleMod}
       onTogglePersonal={(id, enabled) => togglePersonalMod(entry.id, id, enabled)}
-      onUpdatePersonal={(id) => changePersonalMod(entry.id, api.updatePersonalMod(id, entry.id))}
+      onUpdatePersonal={(id) => changePersonalMod(entry.id, api.updatePersonalMods(id, entry.id))}
       onRemovePersonal={(id) => changePersonalMod(entry.id, api.removePersonalMod(id, entry.id))}
       onAddFiles={(files) => void addPersonalMods(entry.id, files)}
+      onUpdateAll={() => changePersonalMod(entry.id, api.updatePersonalMods(null, entry.id))}
       onAdd={() => push({ tab: "discover", kind: "mod", target: entry.id })}
       onOpen={(mod) => push({ tab: "instances", instance: entry.id, section: "mods", mod })}
     />
@@ -887,7 +894,7 @@ export default function App() {
    * Installe dans `instance`, choisie dans la recherche : pas forcément celle choisie dans le
    * launcher. Un monde renvoie le nom de son dossier, pour y jouer aussitôt.
    */
-  const installFromModrinth = async (kind: ContentKind, project: string, instance: string, world?: string): Promise<string | void> => {
+  const installFromModrinth = async (kind: ContentKind, project: string, instance: string, world?: string, version?: string): Promise<string | void> => {
     const target = instances.find((entry) => entry.id === instance);
     if (kind === "world") {
       setWorldProgress(null);
@@ -905,7 +912,7 @@ export default function App() {
     } else if (kind === "modpack") {
       setModpackProgress(null);
       try {
-        await api.installModpack(project);
+        await api.installModpack(project, version);
       } finally {
         setModpackProgress(null);
       }
@@ -933,7 +940,7 @@ export default function App() {
     setInstanceDraft(null);
   };
 
-  const changePersonalMod = (instance: string, action: Promise<void>) =>
+  const changePersonalMod = (instance: string, action: Promise<unknown>) =>
     action.then(() => refreshPersonalMods(instance)).catch((reason) => setNotice(String(reason)));
 
   // Serveurs Clover Games exclus : l'adresse du serveur, celles des modes et leurs sous-domaines.
@@ -1259,6 +1266,7 @@ export default function App() {
               instances={instances}
               selectedInstance={selectedInstance}
               onSelectInstance={(id) => selectInstance(id).catch((reason) => setNotice(String(reason)))}
+              onOpenInstance={(id) => push({ tab: "instances", instance: id })}
               onCreateInstance={() => { setInstanceDraft(newInstance()); push(route("instances")); }}
               onManageInstances={() => push(route("instances"))}
               server={server && { online: server.online, players: networkPlayers(feed, catalogue?.modes ?? []) }}
@@ -1278,7 +1286,6 @@ export default function App() {
               maintenance={feed.maintenance === true}
               onOpenLink={open}
               onOpenNews={() => push(route("news"))}
-              sessions={sessions}
               onReadNews={(item) =>
                 item.slug ? setReading({ source: "clover", slug: item.slug, title: item.title, category: item.category ?? null, publishedAt: item.publishedAt, url: item.url }) : open(item.url)
               }
@@ -1297,7 +1304,7 @@ export default function App() {
                 minecraftVersion={instances.find((entry) => entry.id === current.instance)?.minecraft ?? catalogue?.minecraft.version ?? ""}
                 onToggle={toggleMod}
                 onTogglePersonal={(id, enabled) => togglePersonalMod(current.instance ?? selectedInstance, id, enabled)}
-                onUpdatePersonal={(id) => changePersonalMod(current.instance ?? selectedInstance, api.updatePersonalMod(id, current.instance))}
+                onUpdatePersonal={(id) => changePersonalMod(current.instance ?? selectedInstance, api.updatePersonalMods(id, current.instance))}
                 onRemovePersonal={(id) => changePersonalMod(current.instance ?? selectedInstance, api.removePersonalMod(id, current.instance))}
                 onRemoved={goBack}
                 load={api.modrinthProject}
@@ -1372,7 +1379,7 @@ export default function App() {
                   .catch((reason) => setNotice(String(reason)))
               }
             />
-            {instanceDraft && <InstancePanel draft={instanceDraft} onClose={() => setInstanceDraft(null)} onSave={saveInstance} existing={{ instances, selected: selectedInstance, onSelect: (id) => selectInstance(id).catch((reason) => setNotice(String(reason))) }} serverVersion={serverVersion} onImportModpack={() => { setInstanceDraft(null); openDiscover("modpack"); }} />}
+            {instanceDraft && <InstancePanel draft={instanceDraft} onClose={() => setInstanceDraft(null)} onSave={saveInstance} existing={{ instances, selected: selectedInstance, onSelect: (id) => selectInstance(id).catch((reason) => setNotice(String(reason))) }} serverVersion={serverVersion} onImportModpack={(minecraft) => { setInstanceDraft(null); push({ tab: "discover", kind: "modpack", minecraft: minecraft ?? undefined }); }} />}
             </div>
           )}
 
@@ -1386,6 +1393,7 @@ export default function App() {
               installed={installedProjects}
               search={searchContent}
               onInstall={installFromModrinth}
+              modpackVersions={api.modpackVersions}
               worlds={worlds}
               progress={{ modpack: modpackProgress ?? undefined, world: worldProgress ?? undefined }}
               onImportFile={importModpackFile}

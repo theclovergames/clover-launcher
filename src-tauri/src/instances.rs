@@ -18,6 +18,7 @@ pub enum Kind {
     Clover,
     Vanilla,
     Fabric,
+    Quilt,
     Forge,
     NeoForge,
 }
@@ -27,16 +28,18 @@ impl Kind {
     pub fn mod_loader(self) -> Option<ModLoader> {
         match self {
             Kind::Clover | Kind::Fabric => Some(ModLoader::Fabric),
+            Kind::Quilt => Some(ModLoader::Quilt),
             Kind::Forge => Some(ModLoader::Forge),
             Kind::NeoForge => Some(ModLoader::NeoForge),
             Kind::Vanilla => None,
         }
     }
 
-    /// Nom affiché du loader choisi à la création de l'instance (Fabric, Forge, NeoForge).
+    /// Nom affiché du loader choisi à la création de l'instance (Fabric, Quilt, Forge, NeoForge).
     fn loader_label(self) -> Option<&'static str> {
         match self {
             Kind::Fabric => Some("Fabric"),
+            Kind::Quilt => Some("Quilt"),
             Kind::Forge => Some("Forge"),
             Kind::NeoForge => Some("NeoForge"),
             Kind::Clover | Kind::Vanilla => None,
@@ -68,6 +71,10 @@ pub struct Instance {
     /// Épinglée en haut de la liste des instances.
     #[serde(default)]
     pub pinned: bool,
+    /// Projet Modrinth du modpack dont l'instance a été créée, pour prévenir avant d'en créer une
+    /// seconde ; absent pour un pack importé depuis un fichier.
+    #[serde(default)]
+    pub modpack: Option<String>,
 }
 
 impl Instance {
@@ -86,6 +93,7 @@ impl Instance {
             enabled_mods: None,
             last_played: None,
             pinned: false,
+            modpack: None,
         }
     }
 
@@ -308,11 +316,52 @@ pub async fn loaders(root: &std::path::Path, minecraft: &str) -> game::Result<Ve
     }
 }
 
+#[derive(Deserialize)]
+struct QuiltEntry {
+    loader: QuiltLoader,
+}
+#[derive(Deserialize)]
+struct QuiltLoader {
+    version: String,
+}
+
+/// Versions de Quilt Loader pour `minecraft`, de la plus récente à la plus ancienne ; les bêtas
+/// seulement s'il n'existe aucune version stable. Gardées sur le disque : la liste reste
+/// disponible hors ligne.
+pub async fn quilt_loaders(root: &std::path::Path, minecraft: &str) -> game::Result<Vec<String>> {
+    validate_version_id(minecraft)?;
+    let cache = root.join("versions").join(format!("quilt-loaders-{minecraft}.json"));
+    let response = async {
+        let entries: Vec<QuiltEntry> = game::download::client()
+            .get(format!("https://meta.quiltmc.org/v3/versions/loader/{minecraft}"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let mut versions: Vec<String> = entries.into_iter().map(|entry| entry.loader.version).filter(|id| validate_version_id(id).is_ok()).collect();
+        versions.sort_by_key(|version| std::cmp::Reverse((game::forge::numeric(version), !version.contains('-'))));
+        versions.dedup();
+        let stable: Vec<String> = versions.iter().filter(|version| !version.contains('-')).cloned().collect();
+        Ok::<_, GameError>(if stable.is_empty() { versions } else { stable })
+    }
+    .await;
+    match response {
+        Ok(loaders) => {
+            std::fs::create_dir_all(cache.parent().expect("versions"))?;
+            std::fs::write(cache, serde_json::to_vec(&loaders)?)?;
+            Ok(loaders)
+        }
+        Err(error) => std::fs::read(cache).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).ok_or(error),
+    }
+}
+
 /// Versions du loader de `kind` pour `minecraft`, celle à proposer d'abord (Fabric : stables).
 pub async fn kind_loaders(root: &std::path::Path, kind: Kind, minecraft: &str) -> game::Result<Vec<String>> {
     use game::forge::{versions, Flavor};
     match kind {
         Kind::Fabric => loaders(root, minecraft).await,
+        Kind::Quilt => quilt_loaders(root, minecraft).await,
         Kind::Forge => versions(&game::download::client(), root, Flavor::Forge, minecraft).await,
         Kind::NeoForge => versions(&game::download::client(), root, Flavor::NeoForge, minecraft).await,
         Kind::Clover | Kind::Vanilla => Ok(Vec::new()),
@@ -1002,20 +1051,53 @@ pub async fn game_context(app: &AppHandle, stored: &crate::store::Stored, id: Op
     Ok((instance, paths, minecraft))
 }
 
-/// Crée une instance Fabric séparée à partir d'un modpack Modrinth et la choisit ; renvoie son
-/// identifiant. En cas d'échec, rien ne reste : ni l'instance, ni ses fichiers.
+/// Versions d'un modpack Modrinth que le launcher sait installer (Fabric, Quilt, Forge, NeoForge), de la
+/// plus récente à la plus ancienne. Mêmes noms que le type `ModpackVersion` du front.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModpackVersion {
+    id: String,
+    name: String,
+    number: String,
+    loaders: Vec<String>,
+    game_versions: Vec<String>,
+    release: bool,
+    published: String,
+}
+
 #[tauri::command]
-pub async fn install_modpack(project: String, app: AppHandle, state: State<'_, AppState>) -> game::Result<String> {
+pub async fn modpack_versions(project: String) -> game::Result<Vec<ModpackVersion>> {
+    let versions = game::modrinth::modpack_versions(&game::download::client(), &project).await?;
+    Ok(versions
+        .into_iter()
+        .map(|version| ModpackVersion {
+            id: version.id,
+            name: version.name,
+            number: version.version_number,
+            loaders: version.loaders,
+            game_versions: version.game_versions,
+            release: version.version_type == "release",
+            published: version.date_published,
+        })
+        .collect())
+}
+
+/// Crée une instance séparée (Fabric, Quilt, Forge ou NeoForge, comme le pack) à partir d'un modpack
+/// Modrinth et la choisit ; renvoie son identifiant. `version` : identifiant de la version du pack
+/// choisie, la dernière stable sans elle. En cas d'échec, rien ne reste : ni l'instance, ni ses
+/// fichiers.
+#[tauri::command]
+pub async fn install_modpack(project: String, version: Option<String>, app: AppHandle, state: State<'_, AppState>) -> game::Result<String> {
     let http = game::download::client();
     let base = Paths::new(&app)?;
     let staging = base.root.join("downloads").join("modpacks");
-    let (archive, index) = game::content::fetch_modpack(&http, &project, &staging).await?;
+    let (archive, index) = game::content::fetch_modpack(&http, &project, version.as_deref(), &staging).await?;
     let progress = |done, total| {
         let _ = app.emit("modpack-progress", (done, total));
     };
     let (http, archive_ref, index_ref, progress_ref) = (&http, &archive, &index, &progress);
     let result = match index.versions() {
-        Ok(versions) => modpack_instance(&state, base, &index.name, versions, |paths| async move {
+        Ok(versions) => modpack_instance(&state, base, &index.name, Some(project), versions, |paths| async move {
             game::content::install_modpack(http, archive_ref, index_ref, &paths.game, &paths.personal_mods, progress_ref).await
         })
         .await,
@@ -1054,7 +1136,7 @@ pub async fn import_modpack_file(app: AppHandle, state: State<'_, AppState>) -> 
 
     if let Some(index) = game::content::read_index(archive)? {
         let index = &index;
-        let (instance, ()) = modpack_instance(&state, Paths::new(&app)?, &index.name, index.versions()?, |paths| async move {
+        let (instance, ()) = modpack_instance(&state, Paths::new(&app)?, &index.name, None, index.versions()?, |paths| async move {
             game::content::install_modpack(http, archive, index, &paths.game, &paths.personal_mods, progress).await
         })
         .await?;
@@ -1062,16 +1144,16 @@ pub async fn import_modpack_file(app: AppHandle, state: State<'_, AppState>) -> 
     }
 
     let (manifest, entries) = game::curseforge::read(archive)?.ok_or_else(|| GameError::InvalidVersion("ce fichier n'est ni un modpack Modrinth ni un modpack CurseForge".into()))?;
-    let (minecraft, loader) = manifest.versions()?;
+    let (minecraft, mod_loader, loader) = manifest.versions()?;
     // Un export sans nom prend celui du fichier.
     let name = match manifest.name.trim() {
         "" => archive.file_stem().map_or_else(|| "Modpack".to_owned(), |stem| stem.to_string_lossy().into_owned()),
         name => name.to_owned(),
     };
     let (manifest, entries, version) = (&manifest, &entries, minecraft.as_str());
-    let (instance, missing) = modpack_instance(&state, Paths::new(&app)?, &name, (minecraft.clone(), loader), |paths| async move {
+    let (instance, missing) = modpack_instance(&state, Paths::new(&app)?, &name, None, (minecraft.clone(), mod_loader, loader), |paths| async move {
         game::content::copy_overrides(archive, &[manifest.overrides.as_str()], &paths.game, &paths.personal_mods)?;
-        game::curseforge::install(http, manifest, entries, version,&paths.game, &paths.personal_mods, progress).await
+        game::curseforge::install(http, manifest, entries, version, mod_loader, &paths.game, &paths.personal_mods, progress).await
     })
     .await?;
     Ok(Some(ImportedModpack { instance, missing }))
@@ -1091,6 +1173,7 @@ pub async fn export_modpack(id: String, parts: game::export::Parts, app: AppHand
     };
     let key = match instance.kind {
         Kind::Fabric => Some("fabric-loader"),
+        Kind::Quilt => Some("quilt-loader"),
         Kind::Forge => Some("forge"),
         Kind::NeoForge => Some("neoforge"),
         Kind::Clover | Kind::Vanilla => None,
@@ -1109,22 +1192,30 @@ pub async fn export_modpack(id: String, parts: game::export::Parts, app: AppHand
     game::export::export(&game::download::client(), pack, parts, out).await.map(Some)
 }
 
-/// Instance Fabric séparée créée pour un modpack, remplie par `fill`, puis choisie ; renvoie son
-/// identifiant et ce que rend `fill`. En cas d'échec, rien ne reste : ni l'instance, ni ses fichiers.
-async fn modpack_instance<T, F, Fut>(state: &AppState, base: Paths, name: &str, (minecraft, loader): (String, String), fill: F) -> game::Result<(String, T)>
+/// Instance séparée créée pour un modpack (`modpack` : son projet Modrinth), sur son loader,
+/// remplie par `fill`, puis choisie ; renvoie son identifiant et ce que rend `fill`. En cas
+/// d'échec, rien ne reste : ni l'instance, ni ses fichiers.
+async fn modpack_instance<T, F, Fut>(state: &AppState, base: Paths, name: &str, modpack: Option<String>, (minecraft, mod_loader, loader): (String, ModLoader, String), fill: F) -> game::Result<(String, T)>
 where
     F: FnOnce(Paths) -> Fut,
     Fut: std::future::Future<Output = game::Result<T>>,
 {
-    let mut input = InstanceInput { name: name.chars().take(64).collect(), kind: Kind::Fabric, minecraft: Some(minecraft), loader: Some(loader), separate: true, memory_mb: None };
+    let kind = match mod_loader {
+        ModLoader::Fabric => Kind::Fabric,
+        ModLoader::Quilt => Kind::Quilt,
+        ModLoader::Forge => Kind::Forge,
+        ModLoader::NeoForge => Kind::NeoForge,
+    };
+    let mut input = InstanceInput { name: name.chars().take(64).collect(), kind, minecraft: Some(minecraft), loader: Some(loader), separate: true, memory_mb: None };
     validate_input(&state.root, &mut input).await?;
     let instance = Instance {
         id: format!("instance-{:032x}", rand::random::<u128>()),
         name: input.name,
-        kind: Kind::Fabric,
+        kind,
         minecraft: input.minecraft,
         loader: input.loader,
         separate: true,
+        modpack,
         ..Instance::builtin()
     };
     let paths = paths(base, &instance)?;
@@ -1181,7 +1272,7 @@ pub async fn mod_context(
     let paths = paths(Paths::new(app)?, &instance)?;
     let Some(loader) = instance.kind.mod_loader() else {
         return Err(GameError::InvalidVersion(
-            "Vanilla ne charge pas de mods : choisis une instance Clover, Fabric, Forge ou NeoForge".into(),
+            "Vanilla ne charge pas de mods : choisis une instance Clover, Fabric, Quilt, Forge ou NeoForge".into(),
         ));
     };
     let manifest = if instance.kind == Kind::Clover {
@@ -1257,6 +1348,7 @@ pub async fn play_personal(
     };
     let loader = match instance.kind {
         Kind::Fabric => Some(Loader::Fabric(version()?)),
+        Kind::Quilt => Some(Loader::Quilt(version()?)),
         Kind::Forge => Some(Loader::Forge(version()?)),
         Kind::NeoForge => Some(Loader::NeoForge(version()?)),
         Kind::Clover | Kind::Vanilla => None,

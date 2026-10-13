@@ -36,6 +36,9 @@ pub struct PersonalMod {
     pub project_id: Option<String>,
     pub enabled: bool,
     pub status: Status,
+    /// Version plus récente publiée sur Modrinth pour la version et le loader de l'instance, pour un
+    /// mod qui se charge déjà.
+    pub newer: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -53,23 +56,26 @@ pub enum Status {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModLoader {
     Fabric,
+    Quilt,
     Forge,
     NeoForge,
 }
 
 impl ModLoader {
-    /// Nom du loader sur Modrinth.
-    pub fn modrinth(self) -> &'static str {
+    /// Loaders Modrinth dont les mods tournent sur celui-ci : Quilt charge aussi ceux de Fabric.
+    pub fn modrinth_loaders(self) -> &'static [&'static str] {
         match self {
-            ModLoader::Fabric => "fabric",
-            ModLoader::Forge => "forge",
-            ModLoader::NeoForge => "neoforge",
+            ModLoader::Fabric => &["fabric"],
+            ModLoader::Quilt => &["quilt", "fabric"],
+            ModLoader::Forge => &["forge"],
+            ModLoader::NeoForge => &["neoforge"],
         }
     }
 
     fn label(self) -> &'static str {
         match self {
             ModLoader::Fabric => "Fabric",
+            ModLoader::Quilt => "Quilt",
             ModLoader::Forge => "Forge",
             ModLoader::NeoForge => "NeoForge",
         }
@@ -189,10 +195,11 @@ pub fn jar_loader(path: &Path) -> Option<&'static str> {
 }
 
 /// Seuls les mods Fabric déclarent leur version de Minecraft dans un format lu ici : ceux de
-/// Forge et NeoForge sont acceptés dès qu'ils sont faits pour le loader de l'instance.
+/// Quilt, Forge et NeoForge sont acceptés dès qu'ils sont faits pour le loader de l'instance.
+/// Quilt charge aussi les mods Fabric.
 fn status(jar: &Jar, minecraft: &str, loader: ModLoader) -> Status {
     match jar {
-        Jar::Fabric(fabric) if loader == ModLoader::Fabric => match fabric.minecraft() {
+        Jar::Fabric(fabric) if matches!(loader, ModLoader::Fabric | ModLoader::Quilt) => match fabric.minecraft() {
             Some(ranges) if !ranges.iter().any(|range| accepts(range, minecraft)) => {
                 Status::Outdated { built_for: ranges.first().map(|range| built_for(range)).unwrap_or_default() }
             }
@@ -241,18 +248,18 @@ pub async fn list(http: &reqwest::Client, dir: &Path, disabled: &[String], minec
                 filename,
                 source: None,
                 project_id: None,
+                newer: None,
             })
         })
         .collect();
 
     let hashes: Vec<String> = mods.iter().map(|m| sha512(&dir.join(&m.filename)).unwrap_or_default()).collect();
-    match modrinth::identify(http, hashes.clone()).await {
-        Ok(found) => {
-            for (m, hash) in mods.iter_mut().zip(&hashes) {
-                m.project_id = found.get(hash).map(|version| version.project_id.clone());
-            }
-        }
-        Err(e) => eprintln!("[mods] Modrinth injoignable pour identifier les mods : {e}"),
+    let identified = modrinth::identify(http, hashes.clone()).await.unwrap_or_else(|e| {
+        eprintln!("[mods] Modrinth injoignable pour identifier les mods : {e}");
+        HashMap::new()
+    });
+    for (m, hash) in mods.iter_mut().zip(&hashes) {
+        m.project_id = identified.get(hash).map(|version| version.project_id.clone());
     }
     // Le nom du `.jar` est souvent technique (« essential-container ») : celui de Modrinth est
     // celui que le joueur a vu en l'installant.
@@ -274,21 +281,49 @@ pub async fn list(http: &reqwest::Client, dir: &Path, disabled: &[String], minec
         m.icon = jar_icon(&dir.join(&m.filename));
     }
 
-    let outdated: Vec<usize> = (0..mods.len()).filter(|&index| matches!(mods[index].status, Status::Outdated { .. })).collect();
-    if outdated.is_empty() {
-        return mods;
-    }
-    match modrinth::updates(http, outdated.iter().map(|&index| hashes[index].clone()).collect(), minecraft, loader.modrinth()).await {
-        Ok(found) => {
-            for index in outdated {
-                if let (Some(update), Status::Outdated { built_for }) = (found.get(&hashes[index]), &mods[index].status) {
-                    mods[index].status = Status::Update { built_for: built_for.clone(), version: update.version_number.clone() };
-                }
-            }
+    let files: Vec<(&Status, String)> = mods.iter().map(|m| &m.status).zip(hashes).collect();
+    let found = replacements(http, &files, &identified, minecraft, loader).await.unwrap_or_else(|e| {
+        eprintln!("[mods] Modrinth injoignable pour les mises à jour : {e}");
+        HashMap::new()
+    });
+    let found: Vec<Option<String>> = files.iter().map(|(_, hash)| found.get(hash).map(|version| version.version_number.clone())).collect();
+    for (m, version) in mods.iter_mut().zip(found) {
+        let Some(version) = version else { continue };
+        match &m.status {
+            Status::Outdated { built_for } => m.status = Status::Update { built_for: built_for.clone(), version },
+            _ => m.newer = Some(version),
         }
-        Err(e) => eprintln!("[mods] Modrinth injoignable pour les mises à jour : {e}"),
     }
     mods
+}
+
+/// Versions Modrinth à installer à la place des fichiers (statut, empreinte), par empreinte : pour
+/// un mod qui ne se charge pas en `minecraft`, sa version pour elle ; pour un mod qui se charge, une
+/// version publiée après la sienne (`identified`), stable si la sienne l'est. Rien pour un mod fait
+/// pour un autre loader.
+async fn replacements(http: &reqwest::Client, files: &[(&Status, String)], identified: &HashMap<String, modrinth::Version>, minecraft: &str, loader: ModLoader) -> Result<HashMap<String, modrinth::Version>> {
+    let (mut stable, mut any) = (Vec::new(), Vec::new());
+    for (status, hash) in files {
+        match (status, identified.get(hash)) {
+            (Status::Ok, Some(current)) if current.version_type == "release" => stable.push(hash.clone()),
+            (Status::Ok | Status::Outdated { .. }, Some(_)) => any.push(hash.clone()),
+            _ => {}
+        }
+    }
+    let mut found = modrinth::updates(http, stable, minecraft, loader.modrinth_loaders(), true).await?;
+    found.extend(modrinth::updates(http, any, minecraft, loader.modrinth_loaders(), false).await?);
+    found.retain(|hash, latest| {
+        let outdated = files.iter().any(|(status, other)| other == hash && matches!(status, Status::Outdated { .. }));
+        outdated || identified.get(hash).is_some_and(|current| newer(latest, current))
+    });
+    Ok(found)
+}
+
+/// `latest` est une autre version, publiée après `current`. Dates RFC 3339 en UTC : comparées à la
+/// seconde, comme du texte.
+fn newer(latest: &modrinth::Version, current: &modrinth::Version) -> bool {
+    let second = |version: &modrinth::Version| version.date_published.get(..19).unwrap_or_default().to_owned();
+    latest.id != current.id && second(latest) > second(current)
 }
 
 /// Nom de fichier acceptable dans le dossier : un `.jar`, sans chemin ni fichier caché.
@@ -332,17 +367,31 @@ async fn download(http: &reqwest::Client, dir: &Path, version: &modrinth::Versio
     Ok(filename.to_owned())
 }
 
-/// Remplace le mod `id` par sa version pour `minecraft` trouvée sur Modrinth ; renvoie le nom du
-/// nouveau fichier.
-pub async fn update(http: &reqwest::Client, dir: &Path, id: &str, minecraft: &str, loader: ModLoader) -> Result<String> {
-    let old = dir.join(safe_filename(id).ok_or_else(|| GameError::NotAMod(id.to_owned()))?);
-    let hash = sha512(&old)?;
-    let version = modrinth::updates(http, vec![hash.clone()], minecraft, loader.modrinth()).await?.remove(&hash).ok_or(GameError::NoUpdate)?;
-    let filename = download(http, dir, &version).await?;
-    if filename != id {
-        std::fs::remove_file(&old)?;
+/// Remplace chaque mod du dossier (seulement `only` s'il est donné) qui a une version à installer
+/// (voir `replacements`) ; renvoie les paires (ancien fichier, nouveau fichier).
+pub async fn update(http: &reqwest::Client, dir: &Path, only: Option<&str>, minecraft: &str, loader: ModLoader) -> Result<Vec<(String, String)>> {
+    let paths = match only {
+        Some(id) => vec![dir.join(safe_filename(id).ok_or_else(|| GameError::NotAMod(id.to_owned()))?)],
+        None => jars(dir),
+    };
+    let mut files = Vec::new();
+    for path in paths {
+        let Some(jar) = read_jar_file(&path) else { continue };
+        files.push((filename(&path), status(&jar, minecraft, loader), sha512(&path)?));
     }
-    Ok(filename)
+    let identified = modrinth::identify(http, files.iter().map(|(_, _, hash)| hash.clone()).collect()).await?;
+    let statuses: Vec<(&Status, String)> = files.iter().map(|(_, status, hash)| (status, hash.clone())).collect();
+    let found = replacements(http, &statuses, &identified, minecraft, loader).await?;
+    let mut updated = Vec::new();
+    for (old, _, hash) in &files {
+        let Some(version) = found.get(hash) else { continue };
+        let new = download(http, dir, version).await?;
+        if new != *old {
+            std::fs::remove_file(dir.join(old))?;
+        }
+        updated.push((old.clone(), new));
+    }
+    Ok(updated)
 }
 
 /// Fichiers du dossier et sélection Clover (`provided` : empreintes du manifeste signé), identifiés
@@ -386,7 +435,7 @@ async fn resolve(http: &reqwest::Client, dir: &Path, mut queue: Vec<String>, pre
         if present.contains(&project) || resolved.missing.contains(&project) {
             continue;
         }
-        let Some(version) = modrinth::compatible_version(http, &project, loader.modrinth(), Some(minecraft)).await? else {
+        let Some(version) = modrinth::compatible_version(http, &project, loader.modrinth_loaders(), Some(minecraft)).await? else {
             if strict {
                 return Err(GameError::NoUpdate);
             }
@@ -606,6 +655,12 @@ mod tests {
         assert_eq!(status_of(forge(), ModLoader::NeoForge), Status::Loader { loader: "Forge".into() });
         assert_eq!(status_of(fabric(), ModLoader::Forge), Status::Loader { loader: "Fabric".into() });
         assert_eq!(status_of(jar(&[("META-INF/neoforge.mods.toml", "")]), ModLoader::Fabric), Status::Loader { loader: "NeoForge".into() });
+        // Quilt charge ses mods et ceux de Fabric ; Fabric ne charge pas ceux de Quilt.
+        let quilt = || jar(&[("quilt.mod.json", "{}")]);
+        assert_eq!(status_of(fabric(), ModLoader::Quilt), Status::Ok);
+        assert_eq!(status_of(quilt(), ModLoader::Quilt), Status::Ok);
+        assert_eq!(status_of(quilt(), ModLoader::Fabric), Status::Loader { loader: "Quilt".into() });
+        assert_eq!(status_of(forge(), ModLoader::Quilt), Status::Loader { loader: "Forge".into() });
     }
 
     /// Réseau : installe Xaero's Minimap depuis Modrinth, avec sa dépendance obligatoire.
@@ -613,7 +668,7 @@ mod tests {
     #[ignore]
     async fn installs_from_modrinth_with_dependencies() {
         let http = crate::game::download::client();
-        let page = modrinth::search(&http, modrinth::Kind::Mod, "minimap", "26.2", "fabric", &modrinth::Filters::default(), 0).await.unwrap();
+        let page = modrinth::search(&http, modrinth::Kind::Mod, "minimap", "26.2", &["fabric"], &modrinth::Filters::default(), 0).await.unwrap();
         assert!(page.hits.iter().any(|hit| hit.slug == "xaeros-minimap"));
         let dir = std::env::temp_dir().join(format!("clover-modrinth-{}", std::process::id()));
         let added = install(&http, &dir, "xaeros-minimap", "26.2", ModLoader::Fabric, &[]).await.unwrap();
@@ -632,9 +687,9 @@ mod tests {
         let http = crate::game::download::client();
         let dir = std::env::temp_dir().join(format!("clover-dependencies-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let appleskin = modrinth::compatible_version(&http, "appleskin", "fabric", Some("26.2")).await.unwrap().unwrap();
+        let appleskin = modrinth::compatible_version(&http, "appleskin", &["fabric"], Some("26.2")).await.unwrap().unwrap();
         let file = download(&http, &dir, &appleskin).await.unwrap();
-        let fabric_api = modrinth::compatible_version(&http, "fabric-api", "fabric", Some("26.2")).await.unwrap().unwrap();
+        let fabric_api = modrinth::compatible_version(&http, "fabric-api", &["fabric"], Some("26.2")).await.unwrap().unwrap();
         let provided = fabric_api.primary_file().unwrap().hashes["sha512"].clone();
 
         let skipped = install_dependencies(&http, &dir, std::slice::from_ref(&file), "26.2", ModLoader::Fabric, &[provided]).await.unwrap();
@@ -653,8 +708,8 @@ mod tests {
     async fn skips_clover_mods_and_dependencies_before_first_game_install() {
         let http = crate::game::download::client();
         let dir = std::env::temp_dir().join(format!("clover-modrinth-provided-{}", std::process::id()));
-        let sodium = modrinth::compatible_version(&http, "sodium", "fabric", Some("26.2")).await.unwrap().unwrap();
-        let fabric = modrinth::compatible_version(&http, "fabric-api", "fabric", Some("26.2")).await.unwrap().unwrap();
+        let sodium = modrinth::compatible_version(&http, "sodium", &["fabric"], Some("26.2")).await.unwrap().unwrap();
+        let fabric = modrinth::compatible_version(&http, "fabric-api", &["fabric"], Some("26.2")).await.unwrap().unwrap();
         let provided = vec![sodium.primary_file().unwrap().hashes["sha512"].clone(), fabric.primary_file().unwrap().hashes["sha512"].clone()];
         for project in ["sodium", sodium.project_id.as_str()] {
             assert!(install(&http, &dir, project, "26.2", ModLoader::Fabric, &provided).await.unwrap().is_empty());
@@ -664,6 +719,40 @@ mod tests {
         assert_eq!(added.len(), 1, "seule la minimap manque : {added:?}");
         assert_eq!(jars(&dir).len(), 1);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_a_later_version_is_newer() {
+        let version = |id: &str, date: &str| -> modrinth::Version {
+            serde_json::from_value(serde_json::json!({"id": id, "project_id": "p", "version_number": id, "version_type": "release", "files": [], "date_published": date})).unwrap()
+        };
+        let current = version("a", "2026-07-06T17:19:52.123456Z");
+        assert!(newer(&version("b", "2026-08-28T20:55:02Z"), &current));
+        assert!(!newer(&version("b", "2026-05-01T00:00:00Z"), &current));
+        assert!(!newer(&version("a", "2026-08-28T20:55:02Z"), &current));
+    }
+
+    /// Réseau : une ancienne version stable de Sodium est remplacée par la dernière, d'un coup.
+    #[tokio::test]
+    #[ignore]
+    async fn updates_every_mod_with_a_newer_version() {
+        let http = crate::game::download::client();
+        let dir = std::env::temp_dir().join(format!("clover-updates-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let versions = modrinth::modpack_versions(&http, "sodium").await.unwrap();
+        let old = versions.iter().rev().find(|version| version.version_type == "release" && version.loaders.iter().any(|loader| loader == "fabric") && version.game_versions.iter().any(|game| game == "1.21.1")).unwrap();
+        let file = download(&http, &dir, old).await.unwrap();
+        let listed = list(&http, &dir, &[], "1.21.1", ModLoader::Fabric).await;
+        assert!(listed[0].newer.is_some() || matches!(listed[0].status, Status::Update { .. }), "{listed:?}");
+
+        let updated = update(&http, &dir, None, "1.21.1", ModLoader::Fabric).await.unwrap();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0].0, file);
+        assert_eq!(jars(&dir).len(), 1);
+        let listed = list(&http, &dir, &[], "1.21.1", ModLoader::Fabric).await;
+        assert!(listed[0].newer.is_none() && listed[0].status == Status::Ok, "{listed:?}");
+        assert!(update(&http, &dir, None, "1.21.1", ModLoader::Fabric).await.unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

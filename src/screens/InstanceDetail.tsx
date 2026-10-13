@@ -3,25 +3,26 @@ import { type ReactNode, useEffect, useState } from "react";
 
 import { ActivityHeatmap } from "@/components/ActivityHeatmap";
 import { EmptyState } from "@/components/EmptyState";
+import { GameButton } from "@/components/GameButton";
+import { InlineRename } from "@/components/InlineRename";
+import { InstanceArt } from "@/components/InstanceArt";
+import { ModIcon } from "@/components/ModIcon";
 import { RunningBadge } from "@/components/RunningBadge";
 import { Tabs } from "@/components/Tabs";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { GameButton } from "@/components/GameButton";
-import { InlineRename } from "@/components/InlineRename";
-import { ModIcon } from "@/components/ModIcon";
 import { api } from "@/lib/api";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
 import { opensWorldsDirectly } from "@/lib/game-versions";
 import { KINDS, instanceSummary } from "@/lib/instances";
 import { formatDuration, playStats, topServers } from "@/lib/play-history";
 import { cn, formatSize } from "@/lib/utils";
-import type { InstanceSection } from "@/lib/routes";
 import { versionImage } from "@/lib/version-art";
 import { type Confirmation, ConfirmDialog } from "@/screens/Dialogs";
-import type { ContentEntry, ContentFolder, InstanceEntry, PlaySession, PlayState, WorldInfo } from "@/types";
 import type { ContentKind } from "@/lib/content-kinds";
+import type { InstanceSection } from "@/lib/routes";
+import type { ContentEntry, ContentFolder, InstanceEntry, PlaySession, PlayState, WorldInfo } from "@/types";
 
 type Services = Pick<typeof api, "playHistory" | "instanceContent" | "setContentEnabled" | "trashContent" | "showContent" | "renameWorld">;
 
@@ -83,7 +84,6 @@ const card = "rounded-lg border border-border bg-card";
 
 /** Page d'une instance : son temps de jeu, son activité, ses serveurs et le contenu de son dossier. */
 export function InstanceDetail({ entry, play, running, onPlay, onPlayWorld, onExport, onStop, onDelete, settings, serverNames = {}, onRenameServer, onOpenFolder, mods, contentRevision = 0, onSearch, section: requested, onSection, services = api }: Props) {
-  const { Icon } = KINDS[entry.kind];
   // Les shaders passent par Iris, un mod : Vanilla n'en charge pas.
   const sections = SECTIONS.filter((item) => (item.id !== "shaderpacks" || entry.kind !== "vanilla") && (item.id !== "mods" || mods) && (item.id !== "settings" || settings));
   // Un onglet absent (Mods d'une instance Vanilla) ramène à l'aperçu.
@@ -97,10 +97,7 @@ export function InstanceDetail({ entry, play, running, onPlay, onPlayWorld, onEx
           <div className="absolute inset-0 bg-gradient-to-r from-[#14120f] via-[#14120f]/85 to-[#14120f]/30" aria-hidden />
           <div className="relative flex items-end gap-5 px-10 pt-8 pb-6">
             <span className="relative shrink-0">
-              <img src={versionImage(entry.minecraft ?? "")} alt="" className="size-20 rounded-lg border-2 border-[var(--mc-outline)] object-cover" />
-              <span className={cn("absolute -right-2 -bottom-2 grid size-8 place-items-center rounded-md border-2 border-[#14120f]", entry.kind === "clover" ? "bg-primary text-primary-foreground" : "bg-secondary")}>
-                <Icon className="size-4" strokeWidth={2.5} aria-hidden />
-              </span>
+              <InstanceArt entry={entry} className="size-20 rounded-lg border-2 border-[var(--mc-outline)]" badge="absolute -right-2 -bottom-2 size-8 rounded-md border-2 border-[#14120f]" icon="size-4" />
             </span>
             <div className="flex min-w-0 flex-1 flex-col gap-2.5">
               <h1 className="truncate font-display text-[30px] leading-none">{entry.name}</h1>

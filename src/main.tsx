@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
 import { ResizeHandles } from "./components/ResizeHandles";
+import { Splash } from "./components/Splash";
 import { TrayMenu } from "./components/TrayMenu";
 import "./styles.css";
 
@@ -13,12 +14,12 @@ document.addEventListener("contextmenu", (event) => {
   if (!editable && !window.getSelection()?.toString()) event.preventDefault();
 });
 
-const trayMenu = getCurrentWindow().label === "tray-menu";
-if (trayMenu) document.documentElement.dataset.surface = "tray-menu";
+const surface = getCurrentWindow().label;
+if (surface === "tray-menu") document.documentElement.dataset.surface = "tray-menu";
 
 // Erreurs de rendu React : vers Sentry si les rapports de plantage sont acceptés, sinon ignorées.
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement, { onUncaughtError: reactErrorHandler(), onCaughtError: reactErrorHandler() }).render(
   <React.StrictMode>
-    {trayMenu ? <TrayMenu /> : <><App /><ResizeHandles /></>}
+    {surface === "tray-menu" ? <TrayMenu /> : surface === "splash" ? <Splash /> : <><App /><ResizeHandles /></>}
   </React.StrictMode>,
 );

@@ -95,7 +95,7 @@ export type ModInfo = {
 
 export type Tab = "home" | "news" | "instances" | "discover" | "skins" | "console" | "settings" | "profile";
 
-export type InstanceKind = "clover" | "vanilla" | "fabric" | "forge" | "neoforge";
+export type InstanceKind = "clover" | "vanilla" | "fabric" | "quilt" | "forge" | "neoforge";
 export type Instance = {
   id: string; name: string; kind: InstanceKind;
   minecraft: string | null; loader: string | null;
@@ -107,6 +107,8 @@ export type Instance = {
   enabledMods: string[] | null; disabledMods: string[]; lastPlayed: number | null;
   /** Épinglée en haut de la liste (clic droit). */
   pinned?: boolean;
+  /** Projet Modrinth du modpack dont l'instance a été créée ; absent pour un pack importé d'un fichier. */
+  modpack?: string | null;
 };
 export type InstanceEntry = Instance & { gameDir: string; installed: boolean };
 export type InstanceInput = Pick<Instance, "name" | "kind" | "minecraft" | "loader" | "separate" | "memoryMb">;
@@ -270,6 +272,8 @@ export type PersonalMod = {
   /** Projet Modrinth du fichier, s'il y est publié. */
   projectId: string | null;
   enabled: boolean;
+  /** Version plus récente sur Modrinth pour l'instance, pour un mod qui se charge déjà. */
+  newer: string | null;
   status:
     | { kind: "ok" }
     | { kind: "update"; builtFor: string; version: string }
@@ -289,6 +293,8 @@ export type ModrinthHit = {
   author: string;
   iconUrl: string | null;
   downloads: number;
+  /** Chargeurs du projet : « fabric », « forge », « neoforge », « quilt », « iris », « optifine ». */
+  loaders?: string[];
   /** Déjà fourni par les mods Clover activés, dépendances comprises. */
   providedByClover?: boolean;
   /** Page où le télécharger soi-même : le launcher n'a pas le droit de l'installer (monde CurseForge). */
@@ -298,10 +304,13 @@ export type ModrinthHit = {
 };
 
 export type ModrinthPage = { hits: ModrinthHit[]; totalHits: number };
+/** Version d'un modpack que le launcher sait installer, de la plus récente à la plus ancienne. */
+export type ModpackVersion = { id: string; name: string; number: string; loaders: string[]; gameVersions: string[]; release: boolean; published: string };
 /** Ordre des résultats de recherche ; sans texte, « relevance » classe par téléchargements. */
 export type SearchSort = "relevance" | "downloads" | "follows" | "newest" | "updated";
 /** Catégories Modrinth (« worldgen », « 16x »), toutes exigées à la fois. */
-export type SearchFilters = { sort: SearchSort; categories: string[] };
+/** `version` : modpacks seulement, version de Minecraft exigée (celle de la nouvelle instance voulue). */
+export type SearchFilters = { sort: SearchSort; categories: string[]; version?: string };
 /** Modpack importé depuis un fichier : l'instance créée, et les fichiers du pack à télécharger à la main sur CurseForge. */
 export type ImportedModpack = { instance: string; missing: { name: string; url: string }[] };
 
@@ -323,6 +332,10 @@ export type ModrinthProject = {
   /** Description complète, en HTML déjà nettoyé côté Rust. */
   descriptionHtml: string;
   iconUrl: string | null;
+  /** Chargeurs pris en charge ; absents pour un monde CurseForge. */
+  loaders?: string[];
+  /** Versions de Minecraft prises en charge, de la plus ancienne à la plus récente. */
+  gameVersions?: string[];
   author: string | null;
   downloads: number;
   license: { id: string; name: string } | null;

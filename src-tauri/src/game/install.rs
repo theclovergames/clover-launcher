@@ -1,4 +1,4 @@
-//! Installation de Java, Minecraft et de son loader (Fabric, Forge ou NeoForge) pour la version visée.
+//! Installation de Java, Minecraft et de son loader (Fabric, Quilt, Forge ou NeoForge) pour la version visée.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -14,11 +14,13 @@ use super::{java, GameError, Paths, Progress, Result};
 const VERSION_MANIFEST_URL: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 const RESOURCES_URL: &str = "https://resources.download.minecraft.net";
 const FABRIC_META_URL: &str = "https://meta.fabricmc.net/v2/versions/loader";
+const QUILT_META_URL: &str = "https://meta.quiltmc.org/v3/versions/loader";
 
 /// Loader et sa version.
 #[derive(Debug, Clone, Copy)]
 pub enum Loader<'a> {
     Fabric(&'a str),
+    Quilt(&'a str),
     Forge(&'a str),
     NeoForge(&'a str),
 }
@@ -80,16 +82,21 @@ pub(crate) async fn install_version(
 ) -> Result<Installation> {
     crate::instances::validate_version_id(minecraft)?;
     let vanilla = vanilla_json(http, paths, minecraft).await?;
-    let (fabric, prepared) = match loader {
+    // Fabric et Quilt donnent un profil prêt à l'emploi ; Forge et NeoForge passent par leur installateur.
+    let (meta, prepared) = match loader {
         Some(Loader::Fabric(version)) => {
             crate::instances::validate_version_id(version)?;
-            (Some(fabric_json(http, paths, minecraft, version).await?), None)
+            (Some(meta_json(http, paths, FABRIC_META_URL, "fabric-loader", minecraft, version).await?), None)
+        }
+        Some(Loader::Quilt(version)) => {
+            crate::instances::validate_version_id(version)?;
+            (Some(meta_json(http, paths, QUILT_META_URL, "quilt-loader", minecraft, version).await?), None)
         }
         Some(Loader::Forge(version)) => (None, Some(forge::prepare(http, paths, Flavor::Forge, minecraft, version).await?)),
         Some(Loader::NeoForge(version)) => (None, Some(forge::prepare(http, paths, Flavor::NeoForge, minecraft, version).await?)),
         None => (None, None),
     };
-    let profile = fabric.as_ref().or(prepared.as_ref().map(|prepared| &prepared.profile));
+    let profile = meta.as_ref().or(prepared.as_ref().map(|prepared| &prepared.profile));
     crate::instances::validate_version_id(&vanilla.id)?;
     if let Some(profile) = profile { crate::instances::validate_version_id(&profile.id)?; }
     if vanilla.arguments.game.is_empty() && vanilla.minecraft_arguments.is_none() {
@@ -186,7 +193,7 @@ pub(crate) async fn install_version(
             return Err(GameError::InvalidVersion(format!("{} incomplet : {} manquant", prepared.profile.id, missing.display())));
         }
     }
-    let loader = fabric.or(prepared.map(|prepared| prepared.profile));
+    let loader = meta.or(prepared.map(|prepared| prepared.profile));
 
     // Assets, adressés par leur empreinte : un même fichier peut servir plusieurs noms.
     let index_ref = vanilla
@@ -277,11 +284,13 @@ pub async fn download_size(http: &reqwest::Client, paths: &Paths, minecraft: &st
     Ok(total)
 }
 
-async fn fabric_json(http: &reqwest::Client, paths: &Paths, minecraft: &str, loader: &str) -> Result<VersionJson> {
-    let id = format!("fabric-loader-{loader}-{minecraft}");
+/// Profil de lancement de Fabric ou de Quilt (`name` : `fabric-loader`, `quilt-loader`), gardé
+/// dans les versions après le premier téléchargement.
+async fn meta_json(http: &reqwest::Client, paths: &Paths, meta: &str, name: &str, minecraft: &str, loader: &str) -> Result<VersionJson> {
+    let id = format!("{name}-{loader}-{minecraft}");
     let path = paths.versions.join(&id).join(format!("{id}.json"));
     if tokio::fs::metadata(&path).await.is_err() {
-        let url = format!("{FABRIC_META_URL}/{minecraft}/{loader}/profile/json");
+        let url = format!("{meta}/{minecraft}/{loader}/profile/json");
         ensure(http, &Download { url, path: path.clone(), checksum: None, size: None, executable: false }).await?;
     }
     read_json(&path).await
@@ -381,6 +390,21 @@ mod instance_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
+    #[ignore = "profil officiel de Quilt, réseau requis"]
+    async fn reads_the_quilt_profile() {
+        let root = std::env::temp_dir().join(format!("clover-quilt-proof-{}", rand::random::<u64>()));
+        let paths = Paths::from_root(root.clone());
+        let loaders = crate::instances::quilt_loaders(&root, "1.21.1").await.unwrap();
+        assert!(loaders.iter().all(|version| !version.contains('-')), "les bêtas ne passent qu'à défaut de stables");
+        assert!(crate::game::forge::numeric(&loaders[0]) >= crate::game::forge::numeric(&loaders[loaders.len() - 1]));
+        let quilt = meta_json(&super::super::download::client(), &paths, QUILT_META_URL, "quilt-loader", "1.21.1", &loaders[0]).await.unwrap();
+        assert_eq!(quilt.id, format!("quilt-loader-{}-1.21.1", loaders[0]));
+        assert!(quilt.main_class.as_ref().is_some_and(|class| class.contains("KnotClient")));
+        assert!(quilt.libraries.iter().all(|library| library.resolve().is_some()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     #[ignore = "profils officiels Mojang et Fabric, réseau requis"]
     async fn reads_personal_profiles_and_builds_real_launch_arguments() {
         let root = std::env::temp_dir().join(format!("clover-profile-proof-{}", rand::random::<u64>()));
@@ -388,7 +412,7 @@ mod instance_tests {
         let http = super::super::download::client();
         let vanilla = vanilla_json(&http, &paths, "1.20.1").await.unwrap();
         let loaders = crate::instances::loaders(&root, "1.20.1").await.unwrap();
-        let fabric = fabric_json(&http, &paths, "1.20.1", &loaders[0]).await.unwrap();
+        let fabric = meta_json(&http, &paths, FABRIC_META_URL, "fabric-loader", "1.20.1", &loaders[0]).await.unwrap();
         assert_eq!(vanilla.id, "1.20.1");
         assert!(!vanilla.arguments.jvm.is_empty());
         assert!(!vanilla.arguments.game.is_empty());

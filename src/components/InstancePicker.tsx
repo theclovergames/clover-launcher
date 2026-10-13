@@ -1,3 +1,4 @@
+import { cloverIcon } from "@/components/InstanceArt";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { KINDS } from "@/lib/instances";
 import { cn } from "@/lib/utils";
@@ -26,7 +27,7 @@ export function InstancePicker({ instances, value, onChange, label, placeholder,
           return (
             <SelectItem key={entry.id} value={entry.id}>
               <span className="flex min-w-0 items-center gap-2">
-                <Icon className={cn("size-3.5 shrink-0", entry.kind === "clover" ? "text-primary" : "text-muted-foreground")} aria-hidden />
+                {entry.kind === "clover" ? <img src={cloverIcon} alt="" className="size-3.5 shrink-0 rounded-[3px] object-cover" /> : <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
                 <span className="truncate">{entry.name}</span>
                 {entry.minecraft && <span className="shrink-0 font-pixel text-[10px] text-muted-foreground">{entry.minecraft}</span>}
               </span>

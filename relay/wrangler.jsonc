@@ -1,0 +1,13 @@
+// Relais de l'API CurseForge (worker.js). Depuis ce dossier : `npx wrangler deploy`, et la clé de
+// console.curseforge.com avec `npx wrangler secret put CURSEFORGE_API_KEY`.
+{
+  "name": "clover-curseforge",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-13",
+  "workers_dev": false,
+  "routes": [{ "pattern": "curseforge.clovergames.fr", "custom_domain": true }],
+  // 120 requêtes par minute et par adresse IP : une recherche en coûte une, une page de monde deux.
+  "ratelimits": [{ "name": "LIMITER", "namespace_id": "1001", "simple": { "limit": 120, "period": 60 } }],
+  // Journaux d'invocation (route, statut, durée) : montrent les 429 et un 403 de CurseForge si la clé tombe.
+  "observability": { "logs": { "enabled": true } }
+}

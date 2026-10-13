@@ -1,23 +1,29 @@
 import { Boxes, Check, Download, ExternalLink, FileUp, Globe, Layers, LoaderCircle, Palette, Play, Puzzle, SlidersHorizontal, Sun, X } from "lucide-react";
-import { type ComponentType, useCallback, useEffect, useRef, useState } from "react";
+import { type ComponentType, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { acceptsMods, InstancePicker } from "@/components/InstancePicker";
+import { LoaderBadges } from "@/components/LoaderBadges";
 import { ModIcon } from "@/components/ModIcon";
+import { ModpackVersionSelect } from "@/components/ModpackVersionSelect";
 import { Page } from "@/components/Page";
 import { SearchField } from "@/components/SearchField";
 import { Tabs } from "@/components/Tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
-import { CATEGORIES, CONTENT_KINDS, type ContentKind, KIND_ORDER, kindAllowed, sortsFor } from "@/lib/content-kinds";
-import { opensWorldsDirectly } from "@/lib/game-versions";
+import { CATEGORIES, CONTENT_KINDS, type ContentKind, KIND_ORDER, kindAllowed, LOADER_FILTERS, sortsFor } from "@/lib/content-kinds";
+import { opensWorldsDirectly, preferredModpackVersion } from "@/lib/game-versions";
+import { modLoader } from "@/lib/instances";
 import type { OpenProject, Route } from "@/lib/routes";
 import { cn, formatSize } from "@/lib/utils";
+import { type Confirmation, ConfirmDialog, ModpackDialog, type ModpackRequest } from "@/screens/Dialogs";
 import { ModPage } from "@/screens/ModPage";
-import type { ContentEntry, ImportedModpack, InstanceEntry, ModrinthHit, ModrinthPage, ModrinthProject, SearchFilters, SearchSort } from "@/types";
+import type { ContentEntry, ImportedModpack, InstanceEntry, ModpackVersion, ModrinthHit, ModrinthPage, ModrinthProject, SearchFilters, SearchSort } from "@/types";
 
 const number = new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 });
 const NO_FILTERS: SearchFilters = { sort: "relevance", categories: [] };
+/** Valeur de la liste des chargeurs sans filtre (une valeur vide n'est pas permise). */
+const ALL_LOADERS = "all";
 
 const ICONS: Record<ContentKind, ComponentType<{ className?: string }>> = {
   mod: Puzzle,
@@ -42,8 +48,13 @@ type Props = {
   /** Projets déjà installés de ce type (dans `world` pour un datapack). */
   installed: (kind: ContentKind, instance: string, world?: string) => Promise<string[]>;
   search: (kind: ContentKind, query: string, filters: SearchFilters, offset: number, instance: string) => Promise<ModrinthPage>;
-  /** Installe le projet ; rejette avec un message à afficher. Un monde renvoie le nom de son dossier. */
-  onInstall: (kind: ContentKind, projectId: string, instance: string, world?: string) => Promise<string | void>;
+  /**
+   * Installe le projet ; rejette avec un message à afficher. Un monde renvoie le nom de son dossier.
+   * `version` : celle du modpack choisie sur sa page ; la dernière stable sans elle.
+   */
+  onInstall: (kind: ContentKind, projectId: string, instance: string, world?: string, version?: string) => Promise<string | void>;
+  /** Versions installables d'un modpack, pour en choisir une sur sa page. */
+  modpackVersions: (project: string) => Promise<ModpackVersion[]>;
   /** Mondes de l'instance, cibles des datapacks. */
   worlds: (instance: string) => Promise<ContentEntry[]>;
   /** Avancement en cours : fichiers d'un modpack, octets d'un monde. */
@@ -65,7 +76,7 @@ type Results = { key: string; hits: ModrinthHit[]; total: number } | { key: stri
  * Le texte et les filtres de chaque type restent quand on va et vient entre la liste et une page.
  */
 export function DiscoverScreen(props: Props) {
-  const { route, instances, defaultTarget, installed, search, onInstall, worlds, progress, load, onPlayWorld, onOpenLink } = props;
+  const { route, instances, defaultTarget, installed, search, onInstall, modpackVersions, worlds, progress, load, onPlayWorld, onOpenLink } = props;
   const kind = route.kind;
   const text = CONTENT_KINDS[kind];
   // Mods et shaders demandent un loader : une instance Vanilla visée cède la place à une autre.
@@ -80,6 +91,9 @@ export function DiscoverScreen(props: Props) {
   const query = queries[kind] ?? "";
   const filters = filtersByKind[kind] ?? NO_FILTERS;
   const setFilters = (patch: Partial<SearchFilters>) => setFiltersByKind((current) => ({ ...current, [kind]: { ...filters, ...patch } }));
+  /** Modpacks : version de Minecraft de la nouvelle instance voulue (panneau « Nouvelle instance »). */
+  const packMinecraft = kind === "modpack" ? route.minecraft : undefined;
+  const searchFilters = useMemo(() => (packMinecraft ? { ...filters, version: packMinecraft } : filters), [filters, packMinecraft]);
 
   const [results, setResults] = useState<Results | null>(null);
   const [loading, setLoading] = useState(false);
@@ -91,12 +105,17 @@ export function DiscoverScreen(props: Props) {
   const [played, setPlayed] = useState<Record<string, string>>({});
   const [worldList, setWorldList] = useState<ContentEntry[] | null>(null);
   const [imported, setImported] = useState<{ busy: true } | { busy: false; result?: ImportedModpack; error?: string } | null>(null);
+  /** Versions du modpack ouvert (`null` : en lecture), et celle choisie pour chaque modpack. */
+  const [packVersions, setPackVersions] = useState<{ project: string; list: ModpackVersion[] | null; error?: string } | null>(null);
+  const [chosenVersion, setChosenVersion] = useState<Record<string, string>>({});
+  const [asking, setAsking] = useState<Confirmation | null>(null);
+  const [packRequest, setPackRequest] = useState<ModpackRequest | null>(null);
   /** Résultats déjà vus, pour la page d'un projet : lien externe, taille, catalogue Clover. */
   const seen = useRef(new Map<string, ModrinthHit>());
   /** Dernière recherche lancée : une réponse plus ancienne arrivée en retard est ignorée. */
   const latest = useRef("");
   const world = kind === "datapack" ? (route.world && worldList?.some((other) => other.name === route.world) ? route.world : (worldList?.[0]?.name ?? null)) : null;
-  const searchKey = `${id}:${kind}:${query}:${filters.sort}:${filters.categories.join(",")}`;
+  const searchKey = `${id}:${kind}:${query}:${filters.sort}:${filters.categories.join(",")}:${packMinecraft ?? ""}`;
 
   const run = useCallback(async (key: string, searched: ContentKind, value: string, chosen: SearchFilters, offset: number, into: string) => {
     latest.current = key;
@@ -121,9 +140,22 @@ export function DiscoverScreen(props: Props) {
   useEffect(() => {
     // Retour d'une page : la liste déjà chargée reste, sans nouvelle recherche.
     if (!allowed || !id || route.project || loadedKey === searchKey) return;
-    const timer = window.setTimeout(() => void run(searchKey, kind, query, filters, 0, id), query ? 300 : 0);
+    const timer = window.setTimeout(() => void run(searchKey, kind, query, searchFilters, 0, id), query ? 300 : 0);
     return () => window.clearTimeout(timer);
-  }, [allowed, searchKey, loadedKey, kind, query, filters, id, run, route.project]);
+  }, [allowed, searchKey, loadedKey, kind, query, searchFilters, id, run, route.project]);
+
+  const openedPack = kind === "modpack" ? route.project?.id : undefined;
+  useEffect(() => {
+    if (!openedPack) return;
+    let alive = true;
+    setPackVersions({ project: openedPack, list: null });
+    modpackVersions(openedPack)
+      .then((list) => alive && setPackVersions({ project: openedPack, list }))
+      .catch((reason) => alive && setPackVersions({ project: openedPack, list: [], error: String(reason) }));
+    return () => {
+      alive = false;
+    };
+  }, [openedPack, modpackVersions]);
 
   useEffect(() => {
     if (kind !== "datapack" || !id) return;
@@ -153,12 +185,12 @@ export function DiscoverScreen(props: Props) {
   const installedHere = installedSet?.key === installedKey ? installedSet.projects : null;
   const isDone = (hit: ModrinthHit) => Boolean(hit.providedByClover) || Boolean(installedHere?.has(hit.projectId)) || added.has(keyOf(hit.projectId));
 
-  const install = async (hit: ModrinthHit) => {
+  const install = async (hit: ModrinthHit, version?: string) => {
     const key = keyOf(hit.projectId);
     setInstalling((current) => new Set(current).add(key));
     setFailed(({ [key]: _, ...rest }) => rest);
     try {
-      const folder = await onInstall(kind, hit.projectId, id, world ?? undefined);
+      const folder = await onInstall(kind, hit.projectId, id, world ?? undefined, version);
       setAdded((current) => new Set(current).add(key));
       if (kind === "world" && folder) setPlayed((current) => ({ ...current, [key]: folder }));
     } catch (reason) {
@@ -171,6 +203,37 @@ export function DiscoverScreen(props: Props) {
       });
     }
   };
+
+  /** Instance déjà créée depuis ce modpack ; une plus ancienne que `modpack` est reconnue à son nom. */
+  const existingPack = (hit: ModrinthHit) => instances.find((entry) => (entry.modpack ? entry.modpack === hit.projectId : entry.name === hit.title));
+  /**
+   * Modpack de la liste : sa version se choisit d'abord dans une fenêtre. Sur sa page, où elle est
+   * déjà choisie, un modpack déjà installé demande confirmation : l'installer encore crée une
+   * seconde instance.
+   */
+  const requestInstall = (hit: ModrinthHit, version?: string) => {
+    if (kind !== "modpack") return void install(hit, version);
+    const existing = existingPack(hit);
+    if (!route.project) {
+      setPackRequest({ project: hit.projectId, title: hit.title, minecraft: packMinecraft, existing: existing?.name, onInstall: (chosen) => void install(hit, chosen) });
+      return;
+    }
+    if (!existing) return void install(hit, version);
+    setAsking({
+      title: "Modpack déjà installé",
+      description: "Tu as déjà une instance de ce modpack. L'installer à nouveau en crée une seconde, sans toucher à la première.",
+      detail: existing.name,
+      confirm: "Installer quand même",
+      install: true,
+      onConfirm: () => void install(hit, version),
+    });
+  };
+  const dialogs = (
+    <>
+      <ConfirmDialog ask={asking} onClose={() => setAsking(null)} />
+      <ModpackDialog request={packRequest} versions={modpackVersions} onClose={() => setPackRequest(null)} />
+    </>
+  );
 
   const importFile = async () => {
     setImported({ busy: true });
@@ -193,8 +256,8 @@ export function DiscoverScreen(props: Props) {
     return "Installation…";
   };
 
-  /** Bouton d'installation d'un résultat, dans la liste et sur sa page. */
-  const control = (hit: ModrinthHit) => {
+  /** Bouton d'installation d'un résultat, dans la liste et sur sa page (`version` : celle du modpack choisie). */
+  const control = (hit: ModrinthHit, version?: string, unavailable = false) => {
     const key = keyOf(hit.projectId);
     if (hit.external) {
       const page = hit.external;
@@ -226,8 +289,8 @@ export function DiscoverScreen(props: Props) {
     return (
       <button
         type="button"
-        disabled={!allowed || busy || (kind === "datapack" && !world)}
-        onClick={() => void install(hit)}
+        disabled={!allowed || busy || unavailable || (kind === "datapack" && !world)}
+        onClick={() => requestInstall(hit, version)}
         aria-label={`${text.install} : ${hit.title}`}
         className={cn(primaryButton, "relative shrink-0")}
       >
@@ -248,6 +311,13 @@ export function DiscoverScreen(props: Props) {
     const project = route.project;
     const hit = seen.current.get(`${kind}:${project.id}`) ?? { projectId: project.id, slug: project.id, title: project.title, description: "", author: "", iconUrl: project.icon, downloads: 0 };
     const error = failed[keyOf(project.id)];
+    // Modpack : la version à installer, la dernière stable (pour la version de Minecraft voulue) d'office.
+    const versions = kind === "modpack" && packVersions?.project === project.id ? packVersions : null;
+    const chosen = chosenVersion[project.id] ?? (versions?.list ? preferredModpackVersion(versions.list, packMinecraft)?.id : undefined);
+    const noVersion = versions?.list?.length === 0;
+    const versionPicker = kind === "modpack" && (
+      <ModpackVersionSelect versions={versions?.list ?? null} value={chosen} onChange={(value) => setChosenVersion((current) => ({ ...current, [project.id]: value }))} className="h-9 w-80" />
+    );
     return (
       <Page>
         <ModPage
@@ -265,13 +335,24 @@ export function DiscoverScreen(props: Props) {
                   {hit.size != null && ` · ${formatSize(hit.size)}`}
                 </p>
               )}
+              {noVersion && (
+                <p className="mt-4 text-[13px] text-muted-foreground">
+                  {versions?.error ?? "Aucune version pour Fabric, Quilt, Forge ou NeoForge : ce modpack ne s'installe pas dans le launcher."}
+                </p>
+              )}
               {error && <p className="mt-3 rounded-lg border border-error/30 bg-error/8 px-4 py-3 text-[13px] text-error">{error}</p>}
             </>
           }
-          actions={control(hit)}
+          actions={
+            <>
+              {versionPicker}
+              {control(hit, chosen, noVersion)}
+            </>
+          }
           load={loadPage}
           onOpenLink={onOpenLink}
         />
+        {dialogs}
       </Page>
     );
   }
@@ -286,7 +367,7 @@ export function DiscoverScreen(props: Props) {
         label="Type de contenu"
         className="mt-5"
         value={kind}
-        onChange={(next) => props.onRoute({ tab: "discover", kind: next, target: route.target })}
+        onChange={(next) => props.onRoute({ tab: "discover", kind: next, target: route.target, minecraft: route.minecraft })}
         items={KIND_ORDER.map((other) => ({ id: other, label: CONTENT_KINDS[other].label, Icon: ICONS[other] }))}
       />
       <p className="mt-4 text-xs leading-relaxed text-muted-foreground">{text.hint(minecraft)}</p>
@@ -321,7 +402,16 @@ export function DiscoverScreen(props: Props) {
           </Select>
         )}
       </div>
-      {allowed && <Filters kind={kind} filters={filters} onChange={setFilters} />}
+      {allowed && (
+        <Filters
+          kind={kind}
+          filters={filters}
+          onChange={setFilters}
+          instanceLoader={kind === "mod" && instance ? (instance.kind === "quilt" ? "Quilt et Fabric" : modLoader(instance.kind)) : null}
+          minecraft={packMinecraft}
+          onClearMinecraft={() => props.onRoute({ ...route, minecraft: undefined })}
+        />
+      )}
 
       {kind === "modpack" && imported && !imported.busy && (imported.error || imported.result) && (
         <div role="status" className={cn("mt-3 rounded-lg border px-4 py-3 text-[13px] leading-relaxed", imported.error ? "border-error/30 bg-error/8 text-error" : "border-primary/30 bg-primary/8")}>
@@ -377,10 +467,11 @@ export function DiscoverScreen(props: Props) {
                       {hit.author && <span className="shrink-0 text-[11px] font-normal text-muted-foreground">par {hit.author}</span>}
                     </p>
                     <p className="line-clamp-2 text-xs leading-snug text-muted-foreground">{hit.description}</p>
-                    <p className="flex items-center gap-1 text-[11px] text-muted-foreground/70">
+                    <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-[11px] text-muted-foreground/70">
                       <Download className="size-3" aria-hidden />
                       {number.format(hit.downloads)} téléchargements
                       {hit.size != null && ` · ${formatSize(hit.size)}`}
+                      <LoaderBadges loaders={hit.loaders} className="ml-1.5" />
                     </p>
                     {error && <p className="text-xs text-error">{error}</p>}
                   </div>
@@ -399,22 +490,33 @@ export function DiscoverScreen(props: Props) {
         )}
         {!loading && current && "hits" in current && hits.length < current.total && (
           <div className="flex justify-center py-3">
-            <button type="button" onClick={() => void run(searchKey, kind, query, filters, hits.length, id)} className={secondaryButton}>
+            <button type="button" onClick={() => void run(searchKey, kind, query, searchFilters, hits.length, id)} className={secondaryButton}>
               Voir plus
             </button>
           </div>
         )}
       </div>
+      {dialogs}
     </Page>
   );
 }
 
 /** Tri et catégories du type ; les catégories choisies restent visibles, chacune retirable. */
-function Filters({ kind, filters, onChange }: { kind: ContentKind; filters: SearchFilters; onChange: (patch: Partial<SearchFilters>) => void }) {
+/**
+ * Tri, chargeur (modpacks) et catégories de la recherche. Le chargeur est une catégorie Modrinth
+ * comme les autres, choisi dans sa propre liste ; pour les mods, c'est celui de l'instance visée.
+ * `minecraft` : version voulue pour un modpack, retirable comme une catégorie.
+ */
+function Filters({ kind, filters, onChange, instanceLoader, minecraft, onClearMinecraft }: { kind: ContentKind; filters: SearchFilters; onChange: (patch: Partial<SearchFilters>) => void; instanceLoader: string | null; minecraft?: string; onClearMinecraft: () => void }) {
   const groups = CATEGORIES[kind];
+  const loaders = LOADER_FILTERS[kind] ?? [];
+  const isLoader = (category: string) => loaders.some(([id]) => id === category);
+  const loader = filters.categories.find(isLoader) ?? ALL_LOADERS;
+  const others = filters.categories.filter((category) => !isLoader(category));
   const label = (category: string) => groups.flatMap((group) => group.items).find(([id]) => id === category)?.[1] ?? category;
   const toggle = (category: string) =>
     onChange({ categories: filters.categories.includes(category) ? filters.categories.filter((other) => other !== category) : [...filters.categories, category] });
+  const chooseLoader = (value: string) => onChange({ categories: [...filters.categories.filter((category) => !isLoader(category)), ...(value === ALL_LOADERS ? [] : [value])] });
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -430,13 +532,33 @@ function Filters({ kind, filters, onChange }: { kind: ContentKind; filters: Sear
           ))}
         </SelectContent>
       </Select>
+      {loaders.length > 0 && (
+        <Select value={loader} onValueChange={(value) => value && chooseLoader(value)}>
+          <SelectTrigger aria-label="Chargeur" className="h-8 w-44 text-[13px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_LOADERS}>Tous les chargeurs</SelectItem>
+            {loaders.map(([id, name]) => (
+              <SelectItem key={id} value={id}>
+                {name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+      {instanceLoader && (
+        <span className="flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs text-muted-foreground" title="Seuls les mods de ce chargeur s'installent dans l'instance visée : change d'instance avec « Pour ».">
+          Chargeur : <span className="font-semibold text-foreground">{instanceLoader}</span>
+        </span>
+      )}
       {groups.length > 0 && (
         <Popover>
           <PopoverTrigger asChild>
             <button type="button" className={cn(secondaryButton, "h-8")}>
               <SlidersHorizontal className="size-3.5" aria-hidden />
               Catégories
-              {filters.categories.length > 0 && <span className="rounded-full bg-accent px-1.5 font-pixel text-[11px] text-accent-foreground">{filters.categories.length}</span>}
+              {others.length > 0 && <span className="rounded-full bg-accent px-1.5 font-pixel text-[11px] text-accent-foreground">{others.length}</span>}
             </button>
           </PopoverTrigger>
           <PopoverContent align="start" className="max-h-[min(420px,70vh)] w-80 overflow-y-auto">
@@ -465,7 +587,18 @@ function Filters({ kind, filters, onChange }: { kind: ContentKind; filters: Sear
           </PopoverContent>
         </Popover>
       )}
-      {filters.categories.map((category) => (
+      {minecraft && (
+        <button
+          type="button"
+          onClick={onClearMinecraft}
+          aria-label={`Retirer le filtre Minecraft ${minecraft}`}
+          className="flex items-center gap-1 rounded-md bg-primary/15 px-2 py-1 text-xs font-semibold text-primary hover:bg-primary/25"
+        >
+          Minecraft {minecraft}
+          <X className="size-3" aria-hidden />
+        </button>
+      )}
+      {others.map((category) => (
         <button
           key={category}
           type="button"

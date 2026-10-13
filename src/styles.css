@@ -5,6 +5,9 @@
 @import "@fontsource-variable/montserrat";
 @import "@fontsource/lilita-one";
 
+/* Fenêtre haute (800 px et plus) : le bas de l'accueil a la place de grandir sans écraser le lobby. */
+@custom-variant tall (@media (min-height: 800px));
+
 /* Chiffres façon jeu (compteurs de joueurs, versions, mémoire). Sous-ensemble latin de Monocraft, OFL. */
 @font-face {
   font-family: "Monocraft";
@@ -150,6 +153,17 @@
     }
     to {
       transform: translateY(340%);
+    }
+  }
+}
+
+/* Fenêtre de chargement : le trèfle respire pendant l'attente. */
+@theme {
+  --animate-splash-breathe: splash-breathe 2.4s ease-in-out infinite;
+
+  @keyframes splash-breathe {
+    50% {
+      transform: scale(1.08);
     }
   }
 }

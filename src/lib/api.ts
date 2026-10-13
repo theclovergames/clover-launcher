@@ -7,7 +7,7 @@ import type { Instance, InstanceEntry, InstanceInput, InstanceKind, AvailableVer
 
 import type { Settings, SteamState } from "@/screens/SettingsScreen";
 import type { RecentVote } from "@/components/VoteTicker";
-import type { ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats } from "@/types";
+import type { ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats } from "@/types";
 
 export type AccountRef = { uuid: string; name: string; skinUrl: string | null };
 
@@ -82,6 +82,8 @@ export type SystemInfo = {
 export type StorageUsage = { parts: { id: string; label: string; bytes: number }[]; reclaimable: number; gameDir: string };
 export type SkinEntry = { id: string; name: string; model: SkinModel; texture: string };
 export type TrayState = { available: boolean; canPlay: boolean };
+/** Fenêtre de chargement : `ratio` entre 0 et 1, `null` tant que l'avancement est inconnu. */
+export type SplashStatus = { message: string; ratio: number | null };
 /** `changedAt` : dernier changement de pseudo (ISO 8601). */
 export type NameChange = { allowed: boolean; changedAt: string | null; createdAt?: string | null };
 export type NameAvailability = "available" | "taken" | "not_allowed";
@@ -95,7 +97,7 @@ export const api = {
   instanceVersions: () => invoke<AvailableVersion[]>("instance_versions"),
   /** Octets à télécharger avant de jouer à cette version (0 si déjà installée). */
   downloadSize: (minecraft: string) => invoke<number>("download_size", { minecraft }),
-  /** Versions du loader (Fabric, Forge, NeoForge) pour `minecraft`, celle à proposer d'abord. */
+  /** Versions du loader (Fabric, Quilt, Forge, NeoForge) pour `minecraft`, celle à proposer d'abord. */
   instanceLoaders: (kind: InstanceKind, minecraft: string) => invoke<string[]>("instance_loaders", { kind, minecraft }),
   saveInstance: (id: string | null, input: InstanceInput) => invoke<string>("save_instance", { id, input }),
   selectInstance: (id: string) => invoke<void>("select_instance", { id }),
@@ -200,6 +202,9 @@ export const api = {
   checkUpdate: () => invoke<LauncherUpdate | null>("check_update"),
   /** Relance le launcher une fois la mise à jour installée : ne revient qu'en cas d'erreur. */
   installUpdate: () => invoke<void>("install_update"),
+  /** Interface chargée : la fenêtre principale remplace celle de chargement. */
+  appReady: () => invoke<void>("app_ready"),
+  splashStatus: () => invoke<SplashStatus>("splash_status"),
   listSkins: () => invoke<{ library: SkinEntry[] }>("list_skins"),
   addSkin: (bytes: Uint8Array, name: string, model: SkinModel) => invoke<SkinEntry>("add_skin", { bytes: Array.from(bytes), name, model }),
   renameSkin: (id: string, name: string) => invoke<string>("rename_skin", { id, name }),
@@ -234,7 +239,8 @@ export const api = {
   installPersonalDependencies: (files: string[], instance?: string) => invoke<{ added: string[]; missing: string[] }>("install_personal_dependencies", { files, instance: instance ?? null }),
   removePersonalMod: (id: string, instance?: string) => invoke<void>("remove_personal_mod", { id, instance: instance ?? null }),
   setPersonalModEnabled: (id: string, enabled: boolean, instance?: string) => invoke<void>("set_personal_mod_enabled", { id, enabled, instance: instance ?? null }),
-  updatePersonalMod: (id: string, instance?: string) => invoke<void>("update_personal_mod", { id, instance: instance ?? null }),
+  /** Met à jour le mod `id`, ou sans lui tous ceux qui ont une version à installer ; renvoie leur nombre. */
+  updatePersonalMods: (id: string | null, instance?: string) => invoke<number>("update_personal_mods", { id, instance: instance ?? null }),
   /** Filtrée sur la version de Minecraft de `instance`, de l'instance choisie sans elle. */
   searchModrinth: (kind: ModrinthKind, query: string, filters: SearchFilters, offset: number, instance?: string) =>
     invoke<ModrinthPage>("search_modrinth", { kind, query, filters, offset, instance: instance ?? null }),
@@ -251,7 +257,10 @@ export const api = {
   installModrinthContent: (kind: ModrinthKind, project: string, world?: string, instance?: string) =>
     invoke<string>("install_modrinth_content", { kind, project, world: world ?? null, instance: instance ?? null }),
   /** Crée et choisit une instance à partir du modpack ; renvoie son identifiant. */
-  installModpack: (project: string) => invoke<string>("install_modpack", { project }),
+  /** Versions installables d'un modpack (Fabric, Quilt, Forge, NeoForge). */
+  modpackVersions: (project: string) => invoke<ModpackVersion[]>("modpack_versions", { project }),
+  /** `version` : celle choisie sur la page du modpack ; la dernière stable sans elle. */
+  installModpack: (project: string, version?: string) => invoke<string>("install_modpack", { project, version: version ?? null }),
   /** Crée et choisit une instance depuis un `.mrpack` ou un `.zip` CurseForge choisi par le joueur ; `null` s'il annule. */
   importModpackFile: () => invoke<ImportedModpack | null>("import_modpack_file"),
   /** `mode` : identifiant d'un mode du manifeste à rejoindre directement, absent pour le menu du jeu. */

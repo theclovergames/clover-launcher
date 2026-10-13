@@ -13,7 +13,7 @@ Linux et Microsoft Store).
 - Connexion avec un compte Microsoft, plusieurs comptes possibles.
 - Une instance Clover Games qui suit le serveur : version, loader, mods et modes arrivent par un
   manifeste signé. Quand le serveur change de version, le launcher suit sans mise à jour.
-- Des instances personnelles Vanilla, Fabric, Forge et NeoForge, avec un dossier de jeu partagé ou
+- Des instances personnelles Vanilla, Fabric, Quilt, Forge et NeoForge, avec un dossier de jeu partagé ou
   séparé.
 - Découvrir : mods, shaders, packs de ressources, datapacks et modpacks (Modrinth), mondes
   (CurseForge), avec une page par projet. Import des modpacks `.mrpack` et CurseForge, export
@@ -76,10 +76,11 @@ La CI produit aussi le paquet MSIX du Microsoft Store (artefact `msix-store`). E
 `npm run tauri build` : `node scripts/msix.mjs`.
 
 Les clés privées ne sont jamais dans le dépôt. La CI les lit dans ses secrets :
-`TAURI_SIGNING_PRIVATE_KEY`, `CLOVER_MANIFEST_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
-`R2_SECRET_ACCESS_KEY` et `CURSEFORGE_API_KEY`. Seules les clés publiques sont dans le code. La clé
-de l'API CurseForge est lue à la compilation : sans elle, l'import des modpacks CurseForge cherche
-leurs fichiers sur Modrinth.
+`TAURI_SIGNING_PRIVATE_KEY`, `CLOVER_MANIFEST_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID` et
+`R2_SECRET_ACCESS_KEY`. Seules les clés publiques sont dans le code. La clé de l'API CurseForge
+reste dans les secrets du relais `relay/` (Worker Cloudflare sur `curseforge.clovergames.fr`) : le
+launcher n'en embarque aucune. Déploiement depuis `relay/` : `npx wrangler deploy`, et
+`npx wrangler secret put CURSEFORGE_API_KEY` pour changer la clé.
 
 ## Sécurité
 
@@ -102,6 +103,7 @@ plutôt que par une issue publique.
 | `src-tauri/src/instances.rs` | Instances, leurs dossiers et les versions officielles |
 | `manifest/` | Sources du manifeste et script de résolution et de signature |
 | `mod/` | Mod Fabric du serveur, installé avec l'instance Clover Games |
+| `relay/` | Relais de l'API CurseForge (Worker Cloudflare), qui garde la clé hors du launcher |
 | `scripts/` | Installation locale, paquet MSIX, publication et images Steam |
 
 ## Licence

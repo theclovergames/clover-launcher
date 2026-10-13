@@ -488,6 +488,7 @@ function attachGrab(viewer: Viewer, canvas: HTMLCanvasElement, moods: MoodAnimat
       // Le personnage occupe presque tout l'aperçu : de côté, le glisser le fait tourner.
       if (Math.abs(dx) > Math.abs(dy)) {
         pressed.turning = true;
+        canvas.style.cursor = "";
         document.documentElement.style.cursor = "ew-resize";
         rotateView(dx);
         pressed.x = event.clientX;
@@ -508,6 +509,7 @@ function attachGrab(viewer: Viewer, canvas: HTMLCanvasElement, moods: MoodAnimat
     stopFollowing();
     pressed = null;
     viewer.controls.enabled = true;
+    canvas.style.cursor = "";
     document.documentElement.style.cursor = "";
     if (!home || phase !== "held") return;
     moods.hold(false);
@@ -544,14 +546,22 @@ function attachGrab(viewer: Viewer, canvas: HTMLCanvasElement, moods: MoodAnimat
     originX = event.clientX;
     originY = event.clientY;
     viewer.controls.enabled = false;
+    canvas.style.cursor = "grabbing";
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
   };
+  // Main ouverte au survol du corps ; ailleurs, le curseur de rotation du canvas.
+  const onHover = (event: PointerEvent) => {
+    if (!pressed) canvas.style.cursor = !state.busy && bodyAt(event) ? "grab" : "";
+  };
   canvas.addEventListener("pointerdown", onPointerDown, { capture: true });
+  canvas.addEventListener("pointermove", onHover);
   return () => {
     cancelAnimationFrame(frame);
     stopFollowing();
+    canvas.removeEventListener("pointermove", onHover);
+    canvas.style.cursor = "";
     if (pressed || home) document.documentElement.style.cursor = "";
     if (home) {
       player.position.set(0, 0, 0);

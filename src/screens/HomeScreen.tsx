@@ -2,7 +2,7 @@ import { Wrench } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 
 import lobby from "@/assets/home/lobby.webp";
-import { QuickLinks, type ServerStatus, Status, WeekActivity } from "@/components/HomeExtras";
+import { QuickLinks, type ServerStatus, Status } from "@/components/HomeExtras";
 import { HERO_TONES, type HeroTone } from "@/lib/appearance";
 import { ModeGrid } from "@/components/ModeGrid";
 import { NewsList } from "@/components/NewsList";
@@ -11,7 +11,7 @@ import { PlayButton } from "@/components/PlayButton";
 import { SkinViewer } from "@/components/SkinViewer";
 import { VersionPicker } from "@/components/VersionPicker";
 import { forClover } from "@/lib/instances";
-import type { InstanceEntry, ModeStatus, NewsItem, PlaySession, PlayState, SkinLook } from "@/types";
+import type { InstanceEntry, ModeStatus, NewsItem, PlayState, SkinLook } from "@/types";
 
 type Props = {
   /** Pseudo du compte actif, au-dessus de son skin. */
@@ -30,6 +30,8 @@ type Props = {
   instances: InstanceEntry[];
   selectedInstance: string;
   onSelectInstance: (id: string) => void;
+  /** Ouvre la page d'une instance depuis le choix d'instance. */
+  onOpenInstance: (id: string) => void;
   onCreateInstance: () => void;
   onManageInstances: () => void;
   /** Ouvre d'office le choix d'instance (planche des maquettes). */
@@ -52,8 +54,6 @@ type Props = {
   onOpenNews: () => void;
   /** Article du blog : lu dans le launcher (ou sur le site s'il n'a pas de slug). */
   onReadNews: (item: NewsItem) => void;
-  /** Parties de toutes les instances, pour « Ta semaine » ; `null` pendant la lecture. */
-  sessions: PlaySession[] | null;
 };
 
 /** Hauteur du bandeau que le skin laisse libre : pastilles du haut, pseudo, marge du bas. */
@@ -82,9 +82,9 @@ function useHeroSkin() {
 /**
  * Accueil à la manière du launcher officiel : le lobby de Clover Games en grand, ton joueur debout
  * devant, à côté de l'instance à lancer et de « Jouer ». Dessous, les modes sur une ligne, puis les
- * actualités et ta semaine.
+ * actualités.
  */
-export function HomeScreen({ playerName, look, heroTone = "forest", onOpenConsole, play, modesBusy, onStop, onPlay, instances, selectedInstance, onSelectInstance, onCreateInstance, onManageInstances, versionOpen, server, animateSkin, modes, otherServers, onPlayServer, onRenameServer, onRenameError, news, maintenance = false, onOpenLink, onOpenNews, onReadNews, sessions }: Props) {
+export function HomeScreen({ playerName, look, heroTone = "forest", onOpenConsole, play, modesBusy, onStop, onPlay, instances, selectedInstance, onSelectInstance, onOpenInstance, onCreateInstance, onManageInstances, versionOpen, server, animateSkin, modes, otherServers, onPlayServer, onRenameServer, onRenameError, news, maintenance = false, onOpenLink, onOpenNews, onReadNews }: Props) {
   const skin = useHeroSkin();
   const busy = modesBusy ?? play.kind !== "ready";
   const shade = HERO_TONES[heroTone].shade;
@@ -113,7 +113,7 @@ export function HomeScreen({ playerName, look, heroTone = "forest", onOpenConsol
 
         <div className="relative mt-auto flex items-end justify-center gap-5 px-6 pb-5">
           <div className="relative flex shrink-0 flex-col items-center">
-            {playerName && <p className="max-w-40 truncate bg-black/40 px-2 pt-1 pb-0.5 font-pixel text-[15px] leading-none">{playerName}</p>}
+            {playerName && <p className="max-w-48 truncate bg-black/40 px-2.5 pt-1.5 pb-1 font-pixel text-[18px] leading-none">{playerName}</p>}
             <div aria-hidden className="absolute bottom-1 left-1/2 h-4 w-24 -translate-x-1/2 rounded-[50%] bg-black/60 blur-[6px]" />
             <SkinViewer look={look} width={Math.round(skin.height * 0.62)} height={skin.height} animate={animateSkin} />
           </div>
@@ -124,7 +124,7 @@ export function HomeScreen({ playerName, look, heroTone = "forest", onOpenConsol
               onOpenConsole={onOpenConsole}
               onStop={onStop}
               version={current ? `${current.name} · ${current.minecraft ?? "…"}${forClover(current) ? "" : " · solo"}` : ""}
-              picker={<VersionPicker instances={instances} selected={selectedInstance} onSelect={onSelectInstance} onCreate={onCreateInstance} onManage={onManageInstances} defaultOpen={versionOpen} />}
+              picker={<VersionPicker instances={instances} selected={selectedInstance} onSelect={onSelectInstance} onOpen={onOpenInstance} onCreate={onCreateInstance} onManage={onManageInstances} defaultOpen={versionOpen} />}
             />
           </div>
         </div>
@@ -145,10 +145,7 @@ export function HomeScreen({ playerName, look, heroTone = "forest", onOpenConsol
         <ModeGrid modes={modes} onPlay={onPlay} busy={busy} />
       </section>
 
-      <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_clamp(250px,24vw,320px)] items-end gap-4 px-1">
-        <NewsList news={news} onOpen={onReadNews} onAll={onOpenNews} />
-        <WeekActivity sessions={sessions} size="medium" surface="rounded-lg border border-border bg-card" />
-      </div>
+      <NewsList news={news} onOpen={onReadNews} onAll={onOpenNews} className="shrink-0 px-1" />
     </main>
   );
 }

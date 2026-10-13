@@ -18,12 +18,23 @@ const PAGE: u32 = 20;
 
 #[derive(Debug, Deserialize)]
 pub struct Version {
+    #[serde(default)]
+    pub id: String,
     pub project_id: String,
+    /// Nom donné par l'auteur (« Fabulously Optimized 6.4.0 ») ; vide pour certaines versions.
+    #[serde(default)]
+    pub name: String,
     pub version_number: String,
     pub version_type: String,
     pub files: Vec<File>,
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
+    #[serde(default)]
+    pub loaders: Vec<String>,
+    #[serde(default)]
+    pub game_versions: Vec<String>,
+    #[serde(default)]
+    pub date_published: String,
 }
 
 impl Version {
@@ -60,6 +71,9 @@ pub struct Hit {
     pub author: String,
     pub icon_url: Option<String>,
     pub downloads: u64,
+    /// Chargeurs du projet (Fabric, Forge…, Iris pour un shader), tirés de ses catégories.
+    #[serde(default, rename(deserialize = "categories"))]
+    pub loaders: Vec<String>,
     /// Sélection du catalogue Clover, même avant le premier téléchargement du jeu.
     #[serde(default, skip_deserializing)]
     pub provided_by_clover: bool,
@@ -102,6 +116,12 @@ pub struct Project {
     #[serde(skip_deserializing)]
     pub description_html: String,
     pub icon_url: Option<String>,
+    /// Chargeurs pris en charge (Fabric, Forge…, Iris pour un shader).
+    #[serde(default)]
+    pub loaders: Vec<String>,
+    /// Versions de Minecraft prises en charge, de la plus ancienne à la plus récente.
+    #[serde(default)]
+    pub game_versions: Vec<String>,
     /// Auteur tel que la recherche l'affiche ; absent si elle n'a pas répondu.
     #[serde(default)]
     pub author: Option<String>,
@@ -161,14 +181,14 @@ impl Kind {
         }
     }
 
-    /// `loader` : nom Modrinth du loader de l'instance, pour les mods.
-    fn facets(self, minecraft: &str, loader: &str) -> serde_json::Value {
+    /// `loaders` : noms Modrinth des loaders dont les mods tournent sur l'instance, pour les mods.
+    fn facets(self, minecraft: &str, loaders: &[&str]) -> serde_json::Value {
         let version = format!("versions:{minecraft}");
         match self {
             // Utiles côté client et sans rien exiger du serveur.
             Kind::Mod => serde_json::json!([
                 ["project_type:mod"],
-                [format!("categories:{loader}")],
+                loaders.iter().map(|loader| format!("categories:{loader}")).collect::<Vec<_>>(),
                 [version],
                 ["client_side:required", "client_side:optional"],
                 ["server_side:optional", "server_side:unsupported"],
@@ -176,9 +196,23 @@ impl Kind {
             Kind::Resourcepack => serde_json::json!([["project_type:resourcepack"], [version]]),
             Kind::Shader => serde_json::json!([["project_type:shader"], ["categories:iris"], [version]]),
             Kind::Datapack => serde_json::json!([["project_type:datapack"], [version]]),
-            Kind::Modpack => serde_json::json!([["project_type:modpack"], ["categories:fabric"]]),
+            Kind::Modpack => serde_json::json!([["project_type:modpack"], MODPACK_LOADERS.map(|loader| format!("categories:{loader}"))]),
         }
     }
+}
+
+/// Chargeurs des modpacks que le launcher sait installer.
+pub const MODPACK_LOADERS: [&str; 4] = ["fabric", "quilt", "forge", "neoforge"];
+
+/// Chargeurs affichés, dans cet ordre : ceux des mods, puis ceux des shaders. Le reste des
+/// catégories Modrinth (« minecraft » des packs, « datapack », thèmes) n'en est pas.
+const LOADERS: [&str; 6] = ["fabric", "quilt", "forge", "neoforge", "iris", "optifine"];
+
+/// Ne garde de `list` que les chargeurs connus, dans l'ordre de `LOADERS`.
+fn known_loaders(list: &mut Vec<String>) {
+    list.retain(|loader| LOADERS.contains(&loader.as_str()));
+    list.sort_by_key(|loader| LOADERS.iter().position(|known| known == loader));
+    list.dedup();
 }
 
 /// Ordre des résultats ; mêmes noms que le type `SearchSort` du front.
@@ -215,6 +249,9 @@ pub struct Filters {
     /// Toutes exigées à la fois.
     #[serde(default)]
     pub categories: Vec<String>,
+    /// Modpacks seulement : version de Minecraft exigée, celle de la nouvelle instance voulue.
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 /// Catégorie Modrinth (« worldgen », « 16x », « 512x+ ») : jamais autre chose qu'un nom de facette.
@@ -222,18 +259,29 @@ fn valid_category(category: &str) -> bool {
     (1..=32).contains(&category.len()) && category.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '+' | '_'))
 }
 
+/// Version de Minecraft (« 1.21.1 », « 25w14a », « 1.21-pre1 ») : même règle que pour les facettes.
+fn valid_game_version(version: &str) -> bool {
+    (1..=32).contains(&version.len()) && version.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
 fn endpoint(path: &str, params: &[(&str, &str)]) -> Result<Url> {
     Url::parse_with_params(&format!("{API}/{path}"), params).map_err(|e| GameError::InvalidVersion(e.to_string()))
 }
 
 /// Projets de type `kind` pour `minecraft`, triés et filtrés selon `filters`.
-pub async fn search(http: &reqwest::Client, kind: Kind, query: &str, minecraft: &str, loader: &str, filters: &Filters, offset: u32) -> Result<SearchPage> {
-    let mut facets = kind.facets(minecraft, loader);
+pub async fn search(http: &reqwest::Client, kind: Kind, query: &str, minecraft: &str, loaders: &[&str], filters: &Filters, offset: u32) -> Result<SearchPage> {
+    let mut facets = kind.facets(minecraft, loaders);
     for category in &filters.categories {
         if !valid_category(category) {
             return Err(GameError::InvalidVersion(format!("catégorie « {category} »")));
         }
         facets.as_array_mut().expect("facettes en liste").push(serde_json::json!([format!("categories:{category}")]));
+    }
+    if let (Kind::Modpack, Some(version)) = (kind, filters.version.as_deref()) {
+        if !valid_game_version(version) {
+            return Err(GameError::InvalidVersion(format!("version « {version} »")));
+        }
+        facets.as_array_mut().expect("facettes en liste").push(serde_json::json!([format!("versions:{version}")]));
     }
     let query = query.trim();
     let url = endpoint(
@@ -252,16 +300,37 @@ pub async fn search(http: &reqwest::Client, kind: Kind, query: &str, minecraft: 
         .send()
         .await?
         .error_for_status()?;
-    Ok(response.json().await?)
+    let mut page: SearchPage = response.json().await?;
+    page.hits.iter_mut().for_each(|hit| known_loaders(&mut hit.loaders));
+    Ok(page)
 }
 
-/// Dernière version de `project` (identifiant ou slug) pour `loader` et `minecraft` (toutes
-/// versions sans lui), stable de préférence.
-pub async fn compatible_version(http: &reqwest::Client, project: &str, loader: &str, minecraft: Option<&str>) -> Result<Option<Version>> {
+/// Versions d'un modpack que le launcher sait installer, de la plus récente à la plus ancienne.
+pub async fn modpack_versions(http: &reqwest::Client, project: &str) -> Result<Vec<Version>> {
     if !valid_project(project) {
         return Err(GameError::InvalidVersion(format!("projet Modrinth « {project} »")));
     }
-    let loaders = serde_json::json!([loader]).to_string();
+    let url = endpoint(&format!("project/{project}/version"), &[("loaders", &serde_json::json!(MODPACK_LOADERS).to_string())])?;
+    let mut versions: Vec<Version> = http.get(url).timeout(TIMEOUT).send().await?.error_for_status()?.json().await?;
+    versions.iter_mut().for_each(|version| known_loaders(&mut version.loaders));
+    Ok(versions)
+}
+
+/// Version `version` (identifiant) de `project` : Modrinth refuse une version d'un autre projet.
+pub async fn project_version(http: &reqwest::Client, project: &str, version: &str) -> Result<Version> {
+    if !valid_project(project) || !valid_project(version) {
+        return Err(GameError::InvalidVersion(format!("version Modrinth « {version} »")));
+    }
+    Ok(http.get(format!("{API}/project/{project}/version/{version}")).timeout(TIMEOUT).send().await?.error_for_status()?.json().await?)
+}
+
+/// Dernière version de `project` (identifiant ou slug) pour l'un des `loaders` et `minecraft`
+/// (toutes versions sans lui), stable de préférence.
+pub async fn compatible_version(http: &reqwest::Client, project: &str, loaders: &[&str], minecraft: Option<&str>) -> Result<Option<Version>> {
+    if !valid_project(project) {
+        return Err(GameError::InvalidVersion(format!("projet Modrinth « {project} »")));
+    }
+    let loaders = serde_json::json!(loaders).to_string();
     let game_versions = serde_json::json!([minecraft]).to_string();
     let mut params = vec![("loaders", loaders.as_str())];
     if minecraft.is_some() {
@@ -288,6 +357,7 @@ pub async fn project(http: &reqwest::Client, project: &str) -> Result<Project> {
     }
     let response = http.get(format!("{API}/project/{project}")).timeout(TIMEOUT).send().await?.error_for_status()?;
     let mut page: Project = response.json().await?;
+    known_loaders(&mut page.loaders);
     page.gallery.sort_by_key(|image| (!image.featured, image.ordering));
     page.description_html = description_html(&page.body);
     page.author = author(http, &page.id).await;
@@ -370,16 +440,22 @@ pub async fn identify(http: &reqwest::Client, hashes: Vec<String>) -> Result<Has
     Ok(response.json().await?)
 }
 
-/// Dernière version Fabric pour `minecraft` de chaque fichier connu de Modrinth, par empreinte.
-pub async fn updates(http: &reqwest::Client, hashes: Vec<String>, minecraft: &str, loader: &str) -> Result<HashMap<String, Version>> {
+/// Dernière version pour l'un des `loaders` et `minecraft` de chaque fichier connu de Modrinth, par
+/// empreinte ; seulement parmi les versions stables si `stable`.
+pub async fn updates(http: &reqwest::Client, hashes: Vec<String>, minecraft: &str, loaders: &[&str], stable: bool) -> Result<HashMap<String, Version>> {
     #[derive(Serialize)]
     struct Query<'a> {
         hashes: Vec<String>,
         algorithm: &'static str,
-        loaders: [&'a str; 1],
+        loaders: &'a [&'a str],
         game_versions: [&'a str; 1],
+        #[serde(skip_serializing_if = "Option::is_none")]
+        version_types: Option<[&'static str; 1]>,
     }
-    let query = Query { hashes, algorithm: "sha512", loaders: [loader], game_versions: [minecraft] };
+    if hashes.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let query = Query { hashes, algorithm: "sha512", loaders, game_versions: [minecraft], version_types: stable.then_some(["release"]) };
     let response = http
         .post(format!("{API}/version_files/update"))
         .json(&query)
@@ -405,6 +481,8 @@ mod tests {
         assert!(!valid_category(""));
         assert!(!valid_category("worldgen\"]"));
         assert!(!valid_category("Worldgen"));
+        assert!(valid_game_version("1.21.1") && valid_game_version("25w14a") && valid_game_version("1.21-pre1"));
+        assert!(!valid_game_version("") && !valid_game_version("1.21\"]") && !valid_game_version("1.21 1"));
         assert_eq!(serde_json::from_str::<Sort>(r#""newest""#).unwrap(), Sort::Newest);
     }
 
@@ -412,11 +490,16 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn searches_by_category() {
-        let potato = Filters { sort: Sort::Downloads, categories: vec!["potato".into()] };
-        let page = search(&reqwest::Client::new(), Kind::Shader, "", "1.21.1", "fabric", &potato, 0).await.unwrap();
+        let potato = Filters { sort: Sort::Downloads, categories: vec!["potato".into()], version: None };
+        let page = search(&reqwest::Client::new(), Kind::Shader, "", "1.21.1", &["fabric"], &potato, 0).await.unwrap();
         assert!(page.total_hits > 0);
-        let invalid = Filters { sort: Sort::Relevance, categories: vec!["a\"]".into()] };
-        let invalid = search(&reqwest::Client::new(), Kind::Mod, "", "1.21.1", "fabric", &invalid, 0).await;
+        // Modpacks d'une seule version de Minecraft : moins nombreux que tous les modpacks.
+        let all = search(&reqwest::Client::new(), Kind::Modpack, "", "", &[], &Filters::default(), 0).await.unwrap();
+        let old = Filters { version: Some("1.12.2".into()), ..Filters::default() };
+        let old = search(&reqwest::Client::new(), Kind::Modpack, "", "", &[], &old, 0).await.unwrap();
+        assert!(old.total_hits > 0 && old.total_hits < all.total_hits);
+        let invalid = Filters { sort: Sort::Relevance, categories: vec!["a\"]".into()], version: None };
+        let invalid = search(&reqwest::Client::new(), Kind::Mod, "", "1.21.1", &["fabric"], &invalid, 0).await;
         assert!(invalid.is_err());
     }
 
@@ -473,5 +556,25 @@ mod tests {
         assert!(out["gallery"][0].get("featured").is_none());
         assert!(out.get("body").is_none());
         assert_eq!(out["gallery"][0]["rawUrl"], serde_json::Value::Null);
+    }
+    #[test]
+    fn keeps_only_known_loaders_in_order() {
+        let mut list = vec!["technology".into(), "neoforge".into(), "minecraft".into(), "fabric".into(), "forge".into(), "fabric".into()];
+        known_loaders(&mut list);
+        assert_eq!(list, ["fabric", "forge", "neoforge"]);
+    }
+
+    /// Réseau : un modpack publié pour Forge et NeoForge, et ses chargeurs dans la recherche.
+    #[tokio::test]
+    #[ignore = "réseau"]
+    async fn lists_modpacks_on_forge_and_neoforge() {
+        let http = super::super::download::client();
+        let versions = modpack_versions(&http, "battlearmorytacz").await.unwrap();
+        assert!(versions.iter().any(|version| version.loaders.iter().any(|loader| loader == "forge")));
+        assert!(versions.iter().all(|version| !version.id.is_empty() && version.loaders.iter().all(|loader| MODPACK_LOADERS.contains(&loader.as_str()))));
+        let version = project_version(&http, "battlearmorytacz", &versions[0].id).await.unwrap();
+        assert_eq!(version.id, versions[0].id);
+        let page = search(&http, Kind::Modpack, "BattleArmory TACZ", "", &[], &Filters::default(), 0).await.unwrap();
+        assert!(page.hits.iter().any(|hit| hit.slug == "battlearmorytacz" && hit.loaders.contains(&"forge".to_owned())));
     }
 }

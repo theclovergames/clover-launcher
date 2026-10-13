@@ -7,6 +7,9 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
 
 ### Nouveautés
 
+- **Fenêtre de chargement** à l'ouverture : le launcher cherche sa mise à jour, puis s'affiche
+  une fois prêt, sans écran vide. Les mises à jour s'y téléchargent avec leur avancement, et
+  l'installeur Windows ne montre plus sa propre fenêtre.
 - **Découvrir** remplace Mods dans le menu : mods, shaders, packs de ressources, datapacks,
   mondes et modpacks à installer, avec tri et catégories pour chaque type. Chaque projet a sa
   vraie page (galerie, description, liens), et ce qui est déjà installé est marqué. « Pour »
@@ -20,7 +23,7 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
 - **Accueil refait**, à la manière du launcher officiel : le lobby de Clover Games en grand, ton
   joueur debout devant avec son pseudo au-dessus de la tête comme en jeu, à côté de l'instance à
   lancer et de « Jouer ». L'état du serveur et les liens (vote, Discord, boutique, site) sont posés
-  sur l'image ; dessous, les modes de jeu sur une ligne, les dernières actualités et ta semaine.
+  sur l'image ; dessous, les modes de jeu sur une ligne et les dernières actualités.
   La teinte du bandeau (Paramètres › Apparence) colore le dégradé sur l'image.
 - **Arguments Java optimisés**, activés d'office : le ramasse-miettes G1 réglé comme le launcher
   officiel, pour moins de saccades. Ils se coupent dans Paramètres › Jeu, ou pour une seule
@@ -33,8 +36,28 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
   vérifiés et posés dans ses mondes, prêts à jouer. Ceux que leur auteur réserve à CurseForge
   s'ouvrent sur son site. Chaque monde affiche sa seed, avec « Copier ».
 - **Survie** apparaît dans les modes de jeu, en « Bientôt ».
+- **Chargeurs affichés** dans Découvrir : Fabric, Forge, NeoForge, Quilt (Iris, OptiFine pour un
+  shader) sur chaque résultat, et sur la page d'un projet avec ses versions de Minecraft.
+- **Instances Quilt**, à côté de Vanilla, Fabric, Forge et NeoForge : elles chargent les mods Quilt
+  et ceux de Fabric, que Découvrir propose ensemble. L'import depuis un autre launcher reprend
+  aussi les instances Quilt, avec leurs mods.
+- **Modpacks Quilt, Forge et NeoForge**, en plus de Fabric : depuis Découvrir, avec une liste
+  « Chargeur » à côté du tri, ou depuis un fichier. Pour les mods, Découvrir rappelle le chargeur de l'instance
+  visée, le seul qui s'y installe. La page d'un modpack choisit la version à installer, avec son loader et sa version de
+  Minecraft ; la dernière stable d'office.
 - Modpacks CurseForge importés depuis un fichier : leurs mods, packs de ressources et shaders se
   téléchargent depuis CurseForge. Seuls ceux que leur auteur y réserve restent à ajouter à la main.
+- « Créer l'instance » sur un modpack de la liste fait d'abord choisir sa version. Depuis
+  « Nouvelle instance », « Partir d'un modpack » ne montre que ceux de la version de Minecraft
+  choisie (filtre retirable) et propose la version du pack qui lui correspond.
+- Installer un modpack qu'on a déjà le rappelle avant : une seconde instance se crée à côté de la
+  première, sans y toucher.
+- Depuis l'accueil, la flèche d'une instance dans le choix d'instance ouvre directement sa page.
+- L'instance Clover Games a pour image le logo officiel du serveur ; la bannière de version reste
+  en fond de sa page.
+- Onglet Mods : un mod qui a une version plus récente sur Modrinth le signale, et « Tout mettre à
+  jour » remplace d'un coup tous ceux qui en ont une. Une version stable n'est remplacée que par
+  une version stable.
 
 ### Simplifications
 
@@ -46,8 +69,9 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
   disque. Avec un dossier de jeu commun, ses mondes et réglages restent : ils sont aussi ceux de
   Clover Games.
 - Instances : vues « Par version » et « Toutes les instances ». Une carte de version choisit
-  l'instance à lancer sans ouvrir le panneau de création, et ouvrir la page d'une instance ne
-  change plus celle que « Jouer » lance.
+  l'instance à lancer sans ouvrir le panneau de création, et son « + » crée une autre instance de
+  la même version. Ouvrir la page d'une instance ne change plus celle que « Jouer » lance.
+- « Ta semaine » quitte l'accueil : ton temps de jeu reste sur la page Profil.
 - Skins : onglets « Mes skins » et « Galerie », tri dans un menu.
 - Profil : statistiques en français (éliminations, éliminations finales).
 - Mêmes onglets, champs de recherche, listes vides, confirmations et marges sur tous les écrans.

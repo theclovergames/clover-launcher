@@ -1,6 +1,7 @@
-import { ArrowRight, Check, Circle, Clock, Copy, FolderOpen, LoaderCircle, PenLine, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowRight, Check, Circle, Clock, Copy, Download, FolderOpen, LoaderCircle, PenLine, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { ModpackVersionSelect } from "@/components/ModpackVersionSelect";
 import { PlayerHead } from "@/components/PlayerHead";
 import { ShareLogButton } from "@/components/ShareLogButton";
 import { CapeFront } from "@/components/SkinFront";
@@ -8,8 +9,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import type { NameAvailability, NameChange } from "@/lib/api";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
 import { ownedCapeText } from "@/lib/capes";
+import { preferredModpackVersion } from "@/lib/game-versions";
 import { cn } from "@/lib/utils";
-import type { Cape, SkinModel } from "@/types";
+import type { Cape, ModpackVersion, SkinModel } from "@/types";
 
 const content = "mc-frame gap-5 border-[var(--mc-outline)] bg-card p-6 ring-0 sm:max-w-[560px]";
 const footer = "-mx-6 -mb-6 rounded-b-[6px] border-border bg-[#17150f] px-6 py-4";
@@ -311,12 +313,15 @@ export function NameDialog(props: {
   );
 }
 
-/** Ce que l'on demande de confirmer : titre, explication, et l'élément concerné (chemin, nom). */
-export type Confirmation = { title: string; description: string; detail?: string; confirm: string; onConfirm: () => void };
+/**
+ * Ce que l'on demande de confirmer : titre, explication, et l'élément concerné (chemin, nom).
+ * `install` : rien n'est supprimé, le bouton est celui d'une installation.
+ */
+export type Confirmation = { title: string; description: string; detail?: string; confirm: string; onConfirm: () => void; install?: boolean };
 
 /**
- * Confirmation d'une action qui ne se défait pas d'un clic (supprimer, retirer). Le texte reste
- * affiché pendant l'animation de fermeture.
+ * Confirmation d'une action qui ne se défait pas d'un clic (supprimer, retirer, installer un
+ * doublon). Le texte reste affiché pendant l'animation de fermeture.
  */
 export function ConfirmDialog({ ask, onClose }: { ask: Confirmation | null; onClose: () => void }) {
   const last = useRef(ask);
@@ -340,10 +345,84 @@ export function ConfirmDialog({ ask, onClose }: { ask: Confirmation | null; onCl
               shown?.onConfirm();
               onClose();
             }}
-            className={cn(primaryButton, "bg-destructive text-white")}
+            className={cn(primaryButton, !shown?.install && "bg-destructive text-white")}
           >
-            <Trash2 className="size-4" aria-hidden />
+            {shown?.install ? <Download className="size-4" aria-hidden /> : <Trash2 className="size-4" aria-hidden />}
             {shown?.confirm}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Modpack à installer depuis la liste de Découvrir : `minecraft`, version de la nouvelle instance
+ * voulue ; `existing`, instance déjà créée depuis ce pack.
+ */
+export type ModpackRequest = { project: string; title: string; minecraft?: string; existing?: string; onInstall: (version: string) => void };
+
+/**
+ * Choix de la version d'un modpack avant d'en créer l'instance, la dernière stable pour la version
+ * de Minecraft voulue d'office. Le texte reste affiché pendant l'animation de fermeture.
+ */
+export function ModpackDialog({ request, versions: load, onClose }: { request: ModpackRequest | null; versions: (project: string) => Promise<ModpackVersion[]>; onClose: () => void }) {
+  const last = useRef(request);
+  if (request) last.current = request;
+  const shown = last.current;
+  const project = request?.project;
+  const [list, setList] = useState<{ project: string; versions: ModpackVersion[]; error?: string } | null>(null);
+  const [chosen, setChosen] = useState<string | null>(null);
+  useEffect(() => {
+    if (!project) return;
+    let alive = true;
+    setChosen(null);
+    load(project)
+      .then((versions) => alive && setList({ project, versions }))
+      .catch((reason) => alive && setList({ project, versions: [], error: String(reason) }));
+    return () => {
+      alive = false;
+    };
+  }, [project, load]);
+  const loaded = list && list.project === shown?.project ? list : null;
+  const versions = loaded?.versions ?? null;
+  const minecraft = shown?.minecraft;
+  const fits = !minecraft || !versions?.length || versions.some((version) => version.gameVersions.includes(minecraft));
+  const value = chosen ?? (versions ? preferredModpackVersion(versions, minecraft)?.id : undefined);
+  return (
+    <Dialog open={request !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className={content}>
+        <DialogHeader>
+          <DialogTitle className="font-display text-2xl font-normal">{shown?.title}</DialogTitle>
+          <DialogDescription className="text-[13px] leading-relaxed">Choisis la version du modpack : elle devient une nouvelle instance, dans son propre dossier.</DialogDescription>
+        </DialogHeader>
+        <ModpackVersionSelect versions={versions} value={value} onChange={setChosen} className="h-10 w-full" />
+        {loaded?.error ? (
+          <p className="text-[13px] text-error">{loaded.error}</p>
+        ) : (
+          versions?.length === 0 && <p className="text-[13px] text-muted-foreground">Aucune version pour Fabric, Quilt, Forge ou NeoForge : ce modpack ne s'installe pas dans le launcher.</p>
+        )}
+        {!fits && <p className="text-[13px] text-muted-foreground">Aucune version pour Minecraft {minecraft} : la plus récente est proposée.</p>}
+        {shown?.existing && (
+          <p className="rounded-md border border-border bg-sunken px-3 py-2 text-[13px] leading-relaxed">
+            Tu as déjà l'instance « {shown.existing} » de ce modpack : une seconde se crée à côté, sans toucher à la première.
+          </p>
+        )}
+        <DialogFooter className={footer}>
+          <button type="button" onClick={onClose} className={secondaryButton}>
+            Annuler
+          </button>
+          <button
+            type="button"
+            disabled={!value}
+            onClick={() => {
+              if (value) shown?.onInstall(value);
+              onClose();
+            }}
+            className={primaryButton}
+          >
+            <Download className="size-4" aria-hidden />
+            Créer l'instance
           </button>
         </DialogFooter>
       </DialogContent>

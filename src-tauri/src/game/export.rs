@@ -248,7 +248,7 @@ mod tests {
         let index = br#"{"formatVersion":1,"game":"minecraft","versionId":"1.0.0","name":"Survie","files":[],"dependencies":{"minecraft":"1.21.1","fabric-loader":"0.16.10"}}"#;
         write(&out, index, &[Entry { path: "options.txt".into(), file: root.join("options.txt"), lookup: false }]).unwrap();
         let read = super::super::content::read_index(&out).unwrap().unwrap();
-        assert_eq!(read.versions().unwrap(), ("1.21.1".into(), "0.16.10".into()));
+        assert_eq!(read.versions().unwrap(), ("1.21.1".into(), super::super::personal::ModLoader::Fabric, "0.16.10".into()));
         let mut zip = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
         let mut text = String::new();
         zip.by_name("overrides/options.txt").unwrap().read_to_string(&mut text).unwrap();

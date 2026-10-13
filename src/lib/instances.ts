@@ -1,4 +1,4 @@
-import { Anvil, Box, Clover, Hammer, Layers } from "lucide-react";
+import { Anvil, Box, Clover, Grid2x2, Hammer, Layers } from "lucide-react";
 
 import type { InstanceEntry, InstanceKind } from "@/types";
 
@@ -6,12 +6,13 @@ export const KINDS: Record<InstanceKind, { label: string; hint: string; Icon: ty
   clover: { label: "Clover", hint: "Version et mods du serveur, toujours à jour", Icon: Clover },
   vanilla: { label: "Vanilla", hint: "Minecraft sans mods", Icon: Box },
   fabric: { label: "Fabric", hint: "Mods légers et vite à jour : Sodium, Iris…", Icon: Layers },
+  quilt: { label: "Quilt", hint: "Mods Quilt, et la plupart des mods Fabric", Icon: Grid2x2 },
   forge: { label: "Forge", hint: "Mods Forge, des plus anciens aux plus récents", Icon: Anvil },
   neoforge: { label: "NeoForge", hint: "Mods NeoForge, la suite de Forge depuis 1.20", Icon: Hammer },
 };
 
-/** Instance personnelle avec son loader (Fabric, Forge ou NeoForge) : ses mods sont ceux du joueur. */
-export const ownLoader = (kind: InstanceKind | undefined): kind is "fabric" | "forge" | "neoforge" => kind === "fabric" || kind === "forge" || kind === "neoforge";
+/** Instance personnelle avec son loader (Fabric, Quilt, Forge ou NeoForge) : ses mods sont ceux du joueur. */
+export const ownLoader = (kind: InstanceKind | undefined): kind is "fabric" | "quilt" | "forge" | "neoforge" => kind === "fabric" || kind === "quilt" || kind === "forge" || kind === "neoforge";
 
 /** Loader qui charge les mods d'une instance : Fabric pour Clover, aucun pour Vanilla. */
 export const modLoader = (kind: InstanceKind): string | null => (ownLoader(kind) ? KINDS[kind].label : kind === "clover" ? "Fabric" : null);

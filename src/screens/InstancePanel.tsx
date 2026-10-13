@@ -1,6 +1,7 @@
 import { Check, ChevronRight, PackageSearch, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { InstanceArt } from "@/components/InstanceArt";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
@@ -52,8 +53,11 @@ export function InstancePanel({
   existing?: Existing;
   /** Version de Minecraft du serveur (manifeste) : le type Clover n'existe que pour elle. */
   serverVersion?: string | null;
-  /** En création : partir d'un modpack (recherche Modrinth ou fichier) plutôt que d'une instance vide. */
-  onImportModpack?: () => void;
+  /**
+   * En création : partir d'un modpack (recherche Modrinth ou fichier) plutôt que d'une instance vide,
+   * pour la version de Minecraft choisie dans le panneau.
+   */
+  onImportModpack?: (minecraft: string | null) => void;
   services?: Services;
 }) {
   useEffect(() => {
@@ -93,7 +97,7 @@ function VersionArt({ version }: { version: string | null }) {
   ));
 }
 
-function Form({ draft, onClose, onSave, existing, serverVersion, onImportModpack, services }: { draft: InstanceDraft; onClose: () => void; onSave: (id: string | null, input: InstanceInput) => Promise<void>; existing?: Existing; serverVersion: string | null; onImportModpack?: () => void; services: Services }) {
+function Form({ draft, onClose, onSave, existing, serverVersion, onImportModpack, services }: { draft: InstanceDraft; onClose: () => void; onSave: (id: string | null, input: InstanceInput) => Promise<void>; existing?: Existing; serverVersion: string | null; onImportModpack?: (minecraft: string | null) => void; services: Services }) {
   const [input, setInput] = useState(draft.input);
   // Autre carte cliquée, panneau ouvert : le formulaire passe à cette version sans être recréé.
   useEffect(() => {
@@ -219,7 +223,6 @@ function Form({ draft, onClose, onSave, existing, serverVersion, onImportModpack
           </h3>
           <ul className="flex flex-col gap-2">
             {siblings.map((entry) => {
-              const { Icon } = KINDS[entry.kind];
               const active = entry.id === existing.selected;
               return (
                 <li key={entry.id}>
@@ -236,10 +239,7 @@ function Form({ draft, onClose, onSave, existing, serverVersion, onImportModpack
                     )}
                   >
                     <span className="relative shrink-0">
-                      <img src={versionImage(entry.minecraft ?? "")} alt="" className="size-10 rounded-md object-cover" />
-                      <span className={cn("absolute -right-1.5 -bottom-1.5 grid size-5 place-items-center rounded-md border-2 border-card", entry.kind === "clover" ? "bg-primary text-primary-foreground" : "bg-secondary")}>
-                        <Icon className="size-3" strokeWidth={2.5} aria-hidden />
-                      </span>
+                      <InstanceArt entry={entry} className="size-10 rounded-md" badge="absolute -right-1.5 -bottom-1.5 size-5 rounded-md border-2 border-card" icon="size-3" />
                     </span>
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span className="truncate text-sm font-bold">{entry.name}</span>
@@ -257,13 +257,13 @@ function Form({ draft, onClose, onSave, existing, serverVersion, onImportModpack
       {onImportModpack && (
         <button
           type="button"
-          onClick={onImportModpack}
+          onClick={() => onImportModpack(input.minecraft)}
           className="group flex items-center gap-3 rounded-lg border border-dashed border-border px-3 py-2.5 text-left transition-colors hover:border-accent/60 hover:bg-accent/5"
         >
           <PackageSearch className="size-5 shrink-0 text-accent" aria-hidden />
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="text-sm font-bold">Partir d'un modpack</span>
-            <span className="text-[11px] leading-snug text-muted-foreground">Trouve-en un dans Découvrir, ou importe un fichier .mrpack ou .zip.</span>
+            <span className="text-[11px] leading-snug text-muted-foreground">Trouve-en un{input.minecraft ? ` pour Minecraft ${input.minecraft}` : ""} dans Découvrir, ou importe un fichier .mrpack ou .zip.</span>
           </span>
           <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
         </button>

@@ -7,9 +7,6 @@
 // en silencieux par-dessus l'installation existante, puis relance le launcher. Refuse si un
 // Minecraft lancé par Clover tourne : l'installation fermerait le launcher, et le jeu avec lui.
 // Comptes, instances et mondes (~/.cloverlauncher) ne sont pas touchés.
-//
-// La clé de l'API CurseForge vient de CURSEFORGE_API_KEY, sinon de Sécurités/curseforge-api-key.txt
-// du workspace ; sans elle, l'import des modpacks CurseForge se replie sur Modrinth.
 
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -31,11 +28,7 @@ const target = process.env.CARGO_TARGET_DIR ?? join(root, "src-tauri", "target")
 const config = join(target, "install-local.conf.json");
 mkdirSync(target, { recursive: true });
 writeFileSync(config, JSON.stringify({ bundle: { createUpdaterArtifacts: false } }));
-const keyFile = join(root, "..", "Sécurités", "curseforge-api-key.txt");
-const curseforge = process.env.CURSEFORGE_API_KEY ?? (existsSync(keyFile) ? readFileSync(keyFile, "utf8").trim() : undefined);
-if (!curseforge) console.warn("Pas de clé de l'API CurseForge : l'import des modpacks CurseForge passera par Modrinth.");
-const env = curseforge ? { ...process.env, CURSEFORGE_API_KEY: curseforge } : process.env;
-execFileSync("npm", ["run", "tauri", "build", "--", "--bundles", "nsis", "--config", `"${config}"`], { cwd: root, stdio: "inherit", shell: true, env });
+execFileSync("npm", ["run", "tauri", "build", "--", "--bundles", "nsis", "--config", `"${config}"`], { cwd: root, stdio: "inherit", shell: true });
 
 // Sans `version` dans tauri.conf.json, Tauri prend celle de Cargo.toml.
 const version = readFileSync(join(root, "src-tauri", "Cargo.toml"), "utf8").match(/^version = "(.+)"$/m)?.[1];
