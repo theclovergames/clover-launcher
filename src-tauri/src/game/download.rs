@@ -93,12 +93,17 @@ pub async fn download_all(
 }
 
 pub async fn ensure(http: &reqwest::Client, download: &Download) -> Result<()> {
+    ensure_with_progress(http, download, &|_| {}).await
+}
+
+/// Comme `ensure`, en donnant les octets reçus à `on_bytes` : pour un gros fichier seul (un monde).
+pub async fn ensure_with_progress(http: &reqwest::Client, download: &Download, on_bytes: &(dyn Fn(u64) + Sync)) -> Result<()> {
     if is_installed(download).await? {
         return Ok(());
     }
     let mut last_error = None;
     for _ in 0..ATTEMPTS {
-        match fetch(http, download).await {
+        match fetch(http, download, on_bytes).await {
             Ok(()) => return Ok(()),
             Err(error) => last_error = Some(error),
         }
@@ -121,7 +126,7 @@ async fn is_installed(download: &Download) -> Result<bool> {
     }
 }
 
-async fn fetch(http: &reqwest::Client, download: &Download) -> Result<()> {
+async fn fetch(http: &reqwest::Client, download: &Download, on_bytes: &(dyn Fn(u64) + Sync)) -> Result<()> {
     if let Some(parent) = download.path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -139,6 +144,7 @@ async fn fetch(http: &reqwest::Client, download: &Download) -> Result<()> {
         }
         written += chunk.len() as u64;
         file.write_all(&chunk).await?;
+        on_bytes(written);
     }
     file.flush().await?;
     drop(file);

@@ -1,4 +1,4 @@
-import { House, Newspaper, Puzzle, Shirt, SquareTerminal, Boxes } from "lucide-react";
+import { Boxes, Compass, House, Newspaper, Shirt, SquareTerminal } from "lucide-react";
 
 import launcherLogo from "@/assets/brand/launcher.png";
 import { PlayerHead } from "@/components/PlayerHead";
@@ -10,7 +10,7 @@ export const TAB_LABELS: Record<Tab, string> = {
   home: "Accueil",
   news: "Actualités",
   instances: "Instances",
-  mods: "Mods",
+  discover: "Découvrir",
   skins: "Skins",
   profile: "Profil",
   console: "Console",
@@ -21,7 +21,7 @@ const ITEMS: { id: Exclude<Tab, "settings" | "profile">; Icon: typeof House }[] 
   { id: "home", Icon: House },
   { id: "news", Icon: Newspaper },
   { id: "instances", Icon: Boxes },
-  { id: "mods", Icon: Puzzle },
+  { id: "discover", Icon: Compass },
   { id: "skins", Icon: Shirt },
   { id: "console", Icon: SquareTerminal },
 ];

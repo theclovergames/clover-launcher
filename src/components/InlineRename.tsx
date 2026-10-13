@@ -68,7 +68,7 @@ export function InlineRename({
           if (event.key === "Escape") setDraft(null);
         }}
         onFocus={(event) => event.currentTarget.select()}
-        className={cn("h-7 min-w-0 flex-1 rounded-md border border-accent bg-[#100e0b] px-2 text-sm font-semibold text-foreground outline-none select-text", className)}
+        className={cn("h-7 min-w-0 flex-1 rounded-md border border-accent bg-sunken px-2 text-sm font-semibold text-foreground outline-none select-text", className)}
       />
     );
   }

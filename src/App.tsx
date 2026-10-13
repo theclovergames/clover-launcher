@@ -15,7 +15,7 @@ import { ownedCapeText } from "@/lib/capes";
 import { accent, heroTone } from "@/lib/appearance";
 import { setCrashReports } from "@/lib/crash-reports";
 import { formatLog } from "@/lib/log";
-import { networkPlayers } from "@/lib/site";
+import { networkPlayers, SITE_URL } from "@/lib/site";
 import { ConsoleScreen } from "@/screens/ConsoleScreen";
 import { CrashDialog, NameDialog } from "@/screens/Dialogs";
 import { Breadcrumb } from "@/components/Breadcrumb";
@@ -25,18 +25,19 @@ import { InstancesScreen } from "@/screens/InstancesScreen";
 import { NewsScreen } from "@/screens/NewsScreen";
 import { ArticleReader, type ReaderTarget } from "@/components/ArticleReader";
 import { InstanceSettings } from "@/screens/InstanceSettings";
-import { acceptsMods, InstancePicker } from "@/components/InstancePicker";
 import { ownLoader } from "@/lib/instances";
-import { ModrinthDialog } from "@/screens/ModrinthDialog";
-import { ModsScreen, type ModsView } from "@/screens/ModsScreen";
+import { Page } from "@/components/Page";
+import { CONTENT_KINDS, type ContentKind } from "@/lib/content-kinds";
+import { back, canGoBack, type Names, route, type Route, trail } from "@/lib/routes";
+import { DiscoverScreen } from "@/screens/DiscoverScreen";
+import { sectionLabel } from "@/screens/InstanceDetail";
+import { InstanceMods, ModDetail } from "@/screens/InstanceMods";
 import { DEFAULT_IMPORT, OnboardingAccounts, OnboardingDone, OnboardingImport, type LoginState } from "@/screens/OnboardingScreen";
-import { type Account, type Settings, SettingsScreen, type SettingsTab, type HiddenSetting, type SteamState, settingsTabLabel } from "@/screens/SettingsScreen";
+import { type Account, type Settings, SettingsScreen, type SettingsTab, type HiddenSetting, type SteamState } from "@/screens/SettingsScreen";
 import { type SkinStatus, SkinsScreen } from "@/screens/SkinsScreen";
 import { ProfileScreen } from "@/screens/ProfileScreen";
-import type { Cape, ConsoleSnapshot, DetectedInstance, GameExited, ImportItem, ImportResult, ImportScan, LauncherNotification, InstanceEntry, InstanceInput, ModInfo, ModrinthKind, PersonalMod, PlaySession, PlayState, Profile, Progress, SavedSkin, SkinLook, SkinModel, Tab } from "@/types";
+import type { Cape, ConsoleSnapshot, DetectedInstance, GameExited, ImportItem, ImportResult, ImportScan, LauncherNotification, InstanceEntry, InstanceInput, ModInfo, PersonalMod, SearchFilters, PlaySession, PlayState, Profile, Progress, SavedSkin, SkinLook, SkinModel, Tab } from "@/types";
 
-/** Fonctions dont la ligne de réglage reste masquée tant qu'elles ne sont pas branchées. */
-const UPCOMING: HiddenSetting[] = [];
 /** Paquet du Microsoft Store : le Store gère les mises à jour du launcher. */
 const STORE_HIDDEN: HiddenSetting[] = ["autoUpdate"];
 
@@ -82,7 +83,6 @@ const CRASH_LOG_ENTRIES = 40;
 /** Délai laissé au jeu pour se fermer (sauvegarde du monde) avant de proposer « Forcer ». */
 const CLOSE_GRACE_MS = 15_000;
 
-const SITE_URL = "https://clovergames.fr";
 
 /** `import` : import depuis les autres launchers ouvert depuis les paramètres. */
 type Phase = "loading" | "onboarding-accounts" | "onboarding-import" | "onboarding-done" | "signin" | "import" | "app";
@@ -146,22 +146,22 @@ export default function App() {
   const [importedInstances, setImportedInstances] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const [tab, setTab] = useState<Tab>("home");
+  /** Pages ouvertes, de la première à celle affichée : « Retour » dépile (voir `lib/routes.ts`). */
+  const [stack, setStack] = useState<Route[]>([{ tab: "home" }]);
+  const current = stack[stack.length - 1];
+  const tab = current.tab;
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
-  /** Écran quitté par un raccourci : le fil d'Ariane y ramène. */
-  const [from, setFrom] = useState<Tab | null>(null);
-  /** Navigation principale (barre latérale, roue dentée) : pas de fil d'Ariane. */
-  const navigate = useCallback((next: Tab) => {
-    setFrom(null);
-    if (next !== "instances") setInstanceDraft(null);
-    setTab(next);
+  /** Menu, roue dentée : une pile neuve, sans fil d'Ariane. */
+  const navigate = useCallback((next: Tab | Route) => {
+    const target = typeof next === "string" ? route(next) : next;
+    if (target.tab !== "instances") setInstanceDraft(null);
+    setStack([target]);
   }, []);
-  const jump = (next: Tab, section?: SettingsTab) => {
-    if (section) setSettingsTab(section);
-    setFrom(next === tab ? from : tab);
-    setTab(next);
-  };
-  const [modsView, setModsView] = useState<ModsView>("catalogue");
+  /** Sous-page, ou lien d'un écran à l'autre : « Retour » ramène ici. */
+  const push = (next: Route) => setStack((pages) => [...pages, next]);
+  /** Même page, autre onglet ou autre filtre : « Retour » n'y repasse pas. */
+  const replace = (next: Route) => setStack((pages) => [...pages.slice(0, -1), next]);
+  const goBack = () => setStack(back);
 
   const [catalogue, setCatalogue] = useState<Catalogue | null>(null);
   const [server, setServer] = useState<ServerStatus | null>(null);
@@ -169,7 +169,8 @@ export default function App() {
   const [feed, setFeed] = useState<SiteFeed>({ news: null, modes: null, maintenance: null, votes: null });
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [storage, setStorage] = useState<StorageUsage | null>(null);
-  const [personalMods, setPersonalMods] = useState<PersonalMod[]>([]);
+  /** Mods du joueur d'une instance : celle de la page ouverte, sinon celle choisie. */
+  const [personal, setPersonal] = useState<{ instance: string; mods: PersonalMod[] } | null>(null);
   const personalGeneration = useRef(0);
   const [instances, setInstances] = useState<InstanceEntry[]>([]);
   const selectedInstance = stored?.selectedInstance ?? "clover";
@@ -220,10 +221,7 @@ export default function App() {
     await api.selectInstance(id);
     // Vidée seulement si l'instance change : l'effet qui recharge la liste suit `selectedInstance`
     // et ne repasserait pas pour la même instance.
-    if (id !== selectedInstance) {
-      personalGeneration.current += 1;
-      setPersonalMods([]);
-    }
+    if (id !== selectedInstance) personalGeneration.current += 1;
     await refreshStored();
   }, [refreshStored, selectedInstance]);
 
@@ -542,15 +540,19 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [tab, settingsTab]);
 
-  const refreshPersonalMods = useCallback(() => {
+  const refreshPersonalMods = useCallback((instance: string) => {
     const request = ++personalGeneration.current;
-    return api.personalMods().then((mods) => { if (request === personalGeneration.current) setPersonalMods(mods); })
+    return api.personalMods(instance).then((mods) => { if (request === personalGeneration.current) setPersonal({ instance, mods }); })
       .catch((reason) => { if (request === personalGeneration.current) setNotice(String(reason)); });
   }, []);
+  /** Instance dont les mods comptent : celle de la page ouverte, sinon celle que « Jouer » lance. */
+  const modsInstance = current.tab === "instances" && current.instance ? current.instance : selectedInstance;
+  const modsKind = instances.find((entry) => entry.id === modsInstance)?.kind;
+  const modsOf = (instance: string) => (personal?.instance === instance ? personal.mods : null);
 
   useEffect(() => {
-    if ((tab === "mods" || tab === "instances") && activeInstance?.kind !== "vanilla") refreshPersonalMods();
-  }, [tab, selectedInstance, activeInstance?.kind, refreshPersonalMods]);
+    if ((tab === "instances" || tab === "home") && modsKind && modsKind !== "vanilla") refreshPersonalMods(modsInstance);
+  }, [tab, modsInstance, modsKind, refreshPersonalMods]);
 
   /** Réglage modifié : appliqué tout de suite, enregistré peu après (le curseur de mémoire bouge vite). */
   const updateSettings = useCallback((patch: Partial<Settings>) => {
@@ -785,70 +787,88 @@ export default function App() {
     }
   };
 
-  // ── Mes mods ──
-  const togglePersonalMod = (id: string, enabled: boolean) => {
-    setPersonalMods((all) => all.map((mod) => (mod.id === id ? { ...mod, enabled } : mod)));
-    api.setPersonalModEnabled(id, enabled).catch((reason) => setNotice(String(reason)));
+  // ── Mods du joueur ──
+  const togglePersonalMod = (instance: string, id: string, enabled: boolean) => {
+    setPersonal((all) => all && all.instance === instance ? { instance, mods: all.mods.map((mod) => (mod.id === id ? { ...mod, enabled } : mod)) } : all);
+    api.setPersonalModEnabled(id, enabled, instance).catch((reason) => setNotice(String(reason)));
   };
 
   /** Ajoute les fichiers un par un : un .jar refusé n'empêche pas les autres d'être ajoutés. */
-  const addPersonalMods = async (files: File[]) => {
+  const addPersonalMods = async (instance: string, files: File[]) => {
     const errors: string[] = [];
     const added: string[] = [];
-    for (const file of files) await api.addPersonalMod(file).then(() => added.push(file.name), (reason) => errors.push(String(reason)));
+    for (const file of files) await api.addPersonalMod(file, instance).then(() => added.push(file.name), (reason) => errors.push(String(reason)));
     // Un mod qui exige Fabric API, Cloth Config… planterait sans elles : elles viennent de Modrinth.
     if (added.length > 0) {
       await api
-        .installPersonalDependencies(added)
+        .installPersonalDependencies(added, instance)
         .then(({ missing }) => {
           if (missing.length > 0) errors.push(`Dépendances introuvables pour cette version de Minecraft : ${missing.join(", ")}. Le jeu risque de planter avec ces mods.`);
         })
         .catch((reason) => errors.push(`Dépendances non vérifiées : ${reason}`));
     }
     if (errors.length > 0) setNotice(errors.join(" "));
-    await refreshPersonalMods();
+    await refreshPersonalMods(instance);
   };
 
-  /** Mods de l'instance choisie : écran Mods, ou onglet de la page de l'instance. */
-  const modsScreen = (embedded: boolean) => (
-    <ModsScreen
-      embedded={embedded}
-      key={selectedInstance}
-      view={ownLoader(activeInstance?.kind) ? "personal" : modsView}
-      onView={setModsView}
-      mods={ownLoader(activeInstance?.kind) ? [] : modInfos}
-      catalogueVisible={!ownLoader(activeInstance?.kind)}
-      instances={instances}
-      instanceId={selectedInstance}
-      onInstance={(id) => selectInstance(id).catch((reason) => setNotice(String(reason)))}
-      minecraftVersion={activeInstance?.minecraft ?? catalogue?.minecraft.version ?? ""}
+  /** Onglet Mods de la page d'une instance : le catalogue Clover pour Clover Games, puis les mods du joueur. */
+  const modsTab = (entry: InstanceEntry) => (
+    <InstanceMods
+      catalogue={entry.kind === "clover" ? modInfos : undefined}
+      personal={modsOf(entry.id)}
+      minecraftVersion={entry.minecraft ?? catalogue?.minecraft.version ?? ""}
       onToggle={toggleMod}
-      personal={personalMods}
-      onTogglePersonal={togglePersonalMod}
-      onUpdatePersonal={(id) => changePersonalMod(api.updatePersonalMod(id))}
-      onRemovePersonal={(id) => changePersonalMod(api.removePersonalMod(id))}
-      onAddFiles={(files) => void addPersonalMods(files)}
-      modrinth={{ project: api.modrinthProject }}
-      onSearch={() => setSearchKind("mod")}
-      onOpenLink={open}
+      onTogglePersonal={(id, enabled) => togglePersonalMod(entry.id, id, enabled)}
+      onUpdatePersonal={(id) => changePersonalMod(entry.id, api.updatePersonalMod(id, entry.id))}
+      onRemovePersonal={(id) => changePersonalMod(entry.id, api.removePersonalMod(id, entry.id))}
+      onAddFiles={(files) => void addPersonalMods(entry.id, files)}
+      onAdd={() => push({ tab: "discover", kind: "mod", target: entry.id })}
+      onOpen={(mod) => push({ tab: "instances", instance: entry.id, section: "mods", mod })}
     />
   );
 
-  /** Recherche Modrinth ouverte, sur ce type de contenu. */
-  const [searchKind, setSearchKind] = useState<ModrinthKind | null>(null);
+  /** Ouvre Découvrir sur `kind`, pour `target` (l'instance choisie sans elle) ; `world` : monde d'un datapack. */
+  const openDiscover = (kind: ContentKind, target?: string, world?: string) => push({ tab: "discover", kind, target, world });
+
+  /** Noms du fil d'Ariane. */
+  const names: Names = {
+    tab: (id) => TAB_LABELS[id],
+    instance: (id) => instances.find((entry) => entry.id === id)?.name ?? "Instance",
+    section: sectionLabel,
+    kind: (kind) => CONTENT_KINDS[kind].label,
+    mod: (mod) => (mod.list === "catalogue" ? modInfos.find((other) => other.id === mod.id)?.name : personal?.mods.find((other) => other.id === mod.id)?.name) ?? "Mod",
+  };
+
   /** Fichiers posés pendant la création d'une instance depuis un modpack. */
   const [modpackProgress, setModpackProgress] = useState<[number, number] | null>(null);
+  /** Octets reçus et attendus du monde en cours de téléchargement. */
+  const [worldProgress, setWorldProgress] = useState<[number, number] | null>(null);
   /** Change après chaque installation : la page de l'instance relit son dossier. */
   const [contentRevision, setContentRevision] = useState(0);
   useEffect(() => {
-    const unlisten = listen<[number, number]>("modpack-progress", ({ payload }) => setModpackProgress(payload));
-    return () => void unlisten.then((stop) => stop());
+    const modpack = listen<[number, number]>("modpack-progress", ({ payload }) => setModpackProgress(payload));
+    const world = listen<[number, number]>("world-progress", ({ payload }) => setWorldProgress(payload));
+    return () => {
+      void modpack.then((stop) => stop());
+      void world.then((stop) => stop());
+    };
   }, []);
-  const worlds = useCallback((instance: string) => api.instanceContent(instance, "saves").then((list) => list.map((world) => world.name)), []);
-  const installedMods = useCallback(
-    (instance: string) => api.personalMods(instance).then((mods) => mods.flatMap((mod) => (mod.projectId ? [mod.projectId] : []))),
+  const worlds = useCallback((instance: string) => api.instanceContent(instance, "saves"), []);
+  /** Mondes sur CurseForge, tout le reste sur Modrinth. */
+  const searchContent = useCallback(
+    (kind: ContentKind, query: string, filters: SearchFilters, offset: number, instance: string) =>
+      kind === "world" ? api.searchWorlds(query, filters, offset, instance) : api.searchModrinth(kind, query, filters, offset, instance),
     [],
   );
+  const contentPage = useCallback((kind: ContentKind, project: string) => (kind === "world" ? api.worldPage(project) : api.modrinthProject(project)), []);
+  /** Projets Modrinth déjà installés : « Mes mods », ou packs du dossier (d'un monde pour les datapacks). */
+  const installedProjects = useCallback(async (kind: ContentKind, instance: string, world?: string) => {
+    if (kind === "mod") return (await api.personalMods(instance)).flatMap((mod) => (mod.projectId ? [mod.projectId] : []));
+    const folder = kind === "shader" ? "shaderpacks" : kind === "resourcepack" ? "resourcepacks" : kind === "datapack" ? "datapacks" : null;
+    if (!folder) return [];
+    const list = await api.instanceContent(instance, folder);
+    return list.flatMap((entry) => (entry.projectId && (kind !== "datapack" || entry.world === world) ? [entry.projectId] : []));
+  }, []);
   /** Modpack d'un fichier : l'instance créée devient l'instance choisie. */
   const importModpackFile = async () => {
     setModpackProgress(null);
@@ -863,12 +883,25 @@ export default function App() {
       setModpackProgress(null);
     }
   };
-  /** Installe dans `instance`, choisie dans la recherche : pas forcément celle choisie dans le launcher. */
-  const installFromModrinth = async (kind: ModrinthKind, project: string, instance: string, world?: string) => {
+  /**
+   * Installe dans `instance`, choisie dans la recherche : pas forcément celle choisie dans le
+   * launcher. Un monde renvoie le nom de son dossier, pour y jouer aussitôt.
+   */
+  const installFromModrinth = async (kind: ContentKind, project: string, instance: string, world?: string): Promise<string | void> => {
     const target = instances.find((entry) => entry.id === instance);
+    if (kind === "world") {
+      setWorldProgress(null);
+      try {
+        const folder = await api.installWorld(project, instance);
+        setContentRevision((value) => value + 1);
+        return folder;
+      } finally {
+        setWorldProgress(null);
+      }
+    }
     if (kind === "mod") {
       await api.installModrinthMod(project, instance);
-      if (instance === selectedInstance) await refreshPersonalMods();
+      if (instance === modsInstance) await refreshPersonalMods(instance);
     } else if (kind === "modpack") {
       setModpackProgress(null);
       try {
@@ -882,7 +915,7 @@ export default function App() {
       // Les shaders passent par Iris : activé dans le catalogue Clover, installé d'office ailleurs.
       const cloverMods = settings?.enabledMods ?? defaultMods;
       if (kind === "shader" && instance === "clover" && !cloverMods.includes("iris")) updateSettings({ enabledMods: [...cloverMods, "iris"] });
-      if (kind === "shader" && ownLoader(target?.kind) && instance === selectedInstance) await refreshPersonalMods();
+      if (kind === "shader" && ownLoader(target?.kind) && instance === modsInstance) await refreshPersonalMods(instance);
     }
     setContentRevision((value) => value + 1);
   };
@@ -900,8 +933,8 @@ export default function App() {
     setInstanceDraft(null);
   };
 
-  const changePersonalMod = (action: Promise<void>) =>
-    action.then(refreshPersonalMods).catch((reason) => setNotice(String(reason)));
+  const changePersonalMod = (instance: string, action: Promise<void>) =>
+    action.then(() => refreshPersonalMods(instance)).catch((reason) => setNotice(String(reason)));
 
   // Serveurs Clover Games exclus : l'adresse du serveur, celles des modes et leurs sous-domaines.
   const cloverHosts = catalogue ? [catalogue.server.host, ...catalogue.modes.flatMap((mode) => mode.host ?? [])] : [];
@@ -1132,7 +1165,7 @@ export default function App() {
             onBack={() => setPhase("onboarding-accounts")}
             onContinue={() => {
               setPhase(phase === "import" ? "app" : "onboarding-done");
-              if (phase === "import" && importTarget === "instance") jump("instances");
+              if (phase === "import" && importTarget === "instance") navigate("instances");
             }}
           />
         ) : phase === "onboarding-done" ? (
@@ -1208,20 +1241,14 @@ export default function App() {
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
         <SideNav tab={tab} onTab={navigate} head={profile?.skin?.url ?? activeAccount?.skinUrl ?? null} />
         <div className={tab === "home" ? "flex min-w-0 flex-1 flex-col gap-2" : "tile flex min-w-0 flex-1 flex-col overflow-hidden"}>
-          {from && (
-            <Breadcrumb
-              trail={[TAB_LABELS[from], TAB_LABELS[tab], ...(tab === "settings" ? [settingsTabLabel(settingsTab)] : [])]}
-              onBack={() => navigate(from)}
-            />
-          )}
+          {tab !== "home" && canGoBack(stack) && <Breadcrumb crumbs={trail(current, names)} onBack={goBack} onOpen={replace} />}
           {tab === "home" && (
             <HomeScreen
+              playerName={profile?.name ?? activeAccount?.name ?? ""}
               look={look}
               heroTone={heroTone(settings.hero)}
               animateSkin={settings.animatedSkin && settings.animations !== "reduced"}
-              enabledMods={activeInstance?.kind === "vanilla" ? [] : ownLoader(activeInstance?.kind) ? personalMods.filter((mod) => mod.enabled && mod.status.kind === "ok").map((mod) => mod.name) : modInfos.filter((mod) => mod.enabled && mod.available).map((mod) => mod.name)}
-              onManageMods={() => jump("mods")}
-              onOpenConsole={() => jump("console")}
+              onOpenConsole={() => push(route("console"))}
               play={play}
               modesBusy={playFor("clover").kind !== "ready" || Boolean(launching)}
               onStop={(force) => void stopGame(selectedInstance, force)}
@@ -1232,8 +1259,8 @@ export default function App() {
               instances={instances}
               selectedInstance={selectedInstance}
               onSelectInstance={(id) => selectInstance(id).catch((reason) => setNotice(String(reason)))}
-              onCreateInstance={() => { setInstanceDraft(newInstance()); jump("instances"); }}
-              onManageInstances={() => jump("instances")}
+              onCreateInstance={() => { setInstanceDraft(newInstance()); push(route("instances")); }}
+              onManageInstances={() => push(route("instances"))}
               server={server && { online: server.online, players: networkPlayers(feed, catalogue?.modes ?? []) }}
               modes={(catalogue?.modes ?? []).map((mode) => ({
                 id: mode.id,
@@ -1241,6 +1268,7 @@ export default function App() {
                 icon: mode.image,
                 players: modePlayers(feed, mode.id),
                 quickPlay: Boolean(mode.host),
+                soon: mode.soon,
               }))}
               otherServers={otherServers}
               onRenameServer={renameServer}
@@ -1249,7 +1277,7 @@ export default function App() {
               news={feed.news ?? []}
               maintenance={feed.maintenance === true}
               onOpenLink={open}
-              onOpenNews={() => jump("news")}
+              onOpenNews={() => push(route("news"))}
               sessions={sessions}
               onReadNews={(item) =>
                 item.slug ? setReading({ source: "clover", slug: item.slug, title: item.title, category: item.category ?? null, publishedAt: item.publishedAt, url: item.url }) : open(item.url)
@@ -1259,9 +1287,30 @@ export default function App() {
 
           {tab === "news" && <NewsScreen onOpenLink={open} onRead={setReading} />}
 
-          {tab === "instances" && (
+          {current.tab === "instances" && current.mod && (
+            <Page>
+              <ModDetail
+                key={`${current.instance}-${current.mod.id}`}
+                open={current.mod}
+                catalogue={instances.find((entry) => entry.id === current.instance)?.kind === "clover" ? modInfos : undefined}
+                personal={modsOf(current.instance ?? selectedInstance)}
+                minecraftVersion={instances.find((entry) => entry.id === current.instance)?.minecraft ?? catalogue?.minecraft.version ?? ""}
+                onToggle={toggleMod}
+                onTogglePersonal={(id, enabled) => togglePersonalMod(current.instance ?? selectedInstance, id, enabled)}
+                onUpdatePersonal={(id) => changePersonalMod(current.instance ?? selectedInstance, api.updatePersonalMod(id, current.instance))}
+                onRemovePersonal={(id) => changePersonalMod(current.instance ?? selectedInstance, api.removePersonalMod(id, current.instance))}
+                onRemoved={goBack}
+                load={api.modrinthProject}
+                onOpenLink={open}
+              />
+            </Page>
+          )}
+          {current.tab === "instances" && !current.mod && (
             <div className="flex min-h-0 flex-1">
             <InstancesScreen
+              opened={current.instance ? { id: current.instance, section: current.section } : null}
+              onOpen={(id, section) => (current.instance === id ? replace({ tab: "instances", instance: id, section }) : push({ tab: "instances", instance: id, section }))}
+              onSection={(section) => replace({ tab: "instances", instance: current.instance, section })}
               instances={instances}
               selected={selectedInstance}
               viewing={instanceDraft && !instanceDraft.id ? instanceDraft.input.minecraft : null}
@@ -1287,15 +1336,16 @@ export default function App() {
                   entry={entry}
                   locked={playFor(entry.id).kind !== "ready"}
                   launcherMemoryGb={settings.memoryAuto ? (system?.autoMemoryGb ?? 4) : settings.memoryGb}
+                  launcherOptimizedJava={settings.optimizedJava}
                   onSaved={() => void refreshInstances()}
                   onChangeVersion={entry.kind === "clover" ? undefined : () => editInstance(entry)}
                   onNotice={setNotice}
                 />
               )}
               onOpenFolder={(id, folder, world) => api.openInstanceFolder(id, folder, world).catch((reason) => setNotice(String(reason)))}
-              mods={modsScreen(true)}
+              renderMods={modsTab}
               contentRevision={contentRevision}
-              onSearch={setSearchKind}
+              onSearch={openDiscover}
               onImport={() => openImport("import", "instance")}
               onPin={(id, pinned) => api.setInstancePinned(id, pinned).then(refreshInstances).catch((reason) => setNotice(String(reason)))}
               onDuplicate={(id) =>
@@ -1310,26 +1360,40 @@ export default function App() {
                   ? (id) => api.createDesktopShortcut(id).then(() => setNotice("Raccourci créé sur le bureau.")).catch((reason) => setNotice(String(reason)))
                   : undefined
               }
-              onRemove={(id) => api.removeInstance(id).then(refreshInstances).catch((reason) => setNotice(String(reason)))}
+              onDelete={(id) =>
+                api
+                  .deleteInstance(id)
+                  .then(() => {
+                    // Sa page n'existe plus : retour à la liste.
+                    if (current.instance === id) navigate("instances");
+                    setNotice("Instance supprimée : son dossier est dans la corbeille.");
+                  })
+                  .then(refreshInstances)
+                  .catch((reason) => setNotice(String(reason)))
+              }
             />
-            {instanceDraft && <InstancePanel draft={instanceDraft} onClose={() => setInstanceDraft(null)} onSave={saveInstance} existing={{ instances, selected: selectedInstance, onSelect: (id) => selectInstance(id).catch((reason) => setNotice(String(reason))) }} serverVersion={serverVersion} onImportModpack={() => { setInstanceDraft(null); setSearchKind("modpack"); }} />}
+            {instanceDraft && <InstancePanel draft={instanceDraft} onClose={() => setInstanceDraft(null)} onSave={saveInstance} existing={{ instances, selected: selectedInstance, onSelect: (id) => selectInstance(id).catch((reason) => setNotice(String(reason))) }} serverVersion={serverVersion} onImportModpack={() => { setInstanceDraft(null); openDiscover("modpack"); }} />}
             </div>
           )}
 
-          {tab === "mods" && activeInstance?.kind === "vanilla" && (
-            <main className="flex flex-1 flex-col items-center justify-center gap-4">
-              <h1 className="font-display text-2xl">{activeInstance.name} se lance sans mods</h1>
-              <p className="text-sm text-muted-foreground">Choisis une instance Clover, Fabric, Forge ou NeoForge pour gérer ses mods.</p>
-              <InstancePicker
-                instances={instances.filter(acceptsMods)}
-                value=""
-                placeholder="Choisir une instance"
-                onChange={(id) => selectInstance(id).catch((reason) => setNotice(String(reason)))}
-                label="Instance dont tu gères les mods"
-              />
-            </main>
+          {current.tab === "discover" && (
+            <DiscoverScreen
+              route={current}
+              onRoute={replace}
+              onOpenProject={(project) => push({ ...current, project })}
+              instances={instances}
+              defaultTarget={selectedInstance}
+              installed={installedProjects}
+              search={searchContent}
+              onInstall={installFromModrinth}
+              worlds={worlds}
+              progress={{ modpack: modpackProgress ?? undefined, world: worldProgress ?? undefined }}
+              onImportFile={importModpackFile}
+              load={contentPage}
+              onPlayWorld={launching ? undefined : (id, world) => startGame(id, () => selectInstance(id).then(() => api.playWorld(id, world)).then(refreshInstances))}
+              onOpenLink={open}
+            />
           )}
-          {tab === "mods" && activeInstance?.kind !== "vanilla" && modsScreen(false)}
 
           {tab === "skins" && profile && (
             <SkinsScreen
@@ -1364,7 +1428,7 @@ export default function App() {
               playBusy={playFor("clover").kind !== "ready" || Boolean(launching)}
               onPlay={(mode) => startGame("clover", () => selectInstance("clover").then(() => (mode ? api.play(mode) : api.playInstance("clover"))))}
               onRename={() => setRenaming(true)}
-              onOpenSkins={() => jump("skins")}
+              onOpenSkins={() => push(route("skins"))}
               onOpenLink={open}
             />
           )}
@@ -1383,7 +1447,7 @@ export default function App() {
 
           {tab === "settings" && (
             <SettingsScreen
-              hidden={system?.store ? [...UPCOMING, ...STORE_HIDDEN] : UPCOMING}
+              hidden={system?.store ? STORE_HIDDEN : []}
               tab={settingsTab}
               onTab={setSettingsTab}
               settings={settings}
@@ -1436,22 +1500,6 @@ export default function App() {
           onOpenChange={setRenaming}
         />
       )}
-
-      <ModrinthDialog
-        open={searchKind !== null}
-        onOpenChange={(next) => !next && setSearchKind(null)}
-        kind={searchKind ?? "mod"}
-        onKind={setSearchKind}
-        instances={instances}
-        defaultInstance={selectedInstance}
-        installedMods={installedMods}
-        search={api.searchModrinth}
-        onInstall={installFromModrinth}
-        worlds={worlds}
-        progress={modpackProgress}
-        onImportFile={importModpackFile}
-        onOpenLink={open}
-      />
 
       <ArticleReader target={reading} onClose={() => setReading(null)} onOpenLink={open} />
 

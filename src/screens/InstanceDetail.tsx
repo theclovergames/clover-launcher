@@ -1,10 +1,12 @@
-import { Box, Clover, Database, FolderOpen, Globe, Heart, Image as ImageIcon, PackageOpen, Play, Search, Server, Settings2, SquareTerminal, Sun, Trash2 } from "lucide-react";
+import { AppWindow, Box, Check, Clover, Copy, Database, Expand, FolderOpen, FolderSearch, Globe, Heart, Image as ImageIcon, PackageOpen, Play, Plus, Server, Sprout, SquareTerminal, Sun, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
 import { ActivityHeatmap } from "@/components/ActivityHeatmap";
-import { Breadcrumb } from "@/components/Breadcrumb";
+import { EmptyState } from "@/components/EmptyState";
 import { RunningBadge } from "@/components/RunningBadge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs } from "@/components/Tabs";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { GameButton } from "@/components/GameButton";
 import { InlineRename } from "@/components/InlineRename";
@@ -14,23 +16,27 @@ import { primaryButton, secondaryButton } from "@/lib/buttons";
 import { opensWorldsDirectly } from "@/lib/game-versions";
 import { KINDS, instanceSummary } from "@/lib/instances";
 import { formatDuration, playStats, topServers } from "@/lib/play-history";
-import { cn } from "@/lib/utils";
+import { cn, formatSize } from "@/lib/utils";
+import type { InstanceSection } from "@/lib/routes";
 import { versionImage } from "@/lib/version-art";
-import type { ContentEntry, ContentFolder, InstanceEntry, ModrinthKind, PlaySession, PlayState, WorldInfo } from "@/types";
+import { type Confirmation, ConfirmDialog } from "@/screens/Dialogs";
+import type { ContentEntry, ContentFolder, InstanceEntry, PlaySession, PlayState, WorldInfo } from "@/types";
+import type { ContentKind } from "@/lib/content-kinds";
 
-type Services = Pick<typeof api, "playHistory" | "instanceContent" | "setContentEnabled" | "trashContent" | "renameWorld">;
+type Services = Pick<typeof api, "playHistory" | "instanceContent" | "setContentEnabled" | "trashContent" | "showContent" | "renameWorld">;
 
 type Props = {
   entry: InstanceEntry;
   play: PlayState;
   running: boolean;
-  onBack: () => void;
   onPlay: () => void;
   /** Lance le jeu directement dans ce monde (dossier de `saves/`). */
   onPlayWorld?: (world: string) => void;
   /** Export en `.mrpack` ; absent pour l'instance Clover Games, qui suit le serveur. */
   onExport?: () => void;
   onStop: (force: boolean) => void;
+  /** Supprime l'instance, après confirmation ; absent pour Clover Games, qui suit le serveur. */
+  onDelete?: () => void;
   /** Contenu de l'onglet Paramètres (réglages propres à l'instance). */
   settings?: ReactNode;
   /** Noms donnés aux serveurs rejoints, par adresse en minuscules. */
@@ -43,15 +49,16 @@ type Props = {
   mods?: ReactNode;
   /** Change après une installation : l'onglet ouvert relit son dossier. */
   contentRevision?: number;
-  /** Ouvre la recherche Modrinth sur ce type de contenu. */
-  onSearch?: (kind: ModrinthKind) => void;
-  /** Onglet ouvert au premier rendu (maquettes). */
-  defaultSection?: Section;
+  /** Ouvre Découvrir pour cette instance ; `world` : monde visé par des datapacks. */
+  onSearch?: (kind: ContentKind, world?: string) => void;
+  /** Onglet ouvert, tenu par la navigation : « Retour » y ramène. */
+  section: Section;
+  onSection: (section: Section) => void;
   services?: Services;
 };
 
-type Section = "overview" | "mods" | ContentFolder | "settings";
-export type InstanceSection = Section;
+type Section = InstanceSection;
+export type { InstanceSection };
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "overview", label: "Aperçu" },
@@ -61,43 +68,34 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: "resourcepacks", label: "Packs de ressources" },
   { id: "shaderpacks", label: "Shaders" },
   { id: "screenshots", label: "Captures" },
-  { id: "settings", label: "Paramètres" },
+  { id: "settings", label: "Réglages" },
 ];
+
+/** Nom d'un onglet, pour le fil d'Ariane. */
+export const sectionLabel = (section: Section) => SECTIONS.find((item) => item.id === section)?.label ?? section;
 
 const SERVER = "play.clovergames.fr";
 
 const dateFormat = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric" });
 const sessionFormat = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-const sizeFormat = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });
 const iconButton = cn(secondaryButton, "h-11 w-11 px-0");
 const card = "rounded-lg border border-border bg-card";
 
-function formatSize(bytes: number): string {
-  const units = ["o", "Ko", "Mo", "Go"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${sizeFormat.format(value)} ${units[unit]}`;
-}
-
 /** Page d'une instance : son temps de jeu, son activité, ses serveurs et le contenu de son dossier. */
-export function InstanceDetail({ entry, play, running, onBack, onPlay, onPlayWorld, onExport, onStop, settings, serverNames = {}, onRenameServer, onOpenFolder, mods, contentRevision = 0, onSearch, defaultSection = "overview", services = api }: Props) {
-  const [section, setSection] = useState<Section>(defaultSection);
+export function InstanceDetail({ entry, play, running, onPlay, onPlayWorld, onExport, onStop, onDelete, settings, serverNames = {}, onRenameServer, onOpenFolder, mods, contentRevision = 0, onSearch, section: requested, onSection, services = api }: Props) {
   const { Icon } = KINDS[entry.kind];
   // Les shaders passent par Iris, un mod : Vanilla n'en charge pas.
   const sections = SECTIONS.filter((item) => (item.id !== "shaderpacks" || entry.kind !== "vanilla") && (item.id !== "mods" || mods) && (item.id !== "settings" || settings));
+  // Un onglet absent (Mods d'une instance Vanilla) ramène à l'aperçu.
+  const section = sections.some((item) => item.id === requested) ? requested : "overview";
 
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <Breadcrumb trail={["Instances", entry.name]} onBack={onBack} />
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-8">
         <header className="relative shrink-0 overflow-hidden border-b border-border">
           <img src={versionImage(entry.minecraft ?? "")} alt="" className="absolute inset-0 size-full object-cover opacity-45" />
           <div className="absolute inset-0 bg-gradient-to-r from-[#14120f] via-[#14120f]/85 to-[#14120f]/30" aria-hidden />
-          <div className="relative flex items-end gap-5 px-12 pt-10 pb-6">
+          <div className="relative flex items-end gap-5 px-10 pt-8 pb-6">
             <span className="relative shrink-0">
               <img src={versionImage(entry.minecraft ?? "")} alt="" className="size-20 rounded-lg border-2 border-[var(--mc-outline)] object-cover" />
               <span className={cn("absolute -right-2 -bottom-2 grid size-8 place-items-center rounded-md border-2 border-[#14120f]", entry.kind === "clover" ? "bg-primary text-primary-foreground" : "bg-secondary")}>
@@ -107,46 +105,36 @@ export function InstanceDetail({ entry, play, running, onBack, onPlay, onPlayWor
             <div className="flex min-w-0 flex-1 flex-col gap-2.5">
               <h1 className="truncate font-display text-[30px] leading-none">{entry.name}</h1>
               <p className="flex flex-wrap items-center gap-2">
-                <span className="rounded-md border border-border bg-[#100e0b]/80 px-2 py-1 font-pixel text-[11px]">{instanceSummary(entry)}</span>
+                <span className="rounded-md border border-border bg-sunken/80 px-2 py-1 font-pixel text-[11px]">{instanceSummary(entry)}</span>
                 {entry.kind === "clover" && <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">Serveur</span>}
                 {running && <RunningBadge />}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              <button type="button" onClick={() => onOpenFolder("game")} className={cn(secondaryButton, "h-11")}>
+                <FolderOpen className="size-4" aria-hidden />
+                Ouvrir le dossier
+              </button>
               {onExport && (
                 <button type="button" title="Exporter en modpack" aria-label={`Exporter ${entry.name} en modpack`} onClick={onExport} disabled={!entry.minecraft} className={iconButton}>
                   <PackageOpen className="size-4" aria-hidden />
                 </button>
               )}
-              <button type="button" title="Ouvrir le dossier" aria-label="Ouvrir le dossier de jeu" onClick={() => onOpenFolder("game")} className={iconButton}>
-                <FolderOpen className="size-4" aria-hidden />
-              </button>
-              <button type="button" title="Paramètres de l'instance" aria-label={`Paramètres de ${entry.name}`} onClick={() => setSection("settings")} disabled={!settings} className={iconButton}>
-                <Settings2 className="size-4" aria-hidden />
-              </button>
+              {onDelete && (
+                <button type="button" title="Supprimer l'instance" aria-label={`Supprimer ${entry.name}`} onClick={onDelete} disabled={play.kind !== "ready"} className={cn(iconButton, "hover:text-destructive")}>
+                  <Trash2 className="size-4" aria-hidden />
+                </button>
+              )}
               <GameButton state={play} name={entry.name} onPlay={onPlay} onStop={onStop} disabled={!entry.minecraft} className="h-11 w-36 text-sm" />
             </div>
           </div>
         </header>
 
-        <nav className="flex items-center gap-4 px-12 pt-5">
-          <div role="tablist" aria-label="Sections" className="flex gap-1 rounded-lg border border-border bg-[#100e0b] p-1">
-            {sections.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                role="tab"
-                aria-selected={section === item.id}
-                onClick={() => setSection(item.id)}
-                className={cn("rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors", section === item.id ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground")}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
+        <nav className="px-10 pt-5">
+          <Tabs label="Sections" value={section} onChange={onSection} items={sections} />
         </nav>
 
-        <div className="px-12 pt-5">
+        <div className="px-10 pt-5">
           {section === "overview" ? (
             <Overview entry={entry} running={running} services={services} serverNames={serverNames} onRenameServer={onRenameServer} />
           ) : section === "mods" ? (
@@ -164,6 +152,7 @@ export function InstanceDetail({ entry, play, running, onBack, onPlay, onPlayWor
               onPlayWorld={onPlayWorld && entry.minecraft && opensWorldsDirectly(entry.minecraft) && play.kind === "ready" && !play.busy ? onPlayWorld : undefined}
               onOpenFolder={(world) => onOpenFolder(section, world)}
               onSearch={onSearch && SEARCH[section] ? () => onSearch(SEARCH[section]!) : undefined}
+              onAddDatapacks={onSearch && ((world) => onSearch("datapack", world))}
             />
           )}
         </div>
@@ -205,7 +194,7 @@ function Overview({
     ["Version", entry.minecraft ?? "…"],
     ["Type", `${KINDS[entry.kind].label}${entry.loader ? ` ${entry.loader}` : ""}`],
     ["Dossier", entry.id === "clover" || !entry.separate ? "Commun" : "Séparé"],
-    ["Mémoire", entry.memoryMb ? `${entry.memoryMb / 1024} Go` : "Réglage du launcher"],
+    ["Mémoire", entry.memoryMb ? `${entry.memoryMb / 1024} Go` : "Comme le launcher"],
     ["Dernière partie", entry.lastPlayed ? dateFormat.format(new Date(entry.lastPlayed * 1000)) : "Jamais"],
   ];
 
@@ -255,7 +244,7 @@ function Overview({
           {recent.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">Aucune partie.</p>}
           <ul className="flex flex-col gap-1.5">
             {recent.map((session) => (
-              <li key={session.started} className="flex items-center gap-3 rounded-md bg-[#100e0b] px-3 py-2 text-[13px]">
+              <li key={session.started} className="flex items-center gap-3 rounded-md bg-sunken px-3 py-2 text-[13px]">
                 <span className="min-w-0 flex-1 truncate">{sessionFormat.format(new Date(session.started * 1000))}</span>
                 <span className="font-semibold">{formatDuration(session.seconds)}</span>
                 {session.code === 0 ? (
@@ -271,14 +260,14 @@ function Overview({
         </section>
         <section className={cn(card, "flex flex-col gap-2 p-4")}>
           <h2 className="text-[13px] font-bold">Serveurs</h2>
-          {renameError && <p className="text-xs text-[#f3a19e]">{renameError}</p>}
+          {renameError && <p className="text-xs text-error">{renameError}</p>}
           {servers.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">Aucun serveur rejoint.</p>}
           <ul className="flex flex-col gap-1.5">
             {servers.slice(0, 5).map((server) => {
               const clover = server.address === SERVER || server.address.endsWith(`.${SERVER}`);
               const ServerIcon = clover ? Clover : Server;
               return (
-                <li key={server.address} className="flex items-center gap-3 rounded-md bg-[#100e0b] px-3 py-2">
+                <li key={server.address} className="flex items-center gap-3 rounded-md bg-sunken px-3 py-2">
                   <span className={cn("grid size-7 shrink-0 place-items-center rounded-md", clover ? "bg-primary/15 text-primary" : "bg-secondary text-muted-foreground")}>
                     <ServerIcon className="size-4" aria-hidden />
                   </span>
@@ -308,9 +297,9 @@ function Overview({
   );
 }
 
-/** Contenu Modrinth ajouté depuis chaque onglet : les datapacks vont dans un monde. */
-const SEARCH: Partial<Record<ContentFolder, ModrinthKind>> = { datapacks: "datapack", resourcepacks: "resourcepack", shaderpacks: "shader" };
-const SEARCH_LABEL: Record<string, string> = { datapack: "Ajouter des datapacks", resourcepack: "Rechercher des packs", shader: "Rechercher des shaders" };
+/** Contenu ajouté depuis chaque onglet, dans Découvrir : les datapacks vont dans un monde. */
+const SEARCH: Partial<Record<ContentFolder, ContentKind>> = { saves: "world", datapacks: "datapack", resourcepacks: "resourcepack", shaderpacks: "shader" };
+const SEARCH_LABEL: Record<string, string> = { world: "Ajouter des mondes", datapack: "Ajouter des datapacks", resourcepack: "Ajouter des packs", shader: "Ajouter des shaders" };
 
 const MODES: Record<NonNullable<WorldInfo["mode"]>, string> = { survival: "Survie", creative: "Créatif", adventure: "Aventure", spectator: "Spectateur" };
 const DIFFICULTIES: Record<NonNullable<WorldInfo["difficulty"]>, string> = { peaceful: "Paisible", easy: "Facile", normal: "Normale", hard: "Difficile" };
@@ -333,6 +322,7 @@ function WorldCard({
   minecraft,
   onPlay,
   onOpenFolder,
+  onAddDatapacks,
   onRename,
   onError,
   locked,
@@ -343,6 +333,7 @@ function WorldCard({
   /** Absent pendant un lancement ou une partie, et avant Minecraft 1.20. */
   onPlay?: () => void;
   onOpenFolder: () => void;
+  onAddDatapacks?: () => void;
   onRename: (name: string) => Promise<void>;
   onError: (message: string) => void;
   /** Partie en cours : le jeu réécrirait le nom en sauvegardant. */
@@ -351,9 +342,10 @@ function WorldCard({
 }) {
   const level = world.level;
   const name = worldName(world);
+  const [copied, setCopied] = useState(false);
   // Un monde rouvert dans une autre version est converti par le jeu : mieux vaut le savoir avant.
   const otherVersion = level?.version && minecraft && level.version !== minecraft;
-  const chip = "flex items-center gap-1 rounded-md border border-border bg-[#100e0b] px-1.5 py-0.5 text-[11px] text-muted-foreground";
+  const chip = "flex items-center gap-1 rounded-md border border-border bg-sunken px-1.5 py-0.5 text-[11px] text-muted-foreground";
   return (
     <li className={cn(card, "flex overflow-hidden transition-colors hover:border-[#4a4237]")}>
       {world.image ? (
@@ -369,7 +361,7 @@ function WorldCard({
           {level?.version && (
             <span
               title={otherVersion ? `Dernière partie en ${level.version} : l'ouvrir en ${minecraft} le convertit.` : `Dernière partie en ${level.version}`}
-              className={cn("shrink-0 rounded-md px-1.5 py-0.5 font-pixel text-[10px]", otherVersion ? "bg-accent/15 text-accent" : "bg-[#100e0b] text-muted-foreground")}
+              className={cn("shrink-0 rounded-md px-1.5 py-0.5 font-pixel text-[10px]", otherVersion ? "bg-accent/15 text-accent" : "bg-sunken text-muted-foreground")}
             >
               {level.version}
             </span>
@@ -400,6 +392,25 @@ function WorldCard({
             )}
           </p>
         )}
+        {level?.seed && (
+          <p className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Sprout className="size-3 shrink-0" aria-hidden />
+            Seed
+            <span className="min-w-0 truncate font-pixel text-[11px] text-foreground/85 select-text">{level.seed}</span>
+            <button
+              type="button"
+              onClick={() => {
+                const seed = level.seed ?? "";
+                navigator.clipboard.writeText(seed).then(() => setCopied(true), () => onError("La seed n'a pas pu être copiée."));
+              }}
+              aria-label={`Copier la seed de ${name}`}
+              className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              {copied ? <Check className="size-3 text-primary" aria-hidden /> : <Copy className="size-3" aria-hidden />}
+              {copied ? "Copiée" : "Copier"}
+            </button>
+          </p>
+        )}
         <div className="mt-auto flex items-center gap-1">
           <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
             {playedAgo(world.modified)} · {formatSize(world.size)}
@@ -413,6 +424,17 @@ function WorldCard({
               className="grid size-8 shrink-0 place-items-center rounded-md text-primary transition-colors hover:bg-primary/15"
             >
               <Play className="size-4 fill-current" aria-hidden />
+            </button>
+          )}
+          {onAddDatapacks && (
+            <button
+              type="button"
+              onClick={onAddDatapacks}
+              aria-label={`Ajouter des datapacks à ${name}`}
+              title="Ajouter des datapacks"
+              className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              <Database className="size-4" aria-hidden />
             </button>
           )}
           <button
@@ -431,12 +453,12 @@ function WorldCard({
   );
 }
 
-const EMPTY: Record<ContentFolder, string> = {
-  saves: "Aucun monde : crée-en un en jeu, il apparaîtra ici.",
-  datapacks: "Aucun datapack : ajoute-en un à l'un de tes mondes.",
-  resourcepacks: "Aucun pack de ressources : dépose un .zip dans le dossier.",
-  shaderpacks: "Aucun shader : dépose un .zip dans le dossier.",
-  screenshots: "Aucune capture : appuie sur F2 en jeu.",
+const EMPTY: Record<ContentFolder, { title: string; hint: string }> = {
+  saves: { title: "Aucun monde", hint: "Crée-en un en jeu, ou ajoute une carte prête à jouer." },
+  datapacks: { title: "Aucun datapack", hint: "Ajoute-en un à l'un de tes mondes." },
+  resourcepacks: { title: "Aucun pack de ressources", hint: "Ajoute-en un, puis active-le en jeu dans Options › Packs de ressources." },
+  shaderpacks: { title: "Aucun shader", hint: "Ajoute-en un, puis choisis-le en jeu dans Options › Vidéo › Shaders." },
+  screenshots: { title: "Aucune capture", hint: "Appuie sur F2 en jeu pour en prendre une." },
 };
 
 function Content({
@@ -447,6 +469,7 @@ function Content({
   onPlayWorld,
   onOpenFolder,
   onSearch,
+  onAddDatapacks,
 }: {
   entry: InstanceEntry;
   folder: ContentFolder;
@@ -455,12 +478,14 @@ function Content({
   onPlayWorld?: (world: string) => void;
   onOpenFolder: (world?: string) => void;
   onSearch?: () => void;
+  onAddDatapacks?: (world: string) => void;
 }) {
   const [list, setList] = useState<ContentEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewing, setViewing] = useState<ContentEntry | null>(null);
-  /** Monde dont la suppression attend confirmation. */
-  const [trashing, setTrashing] = useState<ContentEntry | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  /** Suppression qui attend confirmation. */
+  const [asking, setAsking] = useState<Confirmation | null>(null);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
@@ -482,20 +507,41 @@ function Content({
   const toggle = (item: ContentEntry, enabled: boolean) =>
     change(services.setContentEnabled(entry.id, folder, item, enabled), (items) => items.map((other) => (key(other) === key(item) ? { ...other, enabled } : other)));
   const trash = (item: ContentEntry) => change(services.trashContent(entry.id, folder, item), (items) => items.filter((other) => key(other) !== key(item)));
-  const trashButton = (item: ContentEntry, label: string, onClick: () => void = () => void trash(item)) => (
+  const total = (list ?? []).reduce((sum, item) => sum + item.size, 0);
+  const shared = entry.id === "clover" || !entry.separate;
+  /** Tout ce qui part à la corbeille se confirme : monde, pack ou capture. */
+  const askTrash = (item: ContentEntry, label: string) =>
+    setAsking({
+      title: `Supprimer ${label} ?`,
+      description: `Il ira dans la corbeille de l'ordinateur : tu peux l'en sortir tant qu'elle n'est pas vidée.${shared ? " Il disparaît aussi des instances qui partagent ce dossier." : ""}`,
+      detail: item.world ? `${item.world} › ${item.name}` : item.name,
+      confirm: "Supprimer",
+      onConfirm: () => void trash(item),
+    });
+  const show = (item: ContentEntry, reveal: boolean) => services.showContent(entry.id, folder, item, reveal).catch((reason) => setError(String(reason)));
+  /** L'image passe par le protocole `asset`, lisible par la WebView : elle va telle quelle dans le presse-papiers. */
+  const copyImage = async (item: ContentEntry) => {
+    setError(null);
+    try {
+      const image = await (await fetch(item.image!)).blob();
+      await navigator.clipboard.write([new ClipboardItem({ [image.type || "image/png"]: image })]);
+      setNotice("Capture copiée : colle-la où tu veux.");
+      window.setTimeout(() => setNotice(null), 2500);
+    } catch {
+      setError("La capture n'a pas pu être copiée.");
+    }
+  };
+  const trashButton = (item: ContentEntry, label: string) => (
     <button
       type="button"
-      onClick={onClick}
-      aria-label={`Mettre ${label} à la corbeille`}
-      title="Mettre à la corbeille"
+      onClick={() => askTrash(item, label)}
+      aria-label={`Supprimer ${label}`}
+      title="Supprimer"
       className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-destructive"
     >
       <Trash2 className="size-4" aria-hidden />
     </button>
   );
-
-  const total = (list ?? []).reduce((sum, item) => sum + item.size, 0);
-  const shared = entry.id === "clover" || !entry.separate;
 
   return (
     <div className="flex flex-col gap-4">
@@ -510,14 +556,19 @@ function Content({
         </button>
         {onSearch && SEARCH[folder] && (
           <button type="button" onClick={onSearch} className={primaryButton}>
-            <Search className="size-4" aria-hidden />
+            <Plus className="size-4" aria-hidden />
             {SEARCH_LABEL[SEARCH[folder]]}
           </button>
         )}
       </div>
 
       {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[13px] text-destructive">{error}</p>}
-      {list?.length === 0 && <p className={cn(card, "py-12 text-center text-sm text-muted-foreground")}>{EMPTY[folder]}</p>}
+      {notice && (
+        <p role="status" className="rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-[13px] text-primary">
+          {notice}
+        </p>
+      )}
+      {list?.length === 0 && <EmptyState title={EMPTY[folder].title} hint={EMPTY[folder].hint} />}
 
       {list && folder === "saves" && (
         <ul className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] gap-3">
@@ -528,10 +579,11 @@ function Content({
               minecraft={entry.minecraft}
               onPlay={onPlayWorld && (() => onPlayWorld(world.name))}
               onOpenFolder={() => onOpenFolder(world.name)}
+              onAddDatapacks={onAddDatapacks && (() => onAddDatapacks(world.name))}
               onRename={(name) => services.renameWorld(entry.id, world.name, name).then(() => setRevision((value) => value + 1))}
               onError={setError}
               locked={running}
-              trashButton={trashButton(world, `le monde ${worldName(world)}`, () => setTrashing(world))}
+              trashButton={trashButton(world, `le monde ${worldName(world)}`)}
             />
           ))}
         </ul>
@@ -577,50 +629,52 @@ function Content({
       {list && folder === "screenshots" && (
         <ul className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
           {list.map((shot) => (
-            <li key={shot.name} className="group/shot relative">
-              <span className="absolute top-1.5 right-1.5 z-10 rounded-md bg-card/90 opacity-0 transition-opacity group-focus-within/shot:opacity-100 group-hover/shot:opacity-100">
-                {trashButton(shot, `la capture ${shot.name}`)}
-              </span>
-              <button type="button" onClick={() => setViewing(shot)} className="group flex w-full flex-col overflow-hidden rounded-lg border border-border bg-card text-left transition-colors hover:border-accent">
-                {shot.image ? (
-                  <img src={shot.image} alt="" loading="lazy" className="aspect-video w-full object-cover" />
-                ) : (
-                  <ImageIcon className="aspect-video w-full p-8 text-muted-foreground" aria-hidden />
-                )}
-                <span className="truncate px-3 py-2 text-[11px] text-muted-foreground group-hover:text-foreground">{shot.modified ? sessionFormat.format(new Date(shot.modified * 1000)) : shot.name}</span>
-              </button>
-            </li>
+            // Clic droit : agrandir, copier, ouvrir avec le système, montrer dans le dossier, supprimer.
+            <ContextMenu key={shot.name}>
+              <ContextMenuTrigger asChild>
+                <li className="group/shot relative">
+                  <span className="absolute top-1.5 right-1.5 z-10 rounded-md bg-card/90 opacity-0 transition-opacity group-focus-within/shot:opacity-100 group-hover/shot:opacity-100">
+                    {trashButton(shot, `la capture ${shot.name}`)}
+                  </span>
+                  <button type="button" onClick={() => setViewing(shot)} className="group flex w-full flex-col overflow-hidden rounded-lg border border-border bg-card text-left transition-colors hover:border-accent">
+                    {shot.image ? (
+                      <img src={shot.image} alt="" loading="lazy" className="aspect-video w-full object-cover" />
+                    ) : (
+                      <ImageIcon className="aspect-video w-full p-8 text-muted-foreground" aria-hidden />
+                    )}
+                    <span className="truncate px-3 py-2 text-[11px] text-muted-foreground group-hover:text-foreground">{shot.modified ? sessionFormat.format(new Date(shot.modified * 1000)) : shot.name}</span>
+                  </button>
+                </li>
+              </ContextMenuTrigger>
+              <ContextMenuContent aria-label={`Actions pour ${shot.name}`}>
+                <ContextMenuItem onSelect={() => setViewing(shot)}>
+                  <Expand aria-hidden />
+                  Agrandir
+                </ContextMenuItem>
+                <ContextMenuItem disabled={!shot.image} onSelect={() => void copyImage(shot)}>
+                  <Copy aria-hidden />
+                  Copier l'image
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => void show(shot, false)}>
+                  <AppWindow aria-hidden />
+                  Ouvrir avec l'application d'images
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => void show(shot, true)}>
+                  <FolderSearch aria-hidden />
+                  Afficher dans le dossier
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem destructive onSelect={() => askTrash(shot, `la capture ${shot.name}`)}>
+                  <Trash2 aria-hidden />
+                  Supprimer
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
           ))}
         </ul>
       )}
 
-      <Dialog open={trashing !== null} onOpenChange={(open) => !open && setTrashing(null)}>
-        <DialogContent className="mc-frame gap-5 border-[var(--mc-outline)] bg-card p-6 ring-0 sm:max-w-[480px]">
-          <DialogHeader>
-            <DialogTitle className="font-display text-2xl font-normal">Supprimer « {trashing && worldName(trashing)} » ?</DialogTitle>
-            <DialogDescription className="text-[13px] leading-relaxed">
-              Le monde part à la corbeille de l'ordinateur : tu peux encore l'en sortir tant qu'elle n'est pas vidée.
-              {shared && " Il disparaît aussi des instances qui partagent ce dossier."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="-mx-6 -mb-6 rounded-b-[6px] border-border bg-[#17150f] px-6 py-4">
-            <button type="button" onClick={() => setTrashing(null)} className={secondaryButton}>
-              Annuler
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (trashing) void trash(trashing);
-                setTrashing(null);
-              }}
-              className={cn(primaryButton, "bg-destructive text-white")}
-            >
-              <Trash2 className="size-4" aria-hidden />
-              Mettre à la corbeille
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog ask={asking} onClose={() => setAsking(null)} />
 
       <Dialog open={viewing !== null} onOpenChange={(open) => !open && setViewing(null)}>
         <DialogContent className="mc-frame gap-3 border-[var(--mc-outline)] bg-card p-3 ring-0 sm:max-w-[min(1100px,90vw)]">

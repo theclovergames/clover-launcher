@@ -7,7 +7,7 @@ import type { InstanceEntry, PlayState } from "@/types";
 export type InstanceActions = {
   onPlay: (id: string) => void;
   onStop: (id: string, force: boolean) => void;
-  /** Onglet Paramètres de la page de l'instance. */
+  /** Onglet Réglages de la page de l'instance. */
   onSettings: (entry: InstanceEntry) => void;
   onOpenFolder: (id: string) => void;
   onPin: (id: string, pinned: boolean) => void;
@@ -16,12 +16,12 @@ export type InstanceActions = {
   onExport: (entry: InstanceEntry) => void;
   /** Absent quand le système ne permet pas de raccourci (macOS, Microsoft Store). */
   onShortcut?: (id: string) => void;
-  onAskRemove: (entry: InstanceEntry) => void;
+  onAskDelete: (entry: InstanceEntry) => void;
 };
 
 /**
  * Clic droit sur une instance, façon LabyMod : jouer ou fermer le jeu, paramètres, dossier,
- * épingler en haut, dupliquer, exporter en modpack, raccourci sur le bureau, retirer.
+ * épingler en haut, dupliquer, exporter en modpack, raccourci sur le bureau, supprimer.
  */
 export function InstanceMenu({ entry, play, actions, children }: { entry: InstanceEntry; play: PlayState; actions: InstanceActions; children: ReactNode }) {
   const personal = entry.kind !== "clover";
@@ -48,7 +48,7 @@ export function InstanceMenu({ entry, play, actions, children }: { entry: Instan
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => actions.onSettings(entry)}>
           <Settings2 aria-hidden />
-          Paramètres
+          Réglages
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => actions.onOpenFolder(entry.id)}>
           <FolderOpen aria-hidden />
@@ -79,9 +79,9 @@ export function InstanceMenu({ entry, play, actions, children }: { entry: Instan
         {personal && (
           <>
             <ContextMenuSeparator />
-            <ContextMenuItem destructive disabled={busy} onSelect={() => actions.onAskRemove(entry)}>
+            <ContextMenuItem destructive disabled={busy} onSelect={() => actions.onAskDelete(entry)}>
               <Trash2 aria-hidden />
-              Retirer
+              Supprimer
             </ContextMenuItem>
           </>
         )}

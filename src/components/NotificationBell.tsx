@@ -53,7 +53,7 @@ export function NotificationBell({ items, onOpen, onReadAll, error, defaultOpen 
         >
           <Bell className="size-[18px]" aria-hidden />
           {unread > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 grid h-[17px] min-w-[17px] place-items-center rounded-full border-2 border-[#100e0b] bg-destructive px-1 font-pixel text-[10px] leading-none text-white">
+            <span className="absolute -top-0.5 -right-0.5 grid h-[17px] min-w-[17px] place-items-center rounded-full border-2 border-sunken bg-destructive px-1 font-pixel text-[10px] leading-none text-white">
               {unread > 9 ? "9+" : unread}
             </span>
           )}

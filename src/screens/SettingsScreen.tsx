@@ -2,6 +2,7 @@ import { Check, FolderInput, FolderOpen, Gamepad2, HardDrive, Info, Palette, Plu
 import type { LucideIcon } from "lucide-react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
+import lobby from "@/assets/home/lobby.webp";
 import { RemoveAccountButton } from "@/components/AccountMenu";
 import { DiscordLogo } from "@/components/DiscordLogo";
 import { PlayerHead } from "@/components/PlayerHead";
@@ -9,6 +10,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { ACCENTS, type Accent, accent, HERO_TONES, type HeroTone, heroTone } from "@/lib/appearance";
 import { navItem, secondaryButton } from "@/lib/buttons";
+import { DISCORD_URL } from "@/lib/site";
 import { cn, fold } from "@/lib/utils";
 import type { Profile } from "@/types";
 
@@ -44,6 +46,8 @@ export type Settings = {
   graphicsBackend: "default" | "opengl" | "vulkan";
   /** Ce que devient le launcher quand Minecraft démarre. */
   onLaunch: "keep" | "minimize" | "quit";
+  /** Ramasse-miettes réglé pour Minecraft ; une instance peut faire autrement. */
+  optimizedJava: boolean;
   javaArgs: string;
   // Intégrations
   discordPresence: boolean;
@@ -143,7 +147,7 @@ function Toggle({ id, checked, onChange, children, hint }: { id: string; checked
 /** Choix exclusif à quelques valeurs, en boutons collés comme un sélecteur de mode du jeu. */
 function Segmented<T extends string | number>({ label, value, options, onChange }: { label: string; value: T; options: { value: T; label: string }[]; onChange: (value: T) => void }) {
   return (
-    <div role="radiogroup" aria-label={label} className="flex gap-1 self-start rounded-lg border border-border bg-[#100e0b] p-1">
+    <div role="radiogroup" aria-label={label} className="flex gap-1 self-start rounded-lg border border-border bg-sunken p-1">
       {options.map((option) => (
         <button
           key={String(option.value)}
@@ -200,14 +204,14 @@ export function SettingsScreen(props: Props) {
       <aside className="flex w-[220px] shrink-0 flex-col gap-4 border-r border-border px-4 pt-8">
         <h1 className="px-2 font-display text-[30px] leading-none">Paramètres</h1>
         <label className="relative block">
-          <span className="sr-only">Rechercher un réglage</span>
+          <span className="sr-only">Rechercher un paramètre</span>
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Rechercher…"
-            className="h-9 w-full rounded-md border border-border bg-[#100e0b] pr-2 pl-8 text-[13px] text-foreground outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
+            className="h-9 w-full rounded-md border border-border bg-sunken pr-2 pl-8 text-[13px] text-foreground outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
           />
         </label>
         <nav aria-label="Paramètres" className="flex flex-col gap-0.5">
@@ -240,7 +244,7 @@ export function SettingsScreen(props: Props) {
               </div>
             ))}
             <p data-empty className="text-sm text-muted-foreground">
-              Aucun réglage ne correspond à « {query.trim()} ».
+              Aucun paramètre ne correspond à « {query.trim()} ».
             </p>
           </div>
         ) : (
@@ -267,7 +271,7 @@ function General({ settings, onChange, system, accounts, onUseAccount, onRemoveA
                 <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-[11px] font-bold text-primary">Compte actif</span>
               ) : (
                 <button type="button" onClick={() => onUseAccount(profile.uuid)} className="text-xs font-semibold text-foreground hover:underline">
-                  Utiliser
+                  Utiliser ce compte
                 </button>
               )}
               <RemoveAccountButton name={profile.name} onClick={() => onRemoveAccount(profile.uuid)} />
@@ -352,7 +356,7 @@ function Appearance({ settings, onChange }: Pick<Props, "settings" | "onChange">
                 aria-checked={checked}
                 onClick={() => onChange({ accent: id })}
                 className={cn(
-                  "flex items-center gap-2 rounded-lg border bg-[#100e0b] py-1.5 pr-3 pl-1.5 text-[13px] font-semibold transition-colors",
+                  "flex items-center gap-2 rounded-lg border bg-sunken py-1.5 pr-3 pl-1.5 text-[13px] font-semibold transition-colors",
                   checked ? "border-[#e9e3d4]/60 text-foreground" : "border-border text-muted-foreground hover:text-foreground",
                 )}
               >
@@ -366,7 +370,7 @@ function Appearance({ settings, onChange }: Pick<Props, "settings" | "onChange">
         </div>
       </Row>
 
-      <Row title="Bandeau de l'accueil" hint="Teinte du bandeau derrière ton skin, comme sur le site.">
+      <Row title="Bandeau de l'accueil" hint="Teinte du dégradé posé sur l'image du lobby, derrière ton skin.">
         <div role="radiogroup" aria-label="Bandeau de l'accueil" className="grid grid-cols-4 gap-2">
           {(Object.keys(HERO_TONES) as HeroTone[]).map((id) => {
             const checked = heroTone(settings.hero) === id;
@@ -379,8 +383,9 @@ function Appearance({ settings, onChange }: Pick<Props, "settings" | "onChange">
                 onClick={() => onChange({ hero: id })}
                 className={cn("group flex flex-col gap-1.5 rounded-lg border p-1.5 text-left transition-colors", checked ? "border-[#e9e3d4]/60" : "border-border hover:border-[#4a4237]")}
               >
-                <span className={cn("relative h-12 overflow-hidden rounded-md bg-linear-to-br", HERO_TONES[id].bg)}>
-                  <span className={cn("absolute -top-4 left-1/2 size-12 -translate-x-1/2 rounded-full blur-xl", HERO_TONES[id].glow)} />
+                <span className="relative h-12 overflow-hidden rounded-md">
+                  <img src={lobby} alt="" draggable={false} className="absolute inset-0 size-full object-cover object-[50%_38%]" />
+                  <span className="absolute inset-0" style={{ background: `linear-gradient(to top, ${HERO_TONES[id].shade} 0%, ${HERO_TONES[id].shade}cc 30%, transparent 85%)` }} />
                   {checked && <Check className="absolute top-1.5 right-1.5 size-3.5 text-white" aria-hidden />}
                 </span>
                 <span className={cn("px-0.5 text-xs font-semibold", checked ? "text-foreground" : "text-muted-foreground group-hover:text-foreground")}>{HERO_TONES[id].label}</span>
@@ -443,7 +448,7 @@ function WindowSize({ value, onChange }: { value: Settings["resolution"]; onChan
   };
   // Pixels réels de l'écran, quelle que soit la mise à l'échelle de Windows.
   const screenSize = () => onChange({ width: Math.round(window.screen.width * window.devicePixelRatio), height: Math.round(window.screen.height * window.devicePixelRatio) });
-  const field = "h-9 w-20 rounded-md border border-border bg-[#100e0b] px-2 text-center font-pixel text-[13px] text-foreground outline-none select-text placeholder:text-muted-foreground/60 focus:border-accent";
+  const field = "h-9 w-20 rounded-md border border-border bg-sunken px-2 text-center font-pixel text-[13px] text-foreground outline-none select-text placeholder:text-muted-foreground/60 focus:border-accent";
   return (
     <div className="flex flex-wrap items-center gap-2">
       <input inputMode="numeric" aria-label="Largeur de la fenêtre" value={value?.width || ""} placeholder={String(GAME_WINDOW.width)} onChange={(event) => type("width", event.target.value)} onBlur={settle} className={field} />
@@ -538,14 +543,22 @@ function Game({ settings, onChange, system, onResetRecommended, hidden = [] }: P
             "Java sera installé par le launcher au premier lancement du jeu."
           )}
         </p>
+        <Toggle
+          id="optimized-java"
+          checked={settings.optimizedJava}
+          onChange={(optimizedJava) => onChange({ optimizedJava })}
+          hint="Mémoire libérée par petites touches, comme le launcher officiel : moins de saccades en jeu. Chaque instance peut faire autrement, dans ses réglages."
+        >
+          Arguments Java optimisés
+        </Toggle>
         <label className="flex flex-col gap-2 text-xs font-semibold text-muted-foreground">
-          Arguments Java
+          Arguments Java en plus
           <input
             value={settings.javaArgs}
             onChange={(event) => onChange({ javaArgs: event.target.value })}
             placeholder="Aucun"
             spellCheck={false}
-            className="h-9 rounded-md border border-border bg-[#100e0b] px-3 font-mono text-xs text-foreground select-text"
+            className="h-9 rounded-md border border-border bg-sunken px-3 font-mono text-xs text-foreground select-text"
           />
         </label>
       </Row>
@@ -595,7 +608,7 @@ function Storage({ settings, onChange, storage, onOpenGameDir, onImport, onChang
       </Row>
 
       <Row title="Dossier du jeu" hint="Mondes, captures d'écran, options et journaux. Séparé de ton dossier .minecraft.">
-        <p className="truncate rounded-md border border-border bg-[#100e0b] px-3 py-2 font-mono text-xs select-text">{storage.gameDir}</p>
+        <p className="truncate rounded-md border border-border bg-sunken px-3 py-2 font-mono text-xs select-text">{storage.gameDir}</p>
         <div className="flex gap-2">
           <button type="button" onClick={onOpenGameDir} className={secondaryButton}>
             <FolderOpen className="size-4" aria-hidden />
@@ -691,7 +704,7 @@ function About({ about, onOpenLink }: Pick<Props, "about" | "onOpenLink">) {
       <Row title="Aide" hint="Une question, un plantage, une suggestion.">
         <div className="flex flex-wrap gap-2">
           {/* Bleu Discord, comme sur le site (`DISCORD_BLOCK_CLASSES`). */}
-          <button type="button" onClick={() => onOpenLink("https://discord.gg/theclovergames")} className="mc-bevel flex h-9 items-center justify-center gap-2 whitespace-nowrap bg-[#5865F2] px-4 text-[13px] font-bold text-white">
+          <button type="button" onClick={() => onOpenLink(DISCORD_URL)} className="mc-bevel flex h-9 items-center justify-center gap-2 whitespace-nowrap bg-[#5865F2] px-4 text-[13px] font-bold text-white">
             <DiscordLogo className="size-4" />
             Rejoindre le Discord
           </button>

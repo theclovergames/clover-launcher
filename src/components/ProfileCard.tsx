@@ -363,7 +363,7 @@ export function ProfileCardDialog({ data, link, onOpenChange, onSave }: Props) {
           <DialogDescription className="text-[13px]">Une image de ton profil, prête à coller sur Discord ou à envoyer à tes amis.</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3 px-6 py-5">
-          <div className="grid aspect-[1200/630] w-full place-items-center overflow-hidden rounded-lg border border-border bg-[#100e0b]">
+          <div className="grid aspect-[1200/630] w-full place-items-center overflow-hidden rounded-lg border border-border bg-sunken">
             {ready ? (
               <img key={ready.url} src={ready.url} alt={`Carte de profil de ${data?.name ?? ""}`} className="size-full animate-in duration-200 fade-in" />
             ) : card && "error" in card ? (

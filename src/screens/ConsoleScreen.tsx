@@ -32,7 +32,7 @@ const fileKey = (file: GameLogFile) => `${file.folder}/${file.name}`;
 const LEVELS: { id: LogLevel; label: string; tone: string }[] = [
   { id: "info", label: "Infos", tone: "text-[#cfc8b8]" },
   { id: "warn", label: "Avertissements", tone: "text-accent" },
-  { id: "error", label: "Erreurs", tone: "text-[#f3a19e]" },
+  { id: "error", label: "Erreurs", tone: "text-error" },
 ];
 const TONE = Object.fromEntries(LEVELS.map((level) => [level.id, level.tone])) as Record<LogLevel, string>;
 
@@ -129,7 +129,7 @@ export function ConsoleScreen({
   };
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col px-12 pt-8 pb-8">
+    <main className="flex min-h-0 flex-1 flex-col px-10 pt-8 pb-8">
       <header className="flex items-end justify-between gap-4">
         <div className="flex flex-col gap-2">
           <h1 className="font-display text-[30px] leading-none">Console</h1>
@@ -228,10 +228,10 @@ export function ConsoleScreen({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Rechercher (mod, erreur, fil…)"
-            className="h-9 w-full rounded-md border border-border bg-[#100e0b] pr-3 pl-9 text-sm text-foreground outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
+            className="h-9 w-full rounded-md border border-border bg-sunken pr-3 pl-9 text-sm text-foreground outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
           />
         </label>
-        <div role="group" aria-label="Niveaux affichés" className="flex gap-1 rounded-lg border border-border bg-[#100e0b] p-1">
+        <div role="group" aria-label="Niveaux affichés" className="flex gap-1 rounded-lg border border-border bg-sunken p-1">
           {LEVELS.map((level) => {
             const on = levels.has(level.id);
             return (
@@ -294,7 +294,7 @@ function Line({ entry }: { entry: LogEntry }) {
     <div className={cn("break-words whitespace-pre-wrap", TONE[entry.level])}>
       {prefix && <span className="text-muted-foreground">{prefix} </span>}
       {entry.message}
-      {entry.throwable && <div className="pl-4 text-[#f3a19e]/85">{entry.throwable}</div>}
+      {entry.throwable && <div className="pl-4 text-error/85">{entry.throwable}</div>}
     </div>
   );
 }

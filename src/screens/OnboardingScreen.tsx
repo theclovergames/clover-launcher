@@ -122,11 +122,11 @@ export function OnboardingAccounts({ standalone = false, steps, accounts, login,
                 {active ? (
                   <span className="flex items-center gap-1 rounded-full bg-accent/15 px-2.5 py-0.5 text-[11px] font-bold text-accent">
                     <Star className="size-3" fill="currentColor" aria-hidden />
-                    Compte principal
+                    Compte actif
                   </span>
                 ) : (
                   <button type="button" onClick={() => onMakeMain(profile.uuid)} className="text-xs font-semibold hover:underline">
-                    Définir comme principal
+                    Utiliser ce compte
                   </button>
                 )}
                 <button type="button" onClick={() => onRemove(profile.uuid)} className="text-xs font-semibold text-muted-foreground hover:text-destructive">
@@ -153,7 +153,7 @@ export function OnboardingAccounts({ standalone = false, steps, accounts, login,
         <div className="min-h-10" aria-live="polite">
           {login.kind === "waiting" && <p className="text-center text-xs text-muted-foreground">Termine la connexion dans l'onglet qui vient de s'ouvrir, puis reviens ici.</p>}
           {login.kind === "error" && (
-            <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-[13px] leading-snug text-[#f3a19e]">
+            <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-[13px] leading-snug text-error">
               {login.message}
             </p>
           )}
@@ -505,7 +505,7 @@ function ImportDetails({ instance, target = "clover", choices, onChoice, importi
       </div>
 
       {asInstance && (
-        <p className={cn("text-xs leading-snug", blocked ? "text-[#f3a19e]" : "text-muted-foreground")}>
+        <p className={cn("text-xs leading-snug", blocked ? "text-error" : "text-muted-foreground")}>
           {blocked ??
             `Nouvelle instance ${instance.loader ?? "Vanilla"} ${instance.minecraft}, dans un dossier séparé${instance.loader ? `, avec ${instance.loaderVersion ? `${instance.loader} ${instance.loaderVersion}` : `la version conseillée de ${instance.loader}`}` : ""}.`}
         </p>
@@ -635,7 +635,7 @@ export function OnboardingDone({ steps = ALL_STEPS, accounts, imports, machine, 
         <h1 className="font-display text-[26px] leading-none">C'est prêt{main ? `, ${main.profile.name}` : ""}&nbsp;!</h1>
         <ul className="mt-2">
           <SummaryRow icon={<Users className="size-[18px]" aria-hidden />} title={`${accounts.length} compte${accounts.length > 1 ? "s" : ""}`}>
-            {accounts.map((account) => account.profile.name + (account.active ? " (principal)" : "")).join(", ")}
+            {accounts.map((account) => account.profile.name + (account.active ? " (compte actif)" : "")).join(", ")}
           </SummaryRow>
           <SummaryRow icon={<FolderInput className="size-[18px]" aria-hidden />} title="Importé">
             {imports.length > 0 ? imports.map((line) => <p key={line}>{line}</p>) : "Rien, tu pars de zéro."}

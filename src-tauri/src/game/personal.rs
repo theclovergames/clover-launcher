@@ -306,12 +306,14 @@ pub fn add(dir: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Met le mod à la corbeille, comme les packs et les mondes : il se récupère s'il est retiré par erreur.
 pub fn remove(dir: &Path, id: &str) -> Result<()> {
     let filename = safe_filename(id).ok_or_else(|| GameError::NotAMod(id.to_owned()))?;
-    match std::fs::remove_file(dir.join(filename)) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
-        _ => Ok(()),
+    let path = dir.join(filename);
+    if !path.exists() {
+        return Ok(());
     }
+    trash::delete(&path).map_err(|e| GameError::Io(std::io::Error::other(e.to_string())))
 }
 
 /// Télécharge le fichier principal de `version` dans le dossier ; renvoie son nom.
@@ -611,7 +613,7 @@ mod tests {
     #[ignore]
     async fn installs_from_modrinth_with_dependencies() {
         let http = crate::game::download::client();
-        let page = modrinth::search(&http, modrinth::Kind::Mod, "minimap", "26.2", "fabric", 0).await.unwrap();
+        let page = modrinth::search(&http, modrinth::Kind::Mod, "minimap", "26.2", "fabric", &modrinth::Filters::default(), 0).await.unwrap();
         assert!(page.hits.iter().any(|hit| hit.slug == "xaeros-minimap"));
         let dir = std::env::temp_dir().join(format!("clover-modrinth-{}", std::process::id()));
         let added = install(&http, &dir, "xaeros-minimap", "26.2", ModLoader::Fabric, &[]).await.unwrap();

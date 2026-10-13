@@ -18,8 +18,9 @@ type Props = {
 };
 
 /**
- * Choix de l'instance, à droite du bouton « Jouer » (la version lancée est écrite dessous). Seule
- * une instance Clover rejoint le serveur ; les autres ouvrent le menu du jeu et le disent.
+ * Choix de l'instance, petite dalle à droite du bouton « Jouer » (l'instance lancée est écrite
+ * dessous). Seule une instance Clover rejoint le serveur ; les autres ouvrent le menu du jeu et
+ * le disent.
  */
 export function VersionPicker({ instances, selected, onSelect, onCreate, onManage, defaultOpen }: Props) {
   const [open, setOpen] = useState(defaultOpen ?? false);
@@ -36,7 +37,7 @@ export function VersionPicker({ instances, selected, onSelect, onCreate, onManag
           type="button"
           aria-label={current ? `Instance : ${current.name}. Changer d'instance` : "Changer d'instance"}
           title="Changer d'instance"
-          className="play-slab h-[86px] w-[72px] shrink-0 bg-none [background:linear-gradient(180deg,#5b5346,#3e382e)] text-white data-[state=open]:brightness-90"
+          className="play-slab h-[84px] w-[72px] shrink-0 bg-none [background:linear-gradient(180deg,#5b5346,#3e382e)] text-white data-[state=open]:brightness-90"
         >
           <ArrowLeftRight className="size-7" strokeWidth={2.5} aria-hidden />
           {current && !forClover(current) && (
@@ -47,7 +48,7 @@ export function VersionPicker({ instances, selected, onSelect, onCreate, onManag
         </button>
       </PopoverTrigger>
 
-      <PopoverContent align="end" sideOffset={16} className="mc-frame w-[340px] gap-0 border-[var(--mc-outline)] bg-card p-0 text-white ring-0">
+      <PopoverContent side="top" align="end" sideOffset={16} className="mc-frame w-[340px] gap-0 border-[var(--mc-outline)] bg-card p-0 text-white ring-0">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <h2 className="font-display text-lg leading-none">Choisir une instance</h2>
           <button type="button" onClick={close(onManage)} title="Gérer les instances" aria-label="Gérer les instances" className="text-muted-foreground hover:text-foreground">

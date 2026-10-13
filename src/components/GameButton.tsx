@@ -32,7 +32,7 @@ export function GameButton({
           onClick={() => onStop(true)}
           title="Minecraft ne répond pas. Un monde solo ouvert peut perdre ses dernières minutes."
           aria-label={`Forcer la fermeture de ${name}`}
-          className={cn(secondaryButton, "border-destructive/50 text-[#f3a19e] hover:text-[#ffb3b0]", className)}
+          className={cn(secondaryButton, "border-destructive/50 text-error hover:text-[#ffb3b0]", className)}
         >
           <X className="size-4" aria-hidden />
           Forcer

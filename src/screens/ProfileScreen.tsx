@@ -11,10 +11,10 @@ import { ownedCapeText, textureHash } from "@/lib/capes";
 import { locatorBarColor } from "@/lib/locator";
 import { modeArt } from "@/lib/mode-art";
 import { formatDuration } from "@/lib/play-history";
+import { SITE_URL } from "@/lib/site";
 import { cn, fold } from "@/lib/utils";
 import type { CatalogueCape, Friend, ModeStats, PlaySession, PlayerStats, Profile, SkinLook } from "@/types";
 
-const SITE_URL = "https://clovergames.fr";
 /** Une cape que moins de joueurs recensés possèdent est marquée rare. */
 const RARE_BELOW = 10_000;
 
@@ -141,7 +141,7 @@ function modeNumbers(mode: ModeStats): { badge: ReactNode; stats: { label: strin
       stats: [
         { label: "Victoires", value: number.format(s.wins) },
         { label: "Lits détruits", value: number.format(s.beds) },
-        { label: "Kills finaux", value: number.format(s.finalKills) },
+        { label: "Éliminations finales", value: number.format(s.finalKills) },
         { label: "Ratio V / D", value: kd(s.wins, s.losses) },
       ],
     };
@@ -155,7 +155,7 @@ function modeNumbers(mode: ModeStats): { badge: ReactNode; stats: { label: strin
         { label: "ELO (saison)", value: s.rating === null ? "—" : number.format(s.rating) },
         { label: "Record", value: s.peakRating === null ? "—" : number.format(s.peakRating) },
         { label: "Victoires", value: number.format(s.wins) },
-        { label: "Ratio K / M", value: kd(s.kills, s.deaths) },
+        { label: "Éliminations / morts", value: kd(s.kills, s.deaths) },
       ],
     };
   }
@@ -164,9 +164,9 @@ function modeNumbers(mode: ModeStats): { badge: ReactNode; stats: { label: strin
     season: false,
     badge: null,
     stats: [
-      { label: "Kills", value: number.format(s.kills) },
+      { label: "Éliminations", value: number.format(s.kills) },
       { label: "Morts", value: number.format(s.deaths) },
-      { label: "Ratio K / M", value: kd(s.kills, s.deaths) },
+      { label: "Éliminations / morts", value: kd(s.kills, s.deaths) },
       { label: "Meilleure série", value: number.format(s.bestStreak) },
     ],
   };
@@ -600,7 +600,7 @@ export function ProfileScreen({ profile, look, animateSkin, sessions, skinCount,
                 <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
                   <span className="flex items-baseline gap-2">
                     <span className="font-display text-[26px] leading-none">{formatDuration(data.playtime.total)}</span>
-                    <span className="text-xs text-muted-foreground">sur Clover Games, hors AFK</span>
+                    <span className="text-xs text-muted-foreground">sur Clover Games, hors inactivité</span>
                   </span>
                   <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <Clock className="size-3.5" aria-hidden />

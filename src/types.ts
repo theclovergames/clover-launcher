@@ -36,6 +36,8 @@ export type ModeStatus = {
   players?: number | null;
   /** Le manifeste donne une adresse qui connecte directement à ce mode. */
   quickPlay?: boolean;
+  /** Annoncé mais pas encore ouvert : carte grisée « Bientôt ». */
+  soon?: boolean;
 };
 
 /** Serveur hors Clover Games déjà rejoint en jeu (journal Quick Play de Minecraft). */
@@ -91,7 +93,7 @@ export type ModInfo = {
   enabled: boolean;
 };
 
-export type Tab = "home" | "news" | "instances" | "mods" | "skins" | "console" | "settings" | "profile";
+export type Tab = "home" | "news" | "instances" | "discover" | "skins" | "console" | "settings" | "profile";
 
 export type InstanceKind = "clover" | "vanilla" | "fabric" | "forge" | "neoforge";
 export type Instance = {
@@ -100,6 +102,8 @@ export type Instance = {
   separate: boolean; memoryMb: number | null;
   /** Arguments Java ajoutés à ceux du launcher pour cette instance. */
   javaArgs?: string | null;
+  /** Arguments Java optimisés ; `null` : comme les paramètres du launcher. */
+  optimizedJava?: boolean | null;
   enabledMods: string[] | null; disabledMods: string[]; lastPlayed: number | null;
   /** Épinglée en haut de la liste (clic droit). */
   pinned?: boolean;
@@ -127,11 +131,15 @@ export type WorldInfo = {
   version: string | null;
   lastPlayed: number | null;
   datapacks: number;
+  /** Graine de génération, en texte (64 bits) ; absente si le monde ne la donne pas. */
+  seed: string | null;
 };
 
 export type ContentEntry = {
   name: string;
   title: string | null;
+  /** Projet Modrinth du pack, s'il y est publié. */
+  projectId: string | null;
   icon: string | null;
   world: string | null;
   /** Pack chargé par le jeu ; toujours vrai pour les mondes et captures. */
@@ -283,10 +291,18 @@ export type ModrinthHit = {
   downloads: number;
   /** Déjà fourni par les mods Clover activés, dépendances comprises. */
   providedByClover?: boolean;
+  /** Page où le télécharger soi-même : le launcher n'a pas le droit de l'installer (monde CurseForge). */
+  external?: string | null;
+  /** Taille du fichier, quand la recherche la donne (mondes). */
+  size?: number | null;
 };
 
 export type ModrinthPage = { hits: ModrinthHit[]; totalHits: number };
-/** Modpack importé depuis un fichier : l'instance créée, et les fichiers du pack introuvables hors de CurseForge. */
+/** Ordre des résultats de recherche ; sans texte, « relevance » classe par téléchargements. */
+export type SearchSort = "relevance" | "downloads" | "follows" | "newest" | "updated";
+/** Catégories Modrinth (« worldgen », « 16x »), toutes exigées à la fois. */
+export type SearchFilters = { sort: SearchSort; categories: string[] };
+/** Modpack importé depuis un fichier : l'instance créée, et les fichiers du pack à télécharger à la main sur CurseForge. */
 export type ImportedModpack = { instance: string; missing: { name: string; url: string }[] };
 
 /** Partie demandée par un raccourci du bureau (`instance`) ou un lien `clover://play/<mode>` (`mode`). */
@@ -316,6 +332,8 @@ export type ModrinthProject = {
   wikiUrl: string | null;
   discordUrl: string | null;
   gallery: { url: string; rawUrl: string | null; title: string | null }[];
+  /** Page hors de Modrinth (monde CurseForge) ; absente : sa page Modrinth. */
+  pageUrl?: string | null;
 };
 
 export type NotificationKind = "level" | "achievement" | "purchase" | "reward" | "vote" | "announcement" | "ranking" | "account";

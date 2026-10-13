@@ -69,7 +69,7 @@ export function NewsScreen({
 
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-12 pt-8 pb-8">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-10 pt-8 pb-8">
         <header className="flex items-end justify-between gap-6">
           <div className="flex flex-col gap-2">
             <h1 className="font-display text-[30px] leading-none">Actualités</h1>
@@ -81,7 +81,7 @@ export function NewsScreen({
           </button>
         </header>
 
-        <div role="radiogroup" aria-label="Source" className="mt-5 flex gap-1 self-start rounded-lg border border-border bg-[#100e0b] p-1">
+        <div role="radiogroup" aria-label="Source" className="mt-5 flex gap-1 self-start rounded-lg border border-border bg-sunken p-1">
           {FILTERS.map(({ id, label }) => (
             <button
               key={id}
@@ -152,7 +152,7 @@ function NewsCard({ card, english, onOpen }: { card: Card; english: boolean; onO
       onClick={onOpen}
       className="group flex h-full w-full flex-col overflow-hidden rounded-lg border border-border bg-card text-left transition-colors hover:border-muted-foreground/40 hover:bg-[#221e18]"
     >
-      <span className="relative aspect-[16/8] w-full overflow-hidden border-b border-border bg-[#100e0b]">
+      <span className="relative aspect-[16/8] w-full overflow-hidden border-b border-border bg-sunken">
         {card.item.image ? (
           <img src={card.item.image} alt="" loading="lazy" className="size-full object-cover transition-transform duration-300 group-hover:scale-105" />
         ) : (
@@ -168,7 +168,7 @@ function NewsCard({ card, english, onOpen }: { card: Card; english: boolean; onO
         >
           {clover ? <Clover className="size-3.5" aria-hidden /> : <Pickaxe className="size-3.5" aria-hidden />}
           {clover ? "Clover Games" : "Minecraft"}
-          {!clover && english && <span className="font-semibold text-muted-foreground">· EN</span>}
+          {!clover && english && <span className="font-semibold text-muted-foreground">· en anglais</span>}
         </span>
       </span>
       <span className="flex flex-1 flex-col gap-1.5 p-3.5">

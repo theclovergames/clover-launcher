@@ -1,7 +1,8 @@
-import { ArrowUpRight, Flame, Globe, ShoppingBag, Vote } from "lucide-react";
+import { Flame, Globe, ShoppingBag, Vote } from "lucide-react";
 
 import { DiscordLogo } from "@/components/DiscordLogo";
 import { activity, activityLevel, formatDuration } from "@/lib/play-history";
+import { DISCORD_URL } from "@/lib/site";
 import { cn } from "@/lib/utils";
 import type { PlaySession } from "@/types";
 
@@ -29,7 +30,7 @@ function ago(seconds: number, now: Date) {
  * Semaine de jeu, toutes instances confondues : temps joué du lundi à aujourd'hui, une case par
  * jour, série en cours et dernière partie. `sessions` à `null` : encore en lecture.
  */
-export function WeekActivity({ sessions, size = "full", className }: { sessions: PlaySession[] | null; size?: ExtrasSize; className?: string }) {
+export function WeekActivity({ sessions, size = "full", surface = "tile", className }: { sessions: PlaySession[] | null; size?: ExtrasSize; surface?: string; className?: string }) {
   const now = new Date();
   const stats = activity(sessions ?? [], now, "half");
   const week = stats.days.slice(-7);
@@ -50,7 +51,7 @@ export function WeekActivity({ sessions, size = "full", className }: { sessions:
     <section
       aria-labelledby="week-title"
       title={medium ? `${summary}\n${lastLine}` : undefined}
-      className={cn("tile flex flex-col gap-2.5 px-5 py-3.5", className)}
+      className={cn(surface, "flex flex-col gap-2.5 px-5 py-3.5", className)}
     >
       <div className="flex items-baseline justify-between gap-3">
         <h2 id="week-title" className="font-display text-xl whitespace-nowrap">
@@ -116,54 +117,67 @@ export function WeekActivity({ sessions, size = "full", className }: { sessions:
 
 const LINKS = [
   { id: "vote", label: "Voter", hint: "Gratuit, récompenses en jeu", url: "https://clovergames.fr/vote", Icon: Vote },
-  { id: "discord", label: "Discord", hint: "Annonces et entraide", url: "https://discord.gg/theclovergames", Icon: DiscordLogo },
+  { id: "discord", label: "Discord", hint: "Annonces et entraide", url: DISCORD_URL, Icon: DiscordLogo },
   { id: "store", label: "Boutique", hint: "Grades et cosmétiques", url: "https://store.clovergames.fr", Icon: ShoppingBag },
   { id: "site", label: "Site", hint: "Classements, wiki", url: "https://clovergames.fr", Icon: Globe },
 ] as const;
 
-const linkTone = (id: string) => (id === "vote" ? "border-accent/35 bg-accent/[0.08] hover:bg-accent/[0.14]" : "border-border bg-card hover:bg-[#241f19]");
-const iconTone = (id: string) => (id === "vote" ? "text-accent" : id === "discord" ? "text-[#8b95f7]" : "text-muted-foreground");
+const iconTone = (id: string) => (id === "vote" ? "text-accent" : id === "discord" ? "text-[#8b95f7]" : "text-white/75");
+
+/** Disponibilité par ping, total des joueurs par mode ; `null` pendant la première mesure. */
+export type ServerStatus = { online: boolean; players: number | null } | null;
+
+/** « En ligne · 271 joueurs », « Hors ligne », ou la mesure en cours. */
+export function Status({ server }: { server: ServerStatus }) {
+  return (
+    <p className="flex items-center gap-2 text-xs whitespace-nowrap text-white/80">
+      <span className={cn("size-2 rounded-full", server === null ? "animate-pulse bg-muted-foreground" : server.online ? "bg-primary" : "bg-destructive")} aria-hidden />
+      {server === null ? (
+        "Recherche du serveur…"
+      ) : server.online ? (
+        <>
+          <span className="font-semibold text-white">En ligne</span>
+          {server.players !== null && (
+            <>
+              <span aria-hidden>·</span>
+              <span>
+                <span className="font-pixel text-[12px] text-white">{server.players}</span> joueurs
+              </span>
+            </>
+          )}
+        </>
+      ) : (
+        <span className="font-semibold text-[#ffb3b0]">Hors ligne</span>
+      )}
+    </p>
+  );
+}
 
 /**
- * Raccourcis vers le vote, le Discord, la boutique et le site ; tous s'ouvrent dans le navigateur.
- * `medium` : quatre boutons côte à côte, icône au-dessus du nom, le détail en info-bulle.
+ * Raccourcis vers le vote, le Discord, la boutique et le site, posés sur l'image du lobby ; tous
+ * s'ouvrent dans le navigateur. Le vote, gratuit et récompensé en jeu, est en or.
  */
-export function QuickLinks({ onOpenLink, size = "full", className }: { onOpenLink: (url: string) => void; size?: ExtrasSize; className?: string }) {
-  const medium = size === "medium";
+export function QuickLinks({ onOpenLink }: { onOpenLink: (url: string) => void }) {
   return (
-    <section aria-labelledby="links-title" className={cn("tile flex flex-col gap-2.5 px-5 py-3.5", className)}>
-      <h2 id="links-title" className="font-display text-xl">
-        Clover Games
-      </h2>
-      <ul className={cn("grid", medium ? "grid-cols-4 gap-1" : "grid-cols-2 gap-1.5")}>
+    <nav aria-label="Clover Games sur le web">
+      <ul className="flex gap-1.5">
         {LINKS.map(({ id, label, hint, url, Icon }) => (
-          <li key={id} className="min-w-0">
+          <li key={id}>
             <button
               type="button"
               onClick={() => onOpenLink(url)}
               title={hint}
               className={cn(
-                "group flex w-full rounded-lg border transition-colors",
-                medium ? "flex-col items-center gap-1.5 px-0.5 py-2.5" : "items-center gap-2.5 px-2.5 py-2 text-left",
-                linkTone(id),
+                "flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-bold backdrop-blur-sm transition-colors",
+                id === "vote" ? "border-accent/50 bg-black/55 text-accent hover:bg-black/70" : "border-white/10 bg-black/45 text-white hover:bg-black/65",
               )}
             >
-              <Icon className={cn("size-[18px] shrink-0", iconTone(id))} aria-hidden />
-              {medium ? (
-                <span className="max-w-full truncate text-[11px] leading-tight font-bold">{label}</span>
-              ) : (
-                <>
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="text-[13px] leading-tight font-bold">{label}</span>
-                    <span className="truncate text-[11px] leading-tight text-muted-foreground">{hint}</span>
-                  </span>
-                  <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" aria-hidden />
-                </>
-              )}
+              <Icon className={cn("size-4 shrink-0", iconTone(id))} aria-hidden />
+              {label}
             </button>
           </li>
         ))}
       </ul>
-    </section>
+    </nav>
   );
 }

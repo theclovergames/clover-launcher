@@ -15,8 +15,9 @@ Linux et Microsoft Store).
   manifeste signé. Quand le serveur change de version, le launcher suit sans mise à jour.
 - Des instances personnelles Vanilla, Fabric, Forge et NeoForge, avec un dossier de jeu partagé ou
   séparé.
-- Recherche Modrinth intégrée : mods, packs de ressources, shaders, datapacks et modpacks. Import
-  des modpacks `.mrpack` et CurseForge, export d'une instance en `.mrpack`.
+- Découvrir : mods, shaders, packs de ressources, datapacks et modpacks (Modrinth), mondes
+  (CurseForge), avec une page par projet. Import des modpacks `.mrpack` et CurseForge, export
+  d'une instance en `.mrpack`.
 - Reprise des installations du launcher officiel, de Modrinth App, de Prism Launcher, de MultiMC et
   de CurseForge.
 - Skins et capes, console du jeu, partage du journal pour le support, notifications du site,
@@ -75,8 +76,10 @@ La CI produit aussi le paquet MSIX du Microsoft Store (artefact `msix-store`). E
 `npm run tauri build` : `node scripts/msix.mjs`.
 
 Les clés privées ne sont jamais dans le dépôt. La CI les lit dans ses secrets :
-`TAURI_SIGNING_PRIVATE_KEY`, `CLOVER_MANIFEST_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID` et
-`R2_SECRET_ACCESS_KEY`. Seules les clés publiques sont dans le code.
+`TAURI_SIGNING_PRIVATE_KEY`, `CLOVER_MANIFEST_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY` et `CURSEFORGE_API_KEY`. Seules les clés publiques sont dans le code. La clé
+de l'API CurseForge est lue à la compilation : sans elle, l'import des modpacks CurseForge cherche
+leurs fichiers sur Modrinth.
 
 ## Sécurité
 

@@ -5,7 +5,7 @@ import type { InstallPhase, PlayState } from "@/types";
 const PHASES: Record<InstallPhase, string> = {
   java: "Installation de Java",
   libraries: "Téléchargement de Minecraft",
-  loader: "Préparation du loader",
+  loader: "Préparation du jeu",
   assets: "Téléchargement des ressources",
   mods: "Installation des mods",
 };
@@ -18,24 +18,27 @@ type Props = {
   onOpenConsole: () => void;
   /** « Fermer le jeu », puis « Forcer la fermeture » s'il ne répond pas. */
   onStop?: (force: boolean) => void;
-  /** Sous « Jouer » : la version qui sera lancée, par exemple « Minecraft 26.2 · Fabric ». */
+  /** Sous « Jouer » : l'instance qui sera lancée et sa version, par exemple « Clover Games · 26.2 ». */
   version: string;
-  /** Petite dalle à droite : changement de version. */
+  /** Petite dalle à droite de « Jouer » : le choix de l'instance. */
   picker?: ReactNode;
-  compact?: boolean;
 };
 
-export function PlayButton({ state, onPlay, onOpenConsole, onStop, version, picker, compact }: Props) {
+/**
+ * Le gros bouton « Jouer », l'instance lancée écrite dessous, puis la petite dalle du choix de
+ * l'instance. Sous les deux, l'avancement du lancement, ou de quoi fermer le jeu ouvert.
+ */
+export function PlayButton({ state, onPlay, onOpenConsole, onStop, version, picker }: Props) {
   const progress = state.kind === "installing" ? state.progress : undefined;
   const ratio = progress && progress.total > 0 ? progress.done / progress.total : 0;
 
   return (
-    <div className={`flex shrink-0 ${picker ? "w-[330px]" : "w-full"} flex-col items-stretch gap-3`}>
-      <div className="flex gap-3">
-        <button type="button" className={`play-slab ${compact ? "h-16" : "h-[86px]"} min-w-0 flex-1 overflow-hidden`} disabled={state.kind !== "ready" || state.busy} onClick={onPlay}>
+    <div className="flex flex-col items-center gap-2.5">
+      <div className="flex items-stretch gap-3">
+        <button type="button" className="play-slab h-[84px] w-[260px] overflow-hidden px-4" disabled={state.kind !== "ready" || state.busy} onClick={onPlay}>
           {state.kind === "installing" && <span className="play-slab-fill" style={{ transform: `scaleX(${ratio})` }} aria-hidden />}
-          <span className="relative flex flex-col items-center gap-1.5">
-            <span className={`font-display ${compact ? "text-[30px]" : "text-[38px]"} leading-none tracking-wide uppercase [text-shadow:0_2px_0_rgb(255_255_255/0.35)]`}>
+          <span className="relative flex max-w-full flex-col items-center gap-1.5">
+            <span className="font-display text-[38px] leading-none tracking-wide uppercase [text-shadow:0_2px_0_rgb(255_255_255/0.35)]">
               {state.kind === "ready" && "Jouer"}
               {state.kind === "installing" && (progress ? `${Math.floor(ratio * 100)} %` : "Préparation")}
               {state.kind === "running" && "En jeu"}
@@ -46,7 +49,7 @@ export function PlayButton({ state, onPlay, onOpenConsole, onStop, version, pick
         {picker}
       </div>
 
-      {(!compact || state.kind !== "ready" || state.error) && <p className="relative min-h-4 text-center text-xs font-semibold text-white [text-shadow:0_1px_3px_rgb(0_0_0/0.7)]" aria-live="polite">
+      <p className="relative min-h-4 text-center text-xs font-semibold text-white [text-shadow:0_1px_3px_rgb(0_0_0/0.7)]" aria-live="polite">
         {state.kind === "installing" && progress && (
           <>
             {PHASES[progress.phase]} · <span className="font-pixel text-[11px]">{number.format(progress.done)}/{number.format(progress.total)}</span>
@@ -56,12 +59,7 @@ export function PlayButton({ state, onPlay, onOpenConsole, onStop, version, pick
         {state.kind === "running" && state.closing === "slow" && (
           <>
             Minecraft ne répond pas.{" "}
-            <button
-              type="button"
-              onClick={() => onStop?.(true)}
-              title="Un monde solo ouvert peut perdre ses dernières minutes."
-              className="font-bold text-[#ffb3b0] underline-offset-2 hover:underline"
-            >
+            <button type="button" onClick={() => onStop?.(true)} title="Un monde solo ouvert peut perdre ses dernières minutes." className="font-bold text-[#ffb3b0] underline-offset-2 hover:underline">
               Forcer la fermeture
             </button>
           </>
@@ -88,7 +86,7 @@ export function PlayButton({ state, onPlay, onOpenConsole, onStop, version, pick
           </>
         )}
         {state.kind === "ready" && state.error && <span className="text-[#ffb3b0]">{state.error}</span>}
-      </p>}
+      </p>
     </div>
   );
 }

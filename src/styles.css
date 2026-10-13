@@ -39,6 +39,10 @@
 
   /* Fond de la fenêtre, sous les panneaux flottants (plus sombre que `--background`). */
   --canvas: #0a0907;
+  /* Champs, barres d'onglets et cases enfoncés ; survol d'une carte ; texte et cadres d'erreur. */
+  --sunken: #100e0b;
+  --card-hover: #241f19;
+  --error: #f3a19e;
 
   /* Système « bloc » repris du site */
   --mc-outline: #050403;
@@ -86,6 +90,9 @@
   --font-pixel: "Monocraft", ui-monospace, monospace;
 
   --color-canvas: var(--canvas);
+  --color-sunken: var(--sunken);
+  --color-card-hover: var(--card-hover);
+  --color-error: var(--error);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);

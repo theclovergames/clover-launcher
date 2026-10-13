@@ -70,6 +70,9 @@ pub enum GameError {
     Json(#[from] serde_json::Error),
     #[error("Erreur disque : {0}")]
     Io(#[from] std::io::Error),
+    /// Refus expliqué au joueur, en une phrase complète.
+    #[error("{0}")]
+    Refused(String),
 }
 
 impl Serialize for GameError {

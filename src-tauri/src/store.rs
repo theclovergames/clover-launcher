@@ -35,6 +35,9 @@ pub struct Settings {
     pub graphics_backend: String,
     /// `keep`, `minimize` ou `quit`.
     pub on_launch: String,
+    /// Arguments Java réglés pour Minecraft (`game::launch::OPTIMIZED_JAVA_ARGS`) ; une instance
+    /// peut faire autrement.
+    pub optimized_java: bool,
     pub java_args: String,
     pub discord_presence: bool,
     pub crash_reports: bool,
@@ -66,6 +69,7 @@ impl Default for Settings {
             resolution: None,
             graphics_backend: "default".into(),
             on_launch: "minimize".into(),
+            optimized_java: true,
             java_args: String::new(),
             discord_presence: true,
             // Consentement RGPD : désactivé tant que le joueur ne l'a pas donné.
@@ -128,6 +132,7 @@ pub struct Stored {
     /// Réglages propres à l'instance Clover Games (son nom, lui, ne change pas).
     pub clover_memory_mb: Option<u64>,
     pub clover_java_args: Option<String>,
+    pub clover_optimized_java: Option<bool>,
     /// Version de Minecraft du serveur déjà annoncée au joueur : un changement du manifeste
     /// (26.2 → 26.4) est signalé une fois.
     pub server_minecraft: Option<String>,

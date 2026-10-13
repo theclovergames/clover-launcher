@@ -1,4 +1,4 @@
-import { Check, ChevronRight, PackageOpen, X } from "lucide-react";
+import { Check, ChevronRight, PackageSearch, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -196,7 +196,7 @@ function Form({ draft, onClose, onSave, existing, serverVersion, onImportModpack
       }}
     >
       {/* Illustration de la version choisie, qui change avec elle. */}
-      <header className="relative h-52 shrink-0 overflow-hidden border-b border-border bg-[#100e0b]">
+      <header className="relative h-52 shrink-0 overflow-hidden border-b border-border bg-sunken">
         <VersionArt version={shown} />
         <div aria-hidden className="absolute inset-0 bg-linear-to-t from-card from-8% via-card/55 via-40% to-transparent to-75%" />
         <button type="button" onClick={onClose} aria-label="Fermer" className="absolute top-3 right-3 grid size-8 place-items-center rounded-lg bg-black/55 text-white/80 transition-colors hover:bg-black/75 hover:text-white">
@@ -232,7 +232,7 @@ function Form({ draft, onClose, onSave, existing, serverVersion, onImportModpack
                     }}
                     className={cn(
                       "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
-                      active ? "border-primary bg-primary/10" : "border-border bg-[#100e0b] hover:border-muted-foreground/50",
+                      active ? "border-primary bg-primary/10" : "border-border bg-sunken hover:border-muted-foreground/50",
                     )}
                   >
                     <span className="relative shrink-0">
@@ -260,10 +260,10 @@ function Form({ draft, onClose, onSave, existing, serverVersion, onImportModpack
           onClick={onImportModpack}
           className="group flex items-center gap-3 rounded-lg border border-dashed border-border px-3 py-2.5 text-left transition-colors hover:border-accent/60 hover:bg-accent/5"
         >
-          <PackageOpen className="size-5 shrink-0 text-accent" aria-hidden />
+          <PackageSearch className="size-5 shrink-0 text-accent" aria-hidden />
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="text-sm font-bold">Importer un modpack</span>
-            <span className="text-[11px] leading-snug text-muted-foreground">Cherche un modpack ou importe un fichier .mrpack / .zip.</span>
+            <span className="text-sm font-bold">Partir d'un modpack</span>
+            <span className="text-[11px] leading-snug text-muted-foreground">Trouve-en un dans Découvrir, ou importe un fichier .mrpack ou .zip.</span>
           </span>
           <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
         </button>
@@ -272,7 +272,7 @@ function Form({ draft, onClose, onSave, existing, serverVersion, onImportModpack
       <div className="flex flex-col gap-2">
         <span className="text-xs font-semibold">Type</span>
         {/* Une barre, un segment par type ; le repère glisse vers le type choisi. */}
-        <div role="radiogroup" aria-label="Type d'instance" className="relative grid rounded-lg border border-border bg-[#100e0b] p-1" style={{ gridTemplateColumns: `repeat(${kinds.length}, minmax(0, 1fr))` }}>
+        <div role="radiogroup" aria-label="Type d'instance" className="relative grid rounded-lg border border-border bg-sunken p-1" style={{ gridTemplateColumns: `repeat(${kinds.length}, minmax(0, 1fr))` }}>
           <span
             aria-hidden
             className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-primary/15 ring-1 ring-primary/45 ring-inset transition-transform duration-300 ease-out motion-reduce:transition-none"
@@ -369,7 +369,7 @@ function Form({ draft, onClose, onSave, existing, serverVersion, onImportModpack
           maxLength={64}
           placeholder={fallbackName}
           onChange={(event) => patch({ name: event.target.value })}
-          className="h-10 rounded-md border border-border bg-[#100e0b] px-3 text-sm font-normal text-foreground outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
+          className="h-10 rounded-md border border-border bg-sunken px-3 text-sm font-normal text-foreground outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
         />
       </label>
 

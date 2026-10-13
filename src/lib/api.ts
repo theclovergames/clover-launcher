@@ -7,7 +7,7 @@ import type { Instance, InstanceEntry, InstanceInput, InstanceKind, AvailableVer
 
 import type { Settings, SteamState } from "@/screens/SettingsScreen";
 import type { RecentVote } from "@/components/VoteTicker";
-import type { ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModrinthKind, ModrinthPage, ModrinthProject, BlogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats } from "@/types";
+import type { ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats } from "@/types";
 
 export type AccountRef = { uuid: string; name: string; skinUrl: string | null };
 
@@ -36,7 +36,8 @@ export type Catalogue = {
   presets?: Partial<Record<MachineLevel, unknown>>;
   fabric: { loader: string };
   server: { host: string };
-  modes: { id: string; name: string; image: string | null; host?: string }[];
+  /** `soon` : annoncé mais pas encore ouvert (carte « Bientôt »). */
+  modes: { id: string; name: string; image: string | null; host?: string; soon?: boolean }[];
   mods: {
     id: string;
     name: string;
@@ -99,7 +100,8 @@ export const api = {
   saveInstance: (id: string | null, input: InstanceInput) => invoke<string>("save_instance", { id, input }),
   selectInstance: (id: string) => invoke<void>("select_instance", { id }),
   setInstancesView: (expert: boolean) => invoke<void>("set_instances_view", { expert }),
-  removeInstance: (id: string) => invoke<void>("remove_instance", { id }),
+  /** Dossier de l'instance à la corbeille, puis l'instance retirée de la liste. */
+  deleteInstance: (id: string) => invoke<void>("delete_instance", { id }),
   /** `world` : dossier d'un monde précis (ou ses datapacks). */
   openInstanceFolder: (id: string, folder: string, world?: string) => invoke<void>("open_instance_folder", { id, folder, world: world ?? null }),
   setInstanceCatalogue: (mods: string[]) => invoke<void>("set_instance_catalogue", { mods }),
@@ -113,12 +115,16 @@ export const api = {
   /** Met un élément d'un onglet d'instance à la corbeille du système. */
   trashContent: (id: string, folder: ContentFolder, item: ContentEntry) =>
     invoke<void>("trash_content", { id, folder, name: item.name, world: item.world, enabled: item.enabled }),
+  /** Ouvre un élément avec l'application du système, ou `reveal` : le montre dans son dossier. */
+  showContent: (id: string, folder: ContentFolder, item: ContentEntry, reveal: boolean) =>
+    invoke<void>("show_content", { id, folder, name: item.name, world: item.world, enabled: item.enabled, reveal }),
   /** Nom affiché d'un monde solo (`level.dat`), pas celui de son dossier. */
   renameWorld: (id: string, world: string, name: string) => invoke<void>("rename_world", { id, world, name }),
   /** Nom d'un serveur rejoint ; vide pour reprendre celui du jeu. */
   renameServer: (address: string, name: string) => invoke<void>("rename_server", { address, name }),
   /** Paramètres de la page d'une instance ; le nom de Clover Games ne change pas. */
-  updateInstance: (id: string, name: string, memoryMb: number | null, javaArgs: string) => invoke<void>("update_instance", { id, name, memoryMb, javaArgs }),
+  updateInstance: (id: string, name: string, memoryMb: number | null, optimizedJava: boolean | null, javaArgs: string) =>
+    invoke<void>("update_instance", { id, name, memoryMb, optimizedJava, javaArgs }),
   playInstance: (id: string) => invoke<void>("play", { mode: null, server: null, instanceId: id }),
   /** Ouvre directement un monde solo de l'instance (Minecraft 1.20 et suivantes). */
   playWorld: (id: string, world: string) => invoke<void>("play", { mode: null, server: null, world, instanceId: id }),
@@ -221,18 +227,24 @@ export const api = {
   changeName: (name: string) => invoke<Profile>("change_name", { name }),
   /** « Mes mods » de `instance`, de l'instance choisie sans elle. */
   personalMods: (instance?: string) => invoke<PersonalMod[]>("list_personal_mods", { instance: instance ?? null }),
-  /** Octets bruts plutôt qu'un tableau JSON : un .jar pèse souvent plusieurs Mo. */
-  addPersonalMod: async (file: File) =>
-    invoke<void>("add_personal_mod", new Uint8Array(await file.arrayBuffer()), { headers: { "x-filename": encodeURIComponent(file.name) } }),
+  /** Octets bruts plutôt qu'un tableau JSON : un .jar pèse souvent plusieurs Mo. Dans `instance`, l'instance choisie sans elle. */
+  addPersonalMod: async (file: File, instance?: string) =>
+    invoke<void>("add_personal_mod", new Uint8Array(await file.arrayBuffer()), { headers: { "x-filename": encodeURIComponent(file.name), "x-instance": encodeURIComponent(instance ?? "") } }),
   /** Dépendances obligatoires des mods ajoutés à la main ; `missing` : sans version pour ce Minecraft. */
-  installPersonalDependencies: (files: string[]) => invoke<{ added: string[]; missing: string[] }>("install_personal_dependencies", { files }),
-  removePersonalMod: (id: string) => invoke<void>("remove_personal_mod", { id }),
-  setPersonalModEnabled: (id: string, enabled: boolean) => invoke<void>("set_personal_mod_enabled", { id, enabled }),
-  updatePersonalMod: (id: string) => invoke<void>("update_personal_mod", { id }),
+  installPersonalDependencies: (files: string[], instance?: string) => invoke<{ added: string[]; missing: string[] }>("install_personal_dependencies", { files, instance: instance ?? null }),
+  removePersonalMod: (id: string, instance?: string) => invoke<void>("remove_personal_mod", { id, instance: instance ?? null }),
+  setPersonalModEnabled: (id: string, enabled: boolean, instance?: string) => invoke<void>("set_personal_mod_enabled", { id, enabled, instance: instance ?? null }),
+  updatePersonalMod: (id: string, instance?: string) => invoke<void>("update_personal_mod", { id, instance: instance ?? null }),
   /** Filtrée sur la version de Minecraft de `instance`, de l'instance choisie sans elle. */
-  searchModrinth: (kind: ModrinthKind, query: string, offset: number, instance?: string) =>
-    invoke<ModrinthPage>("search_modrinth", { kind, query, offset, instance: instance ?? null }),
+  searchModrinth: (kind: ModrinthKind, query: string, filters: SearchFilters, offset: number, instance?: string) =>
+    invoke<ModrinthPage>("search_modrinth", { kind, query, filters, offset, instance: instance ?? null }),
   modrinthProject: (project: string) => invoke<ModrinthProject>("modrinth_project", { project }),
+  /** Mondes CurseForge pour la version de `instance`, de l'instance choisie sans elle. */
+  searchWorlds: (query: string, filters: SearchFilters, offset: number, instance?: string) =>
+    invoke<ModrinthPage>("search_worlds", { query, filters, offset, instance: instance ?? null }),
+  worldPage: (project: string) => invoke<ModrinthProject>("world_page", { project }),
+  /** Renvoie le nom du dossier du monde posé dans l'instance. Avancement : évènement `world-progress`. */
+  installWorld: (project: string, instance?: string) => invoke<string>("install_world", { project, instance: instance ?? null }),
   /** Renvoie les fichiers ajoutés (le mod et ses dépendances absentes). */
   installModrinthMod: (project: string, instance?: string) => invoke<string[]>("install_modrinth_mod", { project, instance: instance ?? null }),
   /** Pack de ressources, shader ou datapack (`world` : dossier du monde) pour `instance`, l'instance choisie sans elle. */

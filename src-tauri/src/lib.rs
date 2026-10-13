@@ -573,14 +573,22 @@ async fn list_personal_mods(instance: Option<String>, app: AppHandle, state: Sta
 /// Recherche sur Modrinth pour la version de Minecraft de l'instance `instance` (l'instance choisie
 /// sans elle). Les mods marquent ceux que le catalogue Clover fournit déjà.
 #[tauri::command]
-async fn search_modrinth(kind: game::modrinth::Kind, query: String, offset: u32, instance: Option<String>, app: AppHandle, state: State<'_, AppState>) -> Result<game::modrinth::SearchPage, game::GameError> {
+async fn search_modrinth(
+    kind: game::modrinth::Kind,
+    query: String,
+    filters: game::modrinth::Filters,
+    offset: u32,
+    instance: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<game::modrinth::SearchPage, game::GameError> {
     let http = game::download::client();
     if kind != game::modrinth::Kind::Mod {
         let (_, _, minecraft) = instances::game_context(&app, &state.snapshot(), instance.as_deref()).await?;
-        return game::modrinth::search(&http, kind, &query, &minecraft, "fabric", offset).await;
+        return game::modrinth::search(&http, kind, &query, &minecraft, "fabric", &filters, offset).await;
     }
     let context = instances::mod_context(&app, &state.snapshot(), instance.as_deref()).await?;
-    let mut page = game::modrinth::search(&http, kind, &query, &context.minecraft, context.loader.modrinth(), offset).await?;
+    let mut page = game::modrinth::search(&http, kind, &query, &context.minecraft, context.loader.modrinth(), &filters, offset).await?;
     if let Some(manifest) = &context.manifest { page.mark_provided(&manifest.mods_to_install(&context.enabled)); }
     Ok(page)
 }
@@ -625,6 +633,47 @@ async fn modrinth_project(project: String, app: AppHandle) -> Result<game::modri
     Ok(page)
 }
 
+/// Mondes CurseForge pour la version de Minecraft de l'instance `instance` (l'instance choisie
+/// sans elle).
+#[tauri::command]
+async fn search_worlds(
+    query: String,
+    filters: game::modrinth::Filters,
+    offset: u32,
+    instance: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<game::modrinth::SearchPage, game::GameError> {
+    let (_, _, minecraft) = instances::game_context(&app, &state.snapshot(), instance.as_deref()).await?;
+    game::curseforge::search_worlds(&game::download::client(), &query, &minecraft, &filters, offset).await
+}
+
+/// Page CurseForge d'un monde.
+#[tauri::command]
+async fn world_page(project: String) -> Result<game::modrinth::Project, game::GameError> {
+    game::curseforge::world_page(&game::download::client(), &project).await
+}
+
+/// Télécharge le monde CurseForge `project` dans les mondes de l'instance `instance` (l'instance
+/// choisie sans elle) ; renvoie le nom de son dossier. Avancement : évènement `world-progress`
+/// (octets reçus, octets attendus).
+#[tauri::command]
+async fn install_world(project: String, instance: Option<String>, app: AppHandle, state: State<'_, AppState>) -> Result<String, game::GameError> {
+    let (_, paths, minecraft) = instances::game_context(&app, &state.snapshot(), instance.as_deref()).await?;
+    let progress = |done: u64, total: u64| {
+        let _ = app.emit("world-progress", (done, total));
+    };
+    let staging = paths.root.join("downloads").join("worlds");
+    let (archive, name) = game::curseforge::download_world(&game::download::client(), &project, &minecraft, &staging, &progress).await?;
+    let saves = paths.game.join("saves");
+    let extracting = archive.clone();
+    let installed = tauri::async_runtime::spawn_blocking(move || game::world::install_archive(&extracting, &saves, &name))
+        .await
+        .map_err(|e| game::GameError::Io(std::io::Error::other(e)))?;
+    let _ = std::fs::remove_file(&archive);
+    installed.map_err(game::GameError::Refused)
+}
+
 /// Installe un mod trouvé sur Modrinth (et ses dépendances) dans « Mes mods » de l'instance
 /// `instance` (l'instance choisie sans elle).
 #[tauri::command]
@@ -633,32 +682,37 @@ async fn install_modrinth_mod(project: String, instance: Option<String>, app: Ap
     game::personal::install(&game::download::client(), &context.paths.personal_mods, &project, &context.minecraft, context.loader, &context.provided()).await
 }
 
-/// Corps brut : les octets du `.jar` ; en-tête `x-filename` : son nom, encodé pour l'URL.
+/// Corps brut : les octets du `.jar` ; en-tête `x-filename` : son nom, encodé pour l'URL ; en-tête
+/// `x-instance` : l'instance visée (l'instance choisie sans lui).
 #[tauri::command]
 fn add_personal_mod(app: AppHandle, state: State<'_, AppState>, request: tauri::ipc::Request<'_>) -> Result<(), game::GameError> {
-    let name = request
-        .headers()
-        .get("x-filename")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|encoded| url::form_urlencoded::parse(format!("n={encoded}").as_bytes()).next().map(|(_, name)| name.into_owned()))
-        .unwrap_or_default();
+    let header = |key: &str| {
+        request
+            .headers()
+            .get(key)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|encoded| url::form_urlencoded::parse(format!("n={encoded}").as_bytes()).next().map(|(_, value)| value.into_owned()))
+    };
+    let name = header("x-filename").unwrap_or_default();
+    let target = header("x-instance").filter(|id| !id.is_empty());
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err(game::GameError::NotAMod(name)) };
-    let instance = instances::resolve(&state.snapshot(), None)?;
+    let instance = instances::resolve(&state.snapshot(), target.as_deref())?;
     if instance.kind == instances::Kind::Vanilla { return Err(game::GameError::NotAMod("Vanilla ne charge pas de mods".into())); }
     game::personal::add(&instances::paths(game::Paths::new(&app)?, &instance)?.personal_mods, &name, bytes)
 }
 
+/// Les commandes de « Mes mods » visent l'instance `instance`, l'instance choisie sans elle.
 #[tauri::command]
-fn remove_personal_mod(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let instance = instances::resolve(&state.snapshot(), None).map_err(|e| e.to_string())?;
+fn remove_personal_mod(id: String, instance: Option<String>, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let instance = instances::resolve(&state.snapshot(), instance.as_deref()).map_err(|e| e.to_string())?;
     let paths = instances::paths(game::Paths::new(&app).map_err(|e| e.to_string())?, &instance).map_err(|e| e.to_string())?;
     game::personal::remove(&paths.personal_mods, &id).map_err(|e| e.to_string())?;
     state.update(|stored| { if let Some(disabled) = instances::disabled_mut(stored, &instance.id) { disabled.retain(|name| *name != id); } })
 }
 
 #[tauri::command]
-fn set_personal_mod_enabled(id: String, enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
-    let instance = instances::resolve(&state.snapshot(), None).map_err(|e| e.to_string())?;
+fn set_personal_mod_enabled(id: String, enabled: bool, instance: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    let instance = instances::resolve(&state.snapshot(), instance.as_deref()).map_err(|e| e.to_string())?;
     state.update(|stored| {
         if let Some(disabled) = instances::disabled_mut(stored, &instance.id) {
             disabled.retain(|name| *name != id);
@@ -670,17 +724,17 @@ fn set_personal_mod_enabled(id: String, enabled: bool, state: State<'_, AppState
 /// Dépendances obligatoires des mods ajoutés à la main (`files`), téléchargées depuis Modrinth si ni
 /// « Mes mods » ni la sélection Clover ne les fournissent.
 #[tauri::command]
-async fn install_personal_dependencies(files: Vec<String>, app: AppHandle, state: State<'_, AppState>) -> Result<game::personal::Resolved, game::GameError> {
-    let context = instances::mod_context(&app, &state.snapshot(), None).await?;
+async fn install_personal_dependencies(files: Vec<String>, instance: Option<String>, app: AppHandle, state: State<'_, AppState>) -> Result<game::personal::Resolved, game::GameError> {
+    let context = instances::mod_context(&app, &state.snapshot(), instance.as_deref()).await?;
     game::personal::install_dependencies(&game::download::client(), &context.paths.personal_mods, &files, &context.minecraft, context.loader, &context.provided()).await
 }
 
 /// Remplace un mod du joueur par sa version pour Minecraft du serveur, trouvée sur Modrinth.
 #[tauri::command]
-async fn update_personal_mod(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+async fn update_personal_mod(id: String, instance: Option<String>, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let snapshot = state.snapshot();
-    let instance = instances::resolve(&snapshot, None).map_err(|e| e.to_string())?;
-    let context = instances::mod_context(&app, &snapshot, None).await.map_err(|e| e.to_string())?;
+    let instance = instances::resolve(&snapshot, instance.as_deref()).map_err(|e| e.to_string())?;
+    let context = instances::mod_context(&app, &snapshot, Some(&instance.id)).await.map_err(|e| e.to_string())?;
     let http = game::download::client();
     let new = game::personal::update(&http, &context.paths.personal_mods, &id, &context.minecraft, context.loader).await.map_err(|e| e.to_string())?;
     // Le nouveau fichier garde l'état activé ou désactivé de l'ancien.
@@ -784,8 +838,7 @@ async fn play(
     let settings = stored.settings;
     let options = game::LaunchOptions {
         memory_mb: instance.memory_mb.or_else(|| (!settings.memory_auto).then(|| u64::from(settings.memory_gb) * 1024)),
-        // Ceux du launcher, puis ceux de l'instance.
-        java_args: settings.java_args.split_whitespace().chain(instance.java_args.as_deref().unwrap_or_default().split_whitespace()).map(str::to_owned).collect(),
+        java_args: game::launch::java_arguments(instance.optimized_java.unwrap_or(settings.optimized_java), &settings.java_args, instance.java_args.as_deref().unwrap_or_default()),
         fullscreen: settings.fullscreen,
         // Taille absurde (champ vidé, valeur tapée à moitié) : celle du jeu.
         resolution: settings.resolution.map(|size| (size.width, size.height)).filter(|&(width, height)| (320..=16384).contains(&width) && (240..=16384).contains(&height)),
@@ -1156,6 +1209,9 @@ pub fn run() {
             search_modrinth,
             modrinth_project,
             install_modrinth_mod,
+            search_worlds,
+            world_page,
+            install_world,
             play,
             instances::list_instances,
             instances::install_modpack,
@@ -1175,6 +1231,7 @@ pub fn run() {
             instances::export_modpack,
             instances::set_content_enabled,
             instances::trash_content,
+            instances::show_content,
             history::play_history,
             instances::instance_versions,
             instances::download_size,
@@ -1183,7 +1240,7 @@ pub fn run() {
             instances::select_instance,
             instances::update_instance,
             instances::set_instances_view,
-            instances::remove_instance,
+            instances::delete_instance,
             instances::open_instance_folder,
             instances::set_instance_catalogue,
             import::detect_installations,

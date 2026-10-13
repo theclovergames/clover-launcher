@@ -27,6 +27,10 @@ test("offline modes contribute zero even if their last count was nonzero", () =>
   assert.equal(networkPlayers({ ...feed, modes: modesStatus.map((mode) => ({ ...mode, online: false, players: null })) }, modes), 0);
 });
 
+test("a mode announced for later does not hide the total", () => {
+  assert.equal(networkPlayers(feed, [{ id: "survie", name: "Survie", image: null, soon: true }, ...modes]), 2);
+});
+
 test("does not present an incomplete or stale total as zero", () => {
   assert.equal(networkPlayers({ ...feed, modes: null }, modes), null);
   assert.equal(networkPlayers(feed, []), null);

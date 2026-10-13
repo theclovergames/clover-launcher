@@ -1,27 +1,24 @@
-import { ArrowRight, Newspaper, Wrench } from "lucide-react";
+import { Wrench } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 
-import { HeroBackdrop } from "@/components/Backdrop";
-import { QuickLinks, WeekActivity } from "@/components/HomeExtras";
-import type { HeroTone } from "@/lib/appearance";
+import lobby from "@/assets/home/lobby.webp";
+import { QuickLinks, type ServerStatus, Status, WeekActivity } from "@/components/HomeExtras";
+import { HERO_TONES, type HeroTone } from "@/lib/appearance";
 import { ModeGrid } from "@/components/ModeGrid";
 import { NewsList } from "@/components/NewsList";
 import { type OtherServer, OtherServers } from "@/components/OtherServers";
 import { PlayButton } from "@/components/PlayButton";
 import { SkinViewer } from "@/components/SkinViewer";
 import { VersionPicker } from "@/components/VersionPicker";
-import { secondaryButton } from "@/lib/buttons";
 import { forClover } from "@/lib/instances";
-import { cn } from "@/lib/utils";
 import type { InstanceEntry, ModeStatus, NewsItem, PlaySession, PlayState, SkinLook } from "@/types";
 
 type Props = {
+  /** Pseudo du compte actif, au-dessus de son skin. */
+  playerName: string;
   look: SkinLook;
-  /** Teinte du bandeau, choisie dans Paramètres → Apparence. */
+  /** Teinte du dégradé posé sur l'image du lobby, choisie dans Paramètres → Apparence. */
   heroTone?: HeroTone;
-  /** Noms des mods activés, dans l'ordre du catalogue. */
-  enabledMods: string[];
-  onManageMods: () => void;
   /** Pendant la partie : lien vers la console sous « Jouer ». */
   onOpenConsole: () => void;
   play: PlayState;
@@ -38,7 +35,7 @@ type Props = {
   /** Ouvre d'office le choix d'instance (planche des maquettes). */
   versionOpen?: boolean;
   /** Disponibilité par ping, total des joueurs par mode ; `null` pendant la première mesure. */
-  server: { online: boolean; players: number | null } | null;
+  server: ServerStatus;
   animateSkin?: boolean;
   modes: ModeStatus[];
   /** Serveurs hors Clover Games déjà rejoints, du plus récent au plus ancien. */
@@ -46,7 +43,7 @@ type Props = {
   onPlayServer: (address: string) => void;
   onRenameServer?: (address: string, name: string) => Promise<void>;
   onRenameError?: (message: string) => void;
-  /** Du plus récent au plus ancien : le premier article passe à la une. */
+  /** Du plus récent au plus ancien : le premier passe à la une. */
   news: NewsItem[];
   /** Maintenance annoncée sur le site : bandeau au-dessus de l'accueil. */
   maintenance?: boolean;
@@ -59,158 +56,98 @@ type Props = {
   sessions: PlaySession[] | null;
 };
 
+/** Hauteur du bandeau que le skin laisse libre : pastilles du haut, pseudo, marge du bas. */
+const SKIN_MARGIN = 96;
 
-
-const date = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long" });
-
-/** Blocs complets (183 px mesurés sur la planche) et sans lignes de détail, écart compris. */
-const FULL_HEIGHT = 192;
-const MEDIUM_HEIGHT = 136;
-/** Remplissage vertical du bloc des modes (`pt-4 pb-5`) et écart entre les blocs (`gap-2`). */
-const MODES_PADDING = 36;
-const GAP = 8;
-
-/**
- * « Ta semaine » et les raccourcis restent toujours là : complets s'il reste la place sous les modes
- * à leur taille naturelle (ils passent sur plusieurs lignes dans une fenêtre étroite), sans leurs
- * lignes de détail sinon ; et si même ainsi ils ne tiennent pas, la colonne défile.
- */
-function useExtrasLayout() {
-  const column = useRef<HTMLDivElement>(null);
-  const modes = useRef<HTMLDivElement>(null);
-  const bar = useRef<HTMLDivElement>(null);
-  const [layout, setLayout] = useState<"full" | "medium" | "scroll">("medium");
+/** Skin à la taille que le bandeau permet, debout à côté de « Jouer ». */
+function useHeroSkin() {
+  const hero = useRef<HTMLElement>(null);
+  const [height, setHeight] = useState(240);
   useLayoutEffect(() => {
-    const nodes = [column.current, modes.current, bar.current];
-    if (nodes.some((node) => !node)) return;
+    const node = hero.current;
+    if (!node) return;
+    // Quatre tailles seulement : le rendu 3D se recrée à chaque changement.
     const measure = () => {
-      const free = column.current!.clientHeight - (modes.current!.offsetHeight + MODES_PADDING) - bar.current!.offsetHeight - GAP;
-      setLayout(free >= FULL_HEIGHT ? "full" : free >= MEDIUM_HEIGHT ? "medium" : "scroll");
+      const free = node.clientHeight - SKIN_MARGIN;
+      setHeight(free >= 380 ? 380 : free >= 300 ? 300 : free >= 240 ? 240 : 190);
     };
     const observer = new ResizeObserver(measure);
-    for (const node of nodes) observer.observe(node!);
+    observer.observe(node);
     measure();
     return () => observer.disconnect();
   }, []);
-  return { column, modes, bar, layout };
+  return { hero, height };
 }
 
-export function HomeScreen({ look, heroTone, enabledMods, onManageMods, onOpenConsole, play, modesBusy, onStop, onPlay, instances, selectedInstance, onSelectInstance, onCreateInstance, onManageInstances, versionOpen, server, animateSkin, modes, otherServers, onPlayServer, onRenameServer, onRenameError, news, maintenance = false, onOpenLink, onOpenNews, onReadNews, sessions }: Props) {
-  const [featured, ...others] = news;
+/**
+ * Accueil à la manière du launcher officiel : le lobby de Clover Games en grand, ton joueur debout
+ * devant, à côté de l'instance à lancer et de « Jouer ». Dessous, les modes sur une ligne, puis les
+ * actualités et ta semaine.
+ */
+export function HomeScreen({ playerName, look, heroTone = "forest", onOpenConsole, play, modesBusy, onStop, onPlay, instances, selectedInstance, onSelectInstance, onCreateInstance, onManageInstances, versionOpen, server, animateSkin, modes, otherServers, onPlayServer, onRenameServer, onRenameError, news, maintenance = false, onOpenLink, onOpenNews, onReadNews, sessions }: Props) {
+  const skin = useHeroSkin();
+  const busy = modesBusy ?? play.kind !== "ready";
+  const shade = HERO_TONES[heroTone].shade;
   const current = instances.find((entry) => entry.id === selectedInstance) ?? instances[0];
-  const extras = useExtrasLayout();
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col gap-2">
+    <main className="flex min-h-0 flex-1 flex-col gap-3">
       {maintenance && (
         <p role="status" className="flex shrink-0 items-center gap-2.5 rounded-[calc(var(--radius)+4px)] border border-[var(--mc-outline)] bg-accent px-6 py-2 text-[13px] font-semibold text-accent-foreground">
           <Wrench className="size-4 shrink-0" aria-hidden />
           Maintenance en cours : les serveurs peuvent être indisponibles ou redémarrer. Suis les annonces sur le Discord.
         </p>
       )}
-      <section className="tile relative flex h-[clamp(270px,36vh,430px)] shrink-0 items-end overflow-hidden text-white">
-        <HeroBackdrop tone={heroTone} />
 
-        <div className="relative flex w-full items-end justify-between gap-8 px-10 pb-8">
-          {featured ? (
-            <article className="flex max-w-[540px] flex-col gap-3">
-              <p className="mc-frame flex items-center gap-1.5 self-start bg-black/55 px-2.5 py-1 text-[11px] font-semibold [--mc-radius:6px]">
-                <Newspaper className="size-3.5 text-accent" aria-hidden />À la une · <time dateTime={featured.publishedAt}>{date.format(new Date(featured.publishedAt))}</time>
-              </p>
-              <h1 className="font-display text-[clamp(28px,3.4vw,40px)] leading-[1.05] text-balance mc-text-shadow">{featured.title}</h1>
-              <p className="line-clamp-2 text-[13px] leading-relaxed text-white/80">{featured.excerpt}</p>
-              <button type="button" onClick={() => onReadNews(featured)} className={`${secondaryButton} mt-1 self-start`}>
-                Lire l'article
-                <ArrowRight className="size-4" aria-hidden />
-              </button>
-            </article>
-          ) : (
-            <h1 className="font-display text-[34px]">Bienvenue sur Clover Games</h1>
-          )}
+      <section ref={skin.hero} aria-label="Jouer à Clover Games" className="tile relative flex min-h-[260px] flex-1 flex-col overflow-hidden text-white">
+        <img src={lobby} alt="" draggable={false} className="absolute inset-0 size-full object-cover object-[50%_38%]" />
+        {/* Haut assombri pour les pastilles, bas teinté pour le joueur et « Jouer ». */}
+        <div aria-hidden className="absolute inset-0" style={{ background: `linear-gradient(to bottom, rgb(0 0 0 / 0.5), transparent 26%), linear-gradient(to top, ${shade} 0%, ${shade}cc 16%, transparent 58%)` }} />
 
-          <div className="flex shrink-0 items-end gap-2">
-            <div className="relative -mb-8">
-              <div aria-hidden className="absolute bottom-7 left-1/2 h-4 w-28 -translate-x-1/2 rounded-[50%] bg-black/60 blur-[6px]" />
-              <SkinViewer look={look} width={170} height={270} animate={animateSkin} />
-            </div>
-            <div className="flex flex-col items-center gap-3 pb-1">
-              <PlayButton
-                state={play}
-                onPlay={() => onPlay()}
-                onOpenConsole={onOpenConsole}
-                onStop={onStop}
-                version={current ? `${current.name} · ${current.minecraft ?? "…"}${forClover(current) ? "" : " · solo"}` : "Chargement…"}
-                picker={<VersionPicker instances={instances} selected={selectedInstance} onSelect={onSelectInstance} onCreate={onCreateInstance} onManage={onManageInstances} defaultOpen={versionOpen} />}
-              />
-              <p className="mc-frame flex h-9 items-center gap-2 bg-card/90 px-3.5 text-xs text-muted-foreground [--mc-radius:6px]">
-                <span className={cn("size-2 rounded-full", server === null ? "animate-pulse bg-muted-foreground" : server.online ? "bg-primary" : "bg-destructive")} aria-hidden />
-                {server === null ? (
-                  <span>Recherche du serveur…</span>
-                ) : server.online ? (
-                  <>
-                    <span className="font-semibold text-foreground">En ligne</span>
-                    {server.players !== null && (
-                      <>
-                        <span aria-hidden>·</span>
-                        <span className="font-pixel text-[12px] text-foreground">{server.players}</span> joueurs
-                      </>
-                    )}
-                  </>
-                ) : (
-                  <span className="font-semibold text-destructive">Hors ligne</span>
-                )}
-              </p>
-            </div>
+        <div className="relative flex items-start justify-between gap-4 px-4 pt-4">
+          <div className="rounded-lg bg-black/45 px-3 py-1.5 backdrop-blur-sm">
+            <Status server={server} />
+          </div>
+          <QuickLinks onOpenLink={onOpenLink} />
+        </div>
+
+        <div className="relative mt-auto flex items-end justify-center gap-5 px-6 pb-5">
+          <div className="relative flex shrink-0 flex-col items-center">
+            {playerName && <p className="max-w-40 truncate bg-black/40 px-2 pt-1 pb-0.5 font-pixel text-[15px] leading-none">{playerName}</p>}
+            <div aria-hidden className="absolute bottom-1 left-1/2 h-4 w-24 -translate-x-1/2 rounded-[50%] bg-black/60 blur-[6px]" />
+            <SkinViewer look={look} width={Math.round(skin.height * 0.62)} height={skin.height} animate={animateSkin} />
+          </div>
+          <div className="pb-1">
+            <PlayButton
+              state={play}
+              onPlay={() => onPlay()}
+              onOpenConsole={onOpenConsole}
+              onStop={onStop}
+              version={current ? `${current.name} · ${current.minecraft ?? "…"}${forClover(current) ? "" : " · solo"}` : ""}
+              picker={<VersionPicker instances={instances} selected={selectedInstance} onSelect={onSelectInstance} onCreate={onCreateInstance} onManage={onManageInstances} defaultOpen={versionOpen} />}
+            />
           </div>
         </div>
       </section>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(340px,420px)] gap-2">
-        <div ref={extras.column} className={cn("flex min-h-0 min-w-0 flex-col gap-2", extras.layout === "scroll" && "-mr-2 overflow-y-auto pr-2")}>
-          <section aria-labelledby="modes-title" className={cn("tile flex flex-col px-5 pt-4 pb-5", extras.layout === "medium" ? "min-h-0 flex-1" : "flex-none")}>
-            {/* Hauteur naturelle des modes, mesurée pour décider de la place restante. */}
-            <div ref={extras.modes} className="flex flex-col gap-3.5">
-            <h2 id="modes-title" className="font-display text-xl">
-              Modes de jeu
-            </h2>
-            <ModeGrid modes={modes} onPlay={onPlay} busy={modesBusy ?? play.kind !== "ready"} />
-            {/* Pas la place pour les deux à 1100×680 : un joueur qui a déjà des serveurs récents a déjà joué. */}
-            {otherServers.length > 0 ? (
-              <OtherServers servers={otherServers} onPlay={onPlayServer} busy={modesBusy ?? play.kind !== "ready"} onRename={onRenameServer} onError={onRenameError} />
-            ) : (
-              <p className="text-xs leading-snug text-muted-foreground">
-                Clique sur un mode pour t'y connecter directement. «&nbsp;Jouer&nbsp;» ouvre le menu du jeu.
-              </p>
-            )}
-            </div>
-          </section>
-
-          {extras.layout === "full" ? (
-            <div className="grid min-h-0 flex-1 grid-cols-2 items-start gap-2">
-              <WeekActivity sessions={sessions} className="h-full" />
-              <QuickLinks onOpenLink={onOpenLink} className="h-full" />
-            </div>
-          ) : (
-            <div className="grid shrink-0 grid-cols-2 items-stretch gap-2">
-              <WeekActivity sessions={sessions} size="medium" />
-              <QuickLinks onOpenLink={onOpenLink} size="medium" />
+      <section aria-labelledby="modes-title" className="flex shrink-0 flex-col gap-2.5 px-1">
+        <div className="flex min-w-0 items-center gap-6">
+          <h2 id="modes-title" className="shrink-0 font-display text-xl">
+            Modes de jeu
+          </h2>
+          {/* Conteneur de requêtes : sans largeur propre, il prend celle qui reste à côté du titre. */}
+          {otherServers.length > 0 && (
+            <div className="min-w-0 flex-1">
+              <OtherServers servers={otherServers} onPlay={onPlayServer} busy={busy} onRename={onRenameServer} onError={onRenameError} />
             </div>
           )}
-
-          <div ref={extras.bar} className="tile flex shrink-0 items-center gap-4 px-5 py-3 text-xs">
-            <span className="shrink-0 text-muted-foreground">
-              <span className="font-pixel text-[13px] text-foreground">{enabledMods.length}</span> mod{enabledMods.length > 1 ? "s" : ""} activé{enabledMods.length > 1 ? "s" : ""}
-            </span>
-            <span className="min-w-0 flex-1 truncate">
-              {enabledMods.length === 0 ? "Minecraft sans mods" : enabledMods.slice(0, 3).join(", ") + (enabledMods.length > 3 ? ` et ${enabledMods.length - 3} autres` : "")}
-            </span>
-            <button type="button" onClick={onManageMods} className="shrink-0 font-semibold text-accent hover:underline">
-              Gérer les mods
-            </button>
-          </div>
         </div>
+        <ModeGrid modes={modes} onPlay={onPlay} busy={busy} />
+      </section>
 
-        <NewsList items={others} onOpen={onReadNews} onAll={onOpenNews} className="tile px-4 pt-4 pb-2" />
+      <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_clamp(250px,24vw,320px)] items-end gap-4 px-1">
+        <NewsList news={news} onOpen={onReadNews} onAll={onOpenNews} />
+        <WeekActivity sessions={sessions} size="medium" surface="rounded-lg border border-border bg-card" />
       </div>
     </main>
   );

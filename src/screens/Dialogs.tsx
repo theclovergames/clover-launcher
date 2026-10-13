@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Circle, Clock, Copy, FolderOpen, LoaderCircle, PenLine, RotateCcw, X } from "lucide-react";
+import { ArrowRight, Check, Circle, Clock, Copy, FolderOpen, LoaderCircle, PenLine, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { PlayerHead } from "@/components/PlayerHead";
@@ -252,7 +252,7 @@ export function NameDialog(props: {
           </div>
 
           {blocked && (
-            <p className="flex items-start gap-2 rounded-md border border-border bg-[#100e0b] px-3 py-2.5 text-[13px] leading-relaxed">
+            <p className="flex items-start gap-2 rounded-md border border-border bg-sunken px-3 py-2.5 text-[13px] leading-relaxed">
               <Clock className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
               {next
                 ? `Ton pseudo a changé il y a moins de 30 jours. Prochain changement possible le ${next.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}.`
@@ -275,7 +275,7 @@ export function NameDialog(props: {
                 spellCheck={false}
                 autoComplete="off"
                 aria-describedby="name-rules"
-                className="h-10 w-full rounded-md border border-border bg-[#100e0b] px-3 font-pixel text-sm text-foreground outline-none select-text focus:border-accent disabled:opacity-60"
+                className="h-10 w-full rounded-md border border-border bg-sunken px-3 font-pixel text-sm text-foreground outline-none select-text focus:border-accent disabled:opacity-60"
               />
             </label>
             <ul id="name-rules" aria-live="polite" className="grid gap-1.5 text-[12px]">
@@ -306,6 +306,46 @@ export function NameDialog(props: {
             </button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Ce que l'on demande de confirmer : titre, explication, et l'élément concerné (chemin, nom). */
+export type Confirmation = { title: string; description: string; detail?: string; confirm: string; onConfirm: () => void };
+
+/**
+ * Confirmation d'une action qui ne se défait pas d'un clic (supprimer, retirer). Le texte reste
+ * affiché pendant l'animation de fermeture.
+ */
+export function ConfirmDialog({ ask, onClose }: { ask: Confirmation | null; onClose: () => void }) {
+  const last = useRef(ask);
+  if (ask) last.current = ask;
+  const shown = last.current;
+  return (
+    <Dialog open={ask !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className={content}>
+        <DialogHeader>
+          <DialogTitle className="font-display text-2xl font-normal">{shown?.title}</DialogTitle>
+          <DialogDescription className="text-[13px] leading-relaxed">{shown?.description}</DialogDescription>
+        </DialogHeader>
+        {shown?.detail && <p className="truncate rounded-md border border-border bg-sunken px-3 py-2 font-mono text-xs select-text">{shown.detail}</p>}
+        <DialogFooter className={footer}>
+          <button type="button" onClick={onClose} className={secondaryButton}>
+            Annuler
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              shown?.onConfirm();
+              onClose();
+            }}
+            className={cn(primaryButton, "bg-destructive text-white")}
+          >
+            <Trash2 className="size-4" aria-hidden />
+            {shown?.confirm}
+          </button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

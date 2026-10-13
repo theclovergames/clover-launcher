@@ -4,11 +4,12 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { CapeFront } from "@/components/SkinFront";
 import { SkinPose } from "@/components/SkinPose";
 import { SkinViewer } from "@/components/SkinViewer";
+import { Tabs } from "@/components/Tabs";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
 import { ownedCapeText } from "@/lib/capes";
 import { cn } from "@/lib/utils";
 import { CapeDialog, ModelDialog } from "@/screens/Dialogs";
-import { Discover, type Trial } from "@/screens/Discover";
+import { SkinGallery, type Trial } from "@/screens/SkinGallery";
 import type { Cape, SavedSkin, SkinLook, SkinModel } from "@/types";
 
 /** Application en cours, erreur, ou action faite (annulable si `undo`). */
@@ -76,7 +77,7 @@ function Choice<T extends string | boolean>({
   className?: string;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className={cn("flex gap-0.5 rounded-lg border border-border bg-[#100e0b]/90 p-0.5", className)}>
+    <div role="radiogroup" aria-label={label} className={cn("flex gap-0.5 rounded-lg border border-border bg-sunken/90 p-0.5", className)}>
       {options.map((option) => (
         <button
           key={String(option.value)}
@@ -141,7 +142,7 @@ function SkinTile({ skin, worn, tried, onTry, onRename, onExport, onRemove }: Ti
         aria-pressed={tried}
         aria-label={`Essayer ${skin.name}${worn ? ", porté actuellement" : ""}`}
         onClick={onTry}
-        className={cn("absolute inset-0 rounded-lg border border-border bg-card transition-colors hover:bg-[#241f19]", tried && selectedFrame)}
+        className={cn("absolute inset-0 rounded-lg border border-border bg-card transition-colors hover:bg-card-hover", tried && selectedFrame)}
       />
       {worn && (
         <span className="pointer-events-none absolute top-2 left-2 flex items-center gap-1 rounded-md bg-primary px-1.5 py-0.5 text-[11px] font-bold text-primary-foreground">
@@ -183,7 +184,7 @@ function SkinTile({ skin, worn, tried, onTry, onRename, onExport, onRemove }: Ti
               keep.current = true;
               setEditing(false);
             }}
-            className="h-6 min-w-0 flex-1 rounded-md border border-muted-foreground bg-[#100e0b] px-1.5 text-xs font-semibold outline-none"
+            className="h-6 min-w-0 flex-1 rounded-md border border-muted-foreground bg-sunken px-1.5 text-xs font-semibold outline-none"
           />
         ) : (
           <span title={skin.name} className="pointer-events-none min-w-0 flex-1 truncate text-xs font-semibold">
@@ -295,9 +296,6 @@ function trialLook(look: SkinLook, trial: Trial): SkinLook {
   return { texture: trial.texture, model: trial.model, cape: trial.cape ? { id: "trial", name: trial.name, texture: trial.cape } : look.cape };
 }
 
-const tabClass = (selected: boolean) =>
-  cn("flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors", selected ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground");
-
 export function SkinsScreen(props: Props) {
   const { playerName, look, saved, activeId, onSelect, onAddFile, onRename, onRemove, onWornModel, onSkinModel, capes, onRemoteSkin, onWearCape, onExport, status, onDismissStatus, animateSkin } =
     props;
@@ -397,7 +395,7 @@ export function SkinsScreen(props: Props) {
                   Porter ce skin
                 </button>
                 {!triedSkin.savedId && (
-                  <button type="button" onClick={() => onRemoteSkin(triedSkin, false)} title="Ajouter à mes skins" aria-label="Ajouter à mes skins" className={iconButton}>
+                  <button type="button" onClick={() => onRemoteSkin(triedSkin, false)} title="Ajouter à Mes skins" aria-label="Ajouter à Mes skins" className={iconButton}>
                     <BookmarkPlus className="size-4" aria-hidden />
                   </button>
                 )}
@@ -426,8 +424,8 @@ export function SkinsScreen(props: Props) {
                 type="button"
                 onClick={() => onRemoteSkin({ texture: look.texture, model: look.model, name: playerName }, false)}
                 disabled={!look.texture}
-                title="Garder ce skin dans Mes skins"
-                aria-label="Garder ce skin dans Mes skins"
+                title="Ajouter à Mes skins"
+                aria-label="Ajouter ce skin à Mes skins"
                 className={iconButton}
               >
                 <BookmarkPlus className="size-4" aria-hidden />
@@ -463,22 +461,22 @@ export function SkinsScreen(props: Props) {
         </header>
         {/* Onglets et messages restent visibles en descendant jusqu'aux capes. */}
         <div className="sticky top-0 z-10 border-b border-border/70 bg-background px-10 pt-4 pb-3">
-          <div role="tablist" aria-label="Skins" className="flex w-fit gap-1 rounded-lg border border-border bg-[#100e0b] p-1">
-              <button type="button" role="tab" aria-selected={view === "mine"} onClick={() => show("mine")} className={tabClass(view === "mine")}>
-                Mes skins
-                <span className="rounded bg-white/[0.07] px-1.5 text-[11px] text-muted-foreground tabular-nums">{saved.length}</span>
-              </button>
-              <button type="button" role="tab" aria-selected={view === "discover"} onClick={() => show("discover")} className={tabClass(view === "discover")}>
-                Découverte
-              </button>
-          </div>
+          <Tabs
+            label="Skins"
+            value={view}
+            onChange={show}
+            items={[
+              { id: "mine", label: "Mes skins", count: saved.length },
+              { id: "discover", label: "Galerie" },
+            ]}
+          />
           {status && <StatusBanner status={status} onDismiss={onDismissStatus} />}
         </div>
 
         <div className="px-10">
           {discoverOpened && (
             <div hidden={view !== "discover"} className="mt-5">
-              <Discover
+              <SkinGallery
                 trial={trial}
                 onTrial={setTrial}
                 onSave={(skin) => onRemoteSkin(skin, false)}
@@ -521,7 +519,7 @@ export function SkinsScreen(props: Props) {
                       value={filter}
                       onChange={(event) => setFilter(event.target.value)}
                       placeholder="Filtrer par nom…"
-                      className="h-8 w-full rounded-md border border-border bg-[#100e0b] pr-2 pl-8 text-[13px] outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
+                      className="h-8 w-full rounded-md border border-border bg-sunken pr-2 pl-8 text-[13px] outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
                     />
                   </label>
                 )}
@@ -548,7 +546,7 @@ export function SkinsScreen(props: Props) {
                 <p className="text-sm text-muted-foreground">
                   Ajoute un fichier .png, ou{" "}
                   <button type="button" onClick={() => show("discover")} className="font-semibold text-foreground underline underline-offset-2 hover:text-primary">
-                    trouve un skin dans la Découverte
+                    trouve un skin dans la Galerie
                   </button>
                   , Steve et Alex compris.
                 </p>

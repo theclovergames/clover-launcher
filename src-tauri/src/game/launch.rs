@@ -21,6 +21,27 @@ const QUICK_PLAY_POLL: Duration = Duration::from_secs(5);
 /// Attente de la fin de la sortie une fois le jeu fermé.
 const OUTPUT_GRACE: Duration = Duration::from_secs(3);
 
+/// Arguments Java « optimisés » : le ramasse-miettes G1 réglé comme le launcher officiel de
+/// Minecraft, pour des pauses courtes (moins de saccades). Valables de Java 8 à Java 25.
+pub const OPTIMIZED_JAVA_ARGS: &[&str] = &[
+    "-XX:+UnlockExperimentalVMOptions",
+    "-XX:+UseG1GC",
+    "-XX:G1NewSizePercent=20",
+    "-XX:G1ReservePercent=20",
+    "-XX:MaxGCPauseMillis=50",
+    "-XX:G1HeapRegionSize=32M",
+];
+
+/// Arguments Java d'un lancement : les optimisés si demandés, puis ceux du launcher, puis ceux de
+/// l'instance. Un ramasse-miettes choisi à la main (`-XX:+UseZGC`…) remplace les optimisés : Java
+/// refuse d'en avoir deux.
+pub fn java_arguments(optimized: bool, launcher: &str, instance: &str) -> Vec<String> {
+    let chosen: Vec<&str> = launcher.split_whitespace().chain(instance.split_whitespace()).collect();
+    let own_collector = chosen.iter().any(|argument| argument.starts_with("-XX:+Use") && argument.ends_with("GC"));
+    let optimized = if optimized && !own_collector { OPTIMIZED_JAVA_ARGS } else { &[] };
+    optimized.iter().copied().chain(chosen).map(str::to_owned).collect()
+}
+
 /// Où Quick Play fait entrer le jeu dès son ouverture, au lieu du menu.
 pub enum QuickPlay {
     /// Serveur, par son adresse.
@@ -249,6 +270,15 @@ mod tests {
         assert!(old.windows(4).any(|window| window == ["--width", "1280", "--height", "720"]));
         assert!(!old.contains(&"--graphicsBackend".into()));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn optimized_java_arguments_give_way_to_a_chosen_collector() {
+        let optimized = java_arguments(true, "-Dfile.encoding=UTF-8", "");
+        assert_eq!(optimized.len(), OPTIMIZED_JAVA_ARGS.len() + 1);
+        assert_eq!(optimized.last().map(String::as_str), Some("-Dfile.encoding=UTF-8"));
+        assert_eq!(java_arguments(false, "", " -Xss2M "), ["-Xss2M"]);
+        assert_eq!(java_arguments(true, "", "-XX:+UseZGC"), ["-XX:+UseZGC"]);
     }
 
     #[test]

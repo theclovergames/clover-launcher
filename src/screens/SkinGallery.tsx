@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CapeFront } from "@/components/SkinFront";
 import { SkinPose } from "@/components/SkinPose";
+import { Tabs } from "@/components/Tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { secondaryButton } from "@/lib/buttons";
 import { capeAvailability, capeText, shortCount, textureHash } from "@/lib/capes";
@@ -38,22 +40,21 @@ const ORDERS: { id: SkinOrder; label: string }[] = [
 /** Une page de laby.net ; moins de 36 skins : plus rien à charger. */
 const PAGE_SIZE = 36;
 
-const tablist = "flex gap-1 self-start rounded-lg border border-border bg-[#100e0b] p-1";
-const tab = (selected: boolean) =>
-  cn("rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors", selected ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground");
 const selectedFrame = "outline-[3px] outline-offset-2 outline-[#e9e3d4] [outline-style:solid]";
 const isPlayerName = (value: string) => /^[A-Za-z0-9_]{3,16}$/.test(value);
 
-export function Discover({ trial, onTrial, onSave, owned, activeCapeId, view, onView }: Props) {
+export function SkinGallery({ trial, onTrial, onSave, owned, activeCapeId, view, onView }: Props) {
   return (
     <div className="flex flex-col gap-4">
-      <div role="tablist" aria-label="Découverte" className={tablist}>
-        {(["skins", "capes"] as const).map((id) => (
-          <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => onView(id)} className={tab(view === id)}>
-            {id === "skins" ? "Skins" : "Capes"}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        label="Galerie"
+        value={view}
+        onChange={onView}
+        items={[
+          { id: "skins", label: "Skins" },
+          { id: "capes", label: "Capes" },
+        ]}
+      />
       {view === "skins" ? <SkinsView trial={trial} onTrial={onTrial} onSave={onSave} /> : <CapesView trial={trial} onTrial={onTrial} owned={owned} activeCapeId={activeCapeId} />}
     </div>
   );
@@ -151,17 +152,22 @@ function SkinsView({ trial, onTrial, onSave }: Pick<Props, "trial" | "onTrial" |
             setTag(null);
           }}
           placeholder="Rechercher un skin ou un pseudo…"
-          className="h-10 w-full rounded-md border border-border bg-[#100e0b] pr-3 pl-9 text-sm text-foreground outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
+          className="h-10 w-full rounded-md border border-border bg-sunken pr-3 pl-9 text-sm text-foreground outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
         />
       </label>
 
-      <div role="tablist" aria-label="Tri" className={cn(tablist, "flex-wrap")}>
-        {ORDERS.map((item) => (
-          <button key={item.id} type="button" role="tab" aria-selected={order === item.id} onClick={() => setOrder(item.id)} className={tab(order === item.id)}>
-            {item.label}
-          </button>
-        ))}
-      </div>
+      <Select value={order} onValueChange={(value) => value && setOrder(value as SkinOrder)}>
+        <SelectTrigger aria-label="Trier par" className="h-9 w-52 text-[13px]">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {ORDERS.map((item) => (
+            <SelectItem key={item.id} value={item.id}>
+              {item.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
       {tags.length > 0 && (
         <ul aria-label="Étiquettes" className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1.5">
@@ -178,7 +184,7 @@ function SkinsView({ trial, onTrial, onSave }: Pick<Props, "trial" | "onTrial" |
                   }}
                   className={cn(
                     "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors",
-                    selected ? "border-primary bg-primary/15 text-foreground" : "border-border bg-[#100e0b] text-muted-foreground hover:text-foreground",
+                    selected ? "border-primary bg-primary/15 text-foreground" : "border-border bg-sunken text-muted-foreground hover:text-foreground",
                   )}
                 >
                   {item.emoji && <span aria-hidden>{item.emoji}</span>}
@@ -226,7 +232,7 @@ function SkinsView({ trial, onTrial, onSave }: Pick<Props, "trial" | "onTrial" |
                   aria-label={`Essayer ce skin, porté par ${shortCount(skin.uses)} joueurs`}
                   onClick={() => onTrial({ kind: "skin", name: skinName, texture: skin.texture, model: skin.model, cape: null })}
                   className={cn(
-                    "absolute inset-0 overflow-hidden rounded-lg border border-border bg-card transition-colors hover:bg-[#241f19]",
+                    "absolute inset-0 overflow-hidden rounded-lg border border-border bg-card transition-colors hover:bg-card-hover",
                     tried(skin.texture) && selectedFrame,
                   )}
                 >
@@ -247,8 +253,8 @@ function SkinsView({ trial, onTrial, onSave }: Pick<Props, "trial" | "onTrial" |
                     setKept((current) => new Set(current).add(skin.hash));
                     onSave({ texture: skin.texture, model: skin.model, name: skinName });
                   }}
-                  aria-label={kept.has(skin.hash) ? "Déjà dans Mes skins" : "Mettre de côté dans Mes skins"}
-                  title={kept.has(skin.hash) ? "Dans Mes skins" : "Mettre de côté"}
+                  aria-label={kept.has(skin.hash) ? "Déjà dans Mes skins" : "Ajouter à Mes skins"}
+                  title={kept.has(skin.hash) ? "Dans Mes skins" : "Ajouter à Mes skins"}
                   className={cn(
                     "absolute top-2 right-2 grid size-7 place-items-center rounded-md transition-[opacity,background-color]",
                     kept.has(skin.hash)
@@ -351,7 +357,7 @@ function CapesView({ trial, onTrial, owned, activeCapeId }: Pick<Props, "trial" 
                         type="button"
                         title={`Essayer le skin de ${player.name}`}
                         onClick={() => void tryPlayer(player.name)}
-                        className="flex items-center gap-1.5 rounded-md border border-border bg-[#100e0b] py-1 pr-2.5 pl-1 text-xs font-semibold transition-colors hover:bg-secondary"
+                        className="flex items-center gap-1.5 rounded-md border border-border bg-sunken py-1 pr-2.5 pl-1 text-xs font-semibold transition-colors hover:bg-secondary"
                       >
                         <img src={`https://minotar.net/helm/${encodeURIComponent(player.name)}/32.png`} alt="" width={20} height={20} className="pixelated size-5 rounded-[3px]" />
                         {player.name}

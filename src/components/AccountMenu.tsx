@@ -77,7 +77,7 @@ export function AccountMenu({ profile, skin, accounts, onUse, onRemove, onAdd, o
                 <div className={`${row} min-w-0 flex-1`}>
                   <PlayerHead skin={account.skin} size={28} />
                   <span className="flex-1 truncate">{account.profile.name}</span>
-                  <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-bold text-primary">Actif</span>
+                  <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-bold text-primary">Compte actif</span>
                 </div>
               ) : (
                 <button type="button" onClick={run(() => onUse(account.profile.uuid))} className={`${item} min-w-0 flex-1`}>

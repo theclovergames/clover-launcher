@@ -53,7 +53,7 @@ export function ActivityHeatmap({ sessions }: { sessions: PlaySession[] }) {
             )}
           </span>
         </div>
-        <div role="tablist" aria-label="Période" className="flex shrink-0 gap-0.5 rounded-md border border-border bg-[#100e0b] p-0.5">
+        <div role="tablist" aria-label="Période" className="flex shrink-0 gap-0.5 rounded-md border border-border bg-sunken p-0.5">
           {(Object.keys(ACTIVITY_RANGES) as ActivityRange[]).map((id) => (
             <button
               key={id}
@@ -109,7 +109,7 @@ export function ActivityHeatmap({ sessions }: { sessions: PlaySession[] }) {
         </div>
         {shown && hovered !== null && (
           <div
-            className="pointer-events-none absolute z-10 mb-1.5 flex -translate-x-1/2 flex-col gap-0.5 rounded-md border border-border bg-[#100e0b] px-2.5 py-1.5 text-[11px] whitespace-nowrap shadow-lg"
+            className="pointer-events-none absolute z-10 mb-1.5 flex -translate-x-1/2 flex-col gap-0.5 rounded-md border border-border bg-sunken px-2.5 py-1.5 text-[11px] whitespace-nowrap shadow-lg"
             style={{
               left: `calc(32px + (100% - 32px) * ${Math.min(0.9, Math.max(0.1, (Math.floor(hovered / 7) + 0.5) / weeks))})`,
               bottom: `calc((100% - 14px) * ${1 - (hovered % 7) / 7})`,

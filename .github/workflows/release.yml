@@ -5,7 +5,8 @@
 # (`v0.4.0-beta.1`) : seuls les testeurs du canal bêta la reçoivent, sans paquet Microsoft Store.
 #
 # Secrets : TAURI_SIGNING_PRIVATE_KEY (Sécurités/clover-launcher-updater.key, sans mot de passe),
-# R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY (jeton limité au bucket clover-launcher).
+# R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY (jeton limité au bucket clover-launcher),
+# CURSEFORGE_API_KEY (Sécurités/curseforge-api-key.txt, clé de console.curseforge.com).
 name: Release
 
 on:
@@ -41,12 +42,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Tag et version de Cargo.toml identiques
+      - name: Tag, Cargo.toml et package.json à la même version
         shell: bash
         run: |
           version=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error::Tag $GITHUB_REF_NAME, mais src-tauri/Cargo.toml est en $version."
+            exit 1
+          fi
+          npm_version=$(node -p 'require("./package.json").version')
+          if [ "$npm_version" != "$version" ]; then
+            echo "::error::package.json est en $npm_version, src-tauri/Cargo.toml en $version : npm version $version --no-git-tag-version."
             exit 1
           fi
 
@@ -76,6 +82,8 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          # Lue à la compilation par le cœur Rust (import des modpacks CurseForge).
+          CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
 
       - run: node scripts/release.mjs collect src-tauri/target out
 

@@ -6,6 +6,7 @@
   "server": "play.clovergames.fr",
   "modes": [
     { "id": "lobby", "name": "Lobby" },
+    { "id": "survie", "name": "Survie", "soon": true },
     { "id": "bedwars", "name": "BedWars", "host": "bedwars.play.clovergames.fr" },
     { "id": "practice", "name": "Practice", "host": "practice.play.clovergames.fr" },
     { "id": "pvpsoup", "name": "PvPSoup", "host": "pvpsoup.play.clovergames.fr" },

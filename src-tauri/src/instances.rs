@@ -58,6 +58,9 @@ pub struct Instance {
     /// Arguments Java ajoutés à ceux des paramètres du launcher.
     #[serde(default)]
     pub java_args: Option<String>,
+    /// Arguments Java optimisés ; `None` : comme les paramètres du launcher.
+    #[serde(default)]
+    pub optimized_java: Option<bool>,
     #[serde(default)]
     pub disabled_mods: Vec<String>,
     pub enabled_mods: Option<Vec<String>>,
@@ -78,6 +81,7 @@ impl Instance {
             separate: false,
             memory_mb: None,
             java_args: None,
+            optimized_java: None,
             disabled_mods: vec![],
             enabled_mods: None,
             last_played: None,
@@ -90,6 +94,7 @@ impl Instance {
         Self {
             memory_mb: stored.clover_memory_mb,
             java_args: stored.clover_java_args.clone(),
+            optimized_java: stored.clover_optimized_java,
             last_played: stored.clover_last_played,
             pinned: stored.clover_pinned,
             ..Self::builtin()
@@ -460,10 +465,10 @@ pub async fn save_instance(
     Ok(id)
 }
 
-/// Paramètres de la page d'une instance : nom (sauf Clover Games), mémoire (`None` : réglage du
-/// launcher) et arguments Java en plus de ceux du launcher.
+/// Paramètres de la page d'une instance : nom (sauf Clover Games), mémoire et arguments optimisés
+/// (`None` : réglage du launcher), arguments Java en plus de ceux du launcher.
 #[tauri::command]
-pub fn update_instance(id: String, name: String, memory_mb: Option<u64>, java_args: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn update_instance(id: String, name: String, memory_mb: Option<u64>, optimized_java: Option<bool>, java_args: String, state: State<'_, AppState>) -> Result<(), String> {
     validate_instance_id(&id).map_err(|e| e.to_string())?;
     if memory_mb.is_some_and(|memory| !MEMORY_RANGE.contains(&memory)) {
         return Err("Mémoire invalide : entre 1 et 64 Go.".into());
@@ -473,13 +478,14 @@ pub fn update_instance(id: String, name: String, memory_mb: Option<u64>, java_ar
         return Err("Arguments Java trop longs.".into());
     }
     let java_args = (!java_args.is_empty()).then(|| java_args.to_owned());
-    state.update(|stored| apply_settings(stored, &id, name.trim(), memory_mb, java_args))?
+    state.update(|stored| apply_settings(stored, &id, name.trim(), memory_mb, optimized_java, java_args))?
 }
 
 /// Clover Games garde son nom ; les autres instances le prennent du joueur.
-fn apply_settings(stored: &mut crate::store::Stored, id: &str, name: &str, memory_mb: Option<u64>, java_args: Option<String>) -> Result<(), String> {
+fn apply_settings(stored: &mut crate::store::Stored, id: &str, name: &str, memory_mb: Option<u64>, optimized_java: Option<bool>, java_args: Option<String>) -> Result<(), String> {
     if id == BUILTIN {
         stored.clover_memory_mb = memory_mb;
+        stored.clover_optimized_java = optimized_java;
         stored.clover_java_args = java_args;
         return Ok(());
     }
@@ -489,6 +495,7 @@ fn apply_settings(stored: &mut crate::store::Stored, id: &str, name: &str, memor
     let entry = stored.instances.iter_mut().find(|entry| entry.id == id).ok_or("Instance introuvable.")?;
     entry.name = name.to_owned();
     entry.memory_mb = memory_mb;
+    entry.optimized_java = optimized_java;
     entry.java_args = java_args;
     Ok(())
 }
@@ -569,12 +576,29 @@ pub fn set_instances_view(expert: bool, state: State<'_, AppState>) -> Result<()
     state.update(|stored| stored.expert_instances = expert)
 }
 
+/// Supprime une instance personnelle : son dossier (`instances/<id>/` : ses mods, ses journaux et,
+/// séparé, son dossier de jeu) part à la corbeille, récupérable. Un dossier de jeu commun reste :
+/// il appartient aussi à Clover Games. Pas pendant sa partie : le jeu tient ses fichiers ouverts.
 #[tauri::command]
-pub fn remove_instance(id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn delete_instance(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     if id == BUILTIN {
-        return Err("L'instance Clover intégrée ne peut pas être retirée.".into());
+        return Err("Clover Games ne se supprime pas : elle suit le serveur.".into());
     }
-    resolve(&state.snapshot(), Some(&id)).map_err(|e| e.to_string())?;
+    let instance = resolve(&state.snapshot(), Some(&id)).map_err(|e| e.to_string())?;
+    let game_dir = paths(Paths::new(&app).map_err(|e| e.to_string())?, &instance).map_err(|e| e.to_string())?.game;
+    let open = app.state::<game::games::Games>().find(&id).is_some_and(|game| game.running());
+    let (root, dir) = (state.root.clone(), state.root.join("instances").join(&id));
+    tauri::async_runtime::spawn_blocking(move || {
+        if open || (instance.separate && open_game_dirs(&root).iter().any(|open| game::games::same_dir(open, &game_dir))) {
+            return Err("Ferme cette instance avant de la supprimer.".to_owned());
+        }
+        if dir.exists() {
+            trash::delete(&dir).map_err(|e| format!("Impossible de mettre le dossier de l'instance à la corbeille : {e}"))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     state.update(|stored| {
         stored.instances.retain(|entry| entry.id != id);
         if stored.selected_instance.as_deref() == Some(&id) {
@@ -643,6 +667,8 @@ pub struct ContentEntry {
     pub name: String,
     /// Nom du projet Modrinth d'un pack publié, affiché à la place du fichier.
     pub title: Option<String>,
+    /// Identifiant de ce projet : la recherche marque le pack comme installé.
+    pub project_id: Option<String>,
     /// Logo d'un pack : celui du projet Modrinth, sinon son `pack.png` (adresse `data:`).
     pub icon: Option<String>,
     /// Monde d'un datapack.
@@ -715,6 +741,7 @@ fn content(dir: &std::path::Path, folder: &str, world: Option<&str>, enabled: bo
             Some(ContentEntry {
                 name,
                 title: None,
+                project_id: None,
                 icon: packs.then(|| game::content::pack_icon(&path)).flatten(),
                 world: world.map(str::to_owned),
                 enabled,
@@ -832,6 +859,27 @@ pub async fn trash_content(
         .map_err(|e| format!("Impossible de mettre « {name} » à la corbeille : {e}"))
 }
 
+/// Ouvre un élément d'un onglet avec l'application du système (une capture dans la visionneuse
+/// d'images), ou `reveal` : le montre sélectionné dans son dossier.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn show_content(
+    id: String,
+    folder: String,
+    name: String,
+    world: Option<String>,
+    enabled: bool,
+    reveal: bool,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let instance = resolve(&state.snapshot(), Some(&id)).map_err(|e| e.to_string())?;
+    let game_dir = paths(Paths::new(&app).map_err(|e| e.to_string())?, &instance).map_err(|e| e.to_string())?.game;
+    let path = content_path(&game_dir, &folder, &name, world.as_deref(), enabled)?;
+    let opened = if reveal { app.opener().reveal_item_in_dir(&path) } else { app.opener().open_path(path.to_string_lossy(), None::<&str>) };
+    opened.map_err(|e| e.to_string())
+}
+
 /// Renomme un monde solo de l'instance (nom affiché en jeu). Pas pendant une partie : le jeu
 /// réécrit `level.dat` en sauvegardant.
 #[tauri::command]
@@ -930,6 +978,7 @@ pub async fn instance_content(
     for entry in &mut list {
         if let Some(project) = entry.sha512.as_ref().and_then(|hash| projects.get(hash)) {
             entry.title = Some(project.title.clone());
+            entry.project_id = Some(project.id.clone());
             entry.icon = project.icon_url.clone().or(entry.icon.take());
         }
     }
@@ -976,8 +1025,8 @@ pub async fn install_modpack(project: String, app: AppHandle, state: State<'_, A
     result.map(|(id, ())| id)
 }
 
-/// Modpack importé depuis un fichier : l'instance créée, et les fichiers du pack introuvables hors
-/// de CurseForge, à ajouter à la main.
+/// Modpack importé depuis un fichier : l'instance créée, et les fichiers du pack à télécharger
+/// à la main sur CurseForge.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportedModpack {
@@ -1022,7 +1071,7 @@ pub async fn import_modpack_file(app: AppHandle, state: State<'_, AppState>) -> 
     let (manifest, entries, version) = (&manifest, &entries, minecraft.as_str());
     let (instance, missing) = modpack_instance(&state, Paths::new(&app)?, &name, (minecraft.clone(), loader), |paths| async move {
         game::content::copy_overrides(archive, &[manifest.overrides.as_str()], &paths.game, &paths.personal_mods)?;
-        game::curseforge::install(http, entries, version, &paths.game, &paths.personal_mods, progress).await
+        game::curseforge::install(http, manifest, entries, version,&paths.game, &paths.personal_mods, progress).await
     })
     .await?;
     Ok(Some(ImportedModpack { instance, missing }))
@@ -1291,15 +1340,15 @@ mod tests {
         let id = format!("instance-{}", "a".repeat(32));
         stored.instances.push(Instance { id: id.clone(), name: "Fabric".into(), kind: Kind::Fabric, ..Instance::builtin() });
 
-        apply_settings(&mut stored, BUILTIN, "Autre nom", Some(6144), Some("-XX:+UseG1GC".into())).unwrap();
+        apply_settings(&mut stored, BUILTIN, "Autre nom", Some(6144), Some(false), Some("-XX:+UseG1GC".into())).unwrap();
         let clover = Instance::builtin_from(&stored);
-        assert_eq!((clover.name.as_str(), clover.memory_mb, clover.java_args.as_deref()), (BUILTIN_NAME, Some(6144), Some("-XX:+UseG1GC")));
+        assert_eq!((clover.name.as_str(), clover.memory_mb, clover.optimized_java, clover.java_args.as_deref()), (BUILTIN_NAME, Some(6144), Some(false), Some("-XX:+UseG1GC")));
 
-        apply_settings(&mut stored, &id, "PvP 1.21", None, None).unwrap();
+        apply_settings(&mut stored, &id, "PvP 1.21", None, None, None).unwrap();
         assert_eq!(stored.instances[0].name, "PvP 1.21");
-        assert!(apply_settings(&mut stored, &id, "", None, None).is_err());
-        assert!(apply_settings(&mut stored, &id, &"x".repeat(65), None, None).is_err());
-        assert!(apply_settings(&mut stored, &format!("instance-{}", "b".repeat(32)), "x", None, None).is_err());
+        assert!(apply_settings(&mut stored, &id, "", None, None, None).is_err());
+        assert!(apply_settings(&mut stored, &id, &"x".repeat(65), None, None, None).is_err());
+        assert!(apply_settings(&mut stored, &format!("instance-{}", "b".repeat(32)), "x", None, None, None).is_err());
     }
 
     #[test]

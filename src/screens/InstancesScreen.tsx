@@ -1,9 +1,11 @@
-import { Check, FolderInput, FolderOpen, Globe, PackageOpen, PackageSearch, Pin, Plus, Puzzle, Search, Settings2, Trash2 } from "lucide-react";
+import { Check, FolderInput, FolderOpen, Globe, PackageOpen, PackageSearch, Pin, Plus, Puzzle, Settings2, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { GameButton } from "@/components/GameButton";
 import { type InstanceActions, InstanceMenu } from "@/components/InstanceMenu";
 import { RunningBadge } from "@/components/RunningBadge";
+import { SearchField } from "@/components/SearchField";
+import { Tabs } from "@/components/Tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -14,7 +16,9 @@ import { KINDS, instanceSummary } from "@/lib/instances";
 import { cn } from "@/lib/utils";
 import { versionImage } from "@/lib/version-art";
 import { InstanceDetail, type InstanceSection } from "@/screens/InstanceDetail";
-import type { AvailableVersion, ContentFolder, ExportParts, InstanceEntry, ModrinthKind, PlayState } from "@/types";
+import { type Confirmation, ConfirmDialog } from "@/screens/Dialogs";
+import type { AvailableVersion, ContentFolder, ExportParts, InstanceEntry, PlayState } from "@/types";
+import type { ContentKind } from "@/lib/content-kinds";
 
 type Props = {
   instances: InstanceEntry[];
@@ -41,9 +45,16 @@ type Props = {
   /** Onglet Paramètres de la page d'une instance (réglages propres à l'instance). */
   renderSettings?: (entry: InstanceEntry) => ReactNode;
   onOpenFolder: (id: string, folder: "game" | ContentFolder, world?: string) => void;
-  onRemove: (id: string) => void;
-  /** Onglet Mods de la page de l'instance choisie (les mods suivent l'instance choisie). */
-  mods?: ReactNode;
+  /** Dossier de l'instance à la corbeille, puis l'instance retirée de la liste. */
+  onDelete: (id: string) => void;
+  /** Onglet Mods de la page d'une instance (toutes sauf Vanilla). */
+  renderMods?: (entry: InstanceEntry) => ReactNode;
+  /** Page d'instance ouverte et son onglet, tenus par la navigation : « Retour » y ramène. */
+  opened: { id: string; section?: InstanceSection } | null;
+  /** Ouvre la page d'une instance, sur un onglet ; ne change pas l'instance que « Jouer » lance. */
+  onOpen: (id: string, section?: InstanceSection) => void;
+  /** Autre onglet de la page ouverte. */
+  onSection: (section: InstanceSection) => void;
   /** Change après une installation : la page de l'instance relit son dossier. */
   contentRevision?: number;
   /** Instances des autres launchers, importées comme nouvelles instances. */
@@ -52,9 +63,9 @@ type Props = {
   onPin: (id: string, pinned: boolean) => void;
   onDuplicate: (id: string) => void;
   onShortcut?: (id: string) => void;
-  /** Ouvre la recherche Modrinth (packs, shaders, datapacks, modpacks). */
-  onSearch: (kind: ModrinthKind) => void;
-  services?: Pick<typeof api, "instanceVersions" | "playHistory" | "instanceContent" | "setContentEnabled" | "trashContent" | "renameWorld">;
+  /** Ouvre Découvrir sur `kind`, pour `instance` ; `world` : monde visé par des datapacks. */
+  onSearch: (kind: ContentKind, instance?: string, world?: string) => void;
+  services?: Pick<typeof api, "instanceVersions" | "playHistory" | "instanceContent" | "setContentEnabled" | "trashContent" | "showContent" | "renameWorld">;
   /** Noms donnés aux serveurs rejoints, et leur renommage (page d'une instance). */
   serverNames?: Record<string, string>;
   onRenameServer?: (address: string, name: string) => Promise<void>;
@@ -66,16 +77,22 @@ const lastPlayed = (entry: InstanceEntry) => (entry.lastPlayed ? `Jouée le ${da
 
 /** « Jouer » sur l'accueil lance l'instance choisie ici. */
 export function InstancesScreen(props: Props) {
-  const { instances, selected, expert, playFor, onView, onCreate, onRemove } = props;
-  const [removing, setRemoving] = useState<InstanceEntry | null>(null);
+  const { instances, selected, expert, playFor, onView, onCreate, onDelete, opened } = props;
+  const [asking, setAsking] = useState<Confirmation | null>(null);
   const [exporting, setExporting] = useState<InstanceEntry | null>(null);
-  /** Instance dont la page est ouverte, et l'onglet ouvert d'abord. */
-  const [opened, setOpened] = useState<{ id: string; section?: InstanceSection } | null>(null);
-  // Garde le nom affiché pendant l'animation de fermeture.
-  const last = useRef(removing);
-  if (removing) last.current = removing;
   const current = instances.find((entry) => entry.id === selected) ?? instances[0];
-  const onEdit = (entry: InstanceEntry) => setOpened({ id: entry.id, section: "settings" });
+  const onEdit = (entry: InstanceEntry) => props.onOpen(entry.id, "settings");
+  /** Son dossier part à la corbeille ; un dossier de jeu commun reste, il sert aussi à Clover Games. */
+  const askDelete = (entry: InstanceEntry) =>
+    setAsking({
+      title: `Supprimer « ${entry.name} » ?`,
+      description: entry.separate
+        ? "Ses mondes, mods et réglages iront dans la corbeille de l'ordinateur : tu peux les en sortir tant qu'elle n'est pas vidée."
+        : "Ses mods iront dans la corbeille de l'ordinateur. Ses mondes et réglages restent : ils sont dans le dossier commun, avec ceux de Clover Games.",
+      detail: entry.gameDir,
+      confirm: "Supprimer",
+      onConfirm: () => onDelete(entry.id),
+    });
   const menu: InstanceActions = {
     onPlay: props.onPlay,
     onStop: props.onStop,
@@ -85,15 +102,14 @@ export function InstancesScreen(props: Props) {
     onDuplicate: props.onDuplicate,
     onExport: setExporting,
     onShortcut: props.onShortcut,
-    onAskRemove: setRemoving,
+    onAskDelete: askDelete,
   };
   const actions = {
     ...props,
     current,
     menu,
-    onAskRemove: setRemoving,
-    onOpen: (id: string) => setOpened({ id }),
-    onOpenSection: (entry: InstanceEntry, section: InstanceSection) => setOpened({ id: entry.id, section }),
+    onAskDelete: askDelete,
+    onOpenSection: (entry: InstanceEntry, section: InstanceSection) => props.onOpen(entry.id, section),
     onEdit,
   };
   const page = instances.find((entry) => entry.id === opened?.id);
@@ -104,8 +120,9 @@ export function InstancesScreen(props: Props) {
     return (
       <>
         <InstanceDetail
-          key={`${page.id}-${opened?.section ?? ""}`}
-          defaultSection={opened?.section}
+          key={page.id}
+          section={opened?.section ?? "overview"}
+          onSection={props.onSection}
           settings={props.renderSettings?.(page)}
           serverNames={props.serverNames}
           onRenameServer={props.onRenameServer}
@@ -113,16 +130,17 @@ export function InstancesScreen(props: Props) {
           play={playFor(page.id)}
           running={props.running.includes(page.id)}
           services={props.services}
-          onBack={() => setOpened(null)}
           onPlay={() => props.onPlay(page.id)}
           onPlayWorld={(world) => props.onPlayWorld(page.id, world)}
           onExport={page.kind === "clover" ? undefined : () => setExporting(page)}
           onStop={(force) => props.onStop(page.id, force)}
           onOpenFolder={(folder, world) => props.onOpenFolder(page.id, folder, world)}
-          mods={page.kind === "vanilla" || page.id !== selected ? undefined : props.mods}
+          onDelete={page.kind === "clover" ? undefined : () => askDelete(page)}
+          mods={page.kind === "vanilla" ? undefined : props.renderMods?.(page)}
           contentRevision={props.contentRevision}
-          onSearch={props.onSearch}
+          onSearch={(kind, world) => props.onSearch(kind, page.id, world)}
         />
+        <ConfirmDialog ask={asking} onClose={() => setAsking(null)} />
         {exportDialog}
       </>
     );
@@ -130,7 +148,7 @@ export function InstancesScreen(props: Props) {
 
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-12 pt-8 pb-6">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-10 pt-8 pb-6">
         <header className="flex items-end justify-between gap-6">
           <div className="flex flex-col gap-2">
             <h1 className="font-display text-[30px] leading-none">Instances</h1>
@@ -143,7 +161,7 @@ export function InstancesScreen(props: Props) {
             </button>
             <button type="button" onClick={() => props.onSearch("modpack")} className={secondaryButton}>
               <PackageSearch className="size-4" aria-hidden />
-              Modpacks
+              Trouver un modpack
             </button>
             <button type="button" onClick={() => onCreate()} className={primaryButton}>
               <Plus className="size-4" aria-hidden />
@@ -152,51 +170,23 @@ export function InstancesScreen(props: Props) {
           </div>
         </header>
 
-        <div role="tablist" aria-label="Vue" className="mt-5 flex gap-1 self-start rounded-lg border border-border bg-[#100e0b] p-1">
-          {([false, true] as const).map((value) => (
-            <button
-              key={String(value)}
-              type="button"
-              role="tab"
-              aria-selected={expert === value}
-              onClick={() => onView(value)}
-              className={cn("rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors", expert === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground")}
-            >
-              {value ? "Expert" : "Simple"}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          label="Vue"
+          className="mt-5"
+          value={expert ? "list" : "versions"}
+          onChange={(view) => onView(view === "list")}
+          items={[
+            { id: "versions", label: "Par version" },
+            { id: "list", label: "Toutes les instances" },
+          ]}
+        />
 
         {expert ? <Expert {...actions} /> : <Simple {...actions} />}
       </div>
 
       {!expert && current && <LaunchBar {...actions} current={current} />}
 
-      <Dialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
-        <DialogContent className="mc-frame gap-5 border-[var(--mc-outline)] bg-card p-6 ring-0 sm:max-w-[480px]">
-          <DialogHeader>
-            <DialogTitle className="font-display text-2xl font-normal">Retirer « {last.current?.name} » ?</DialogTitle>
-            <DialogDescription className="text-[13px] leading-relaxed">Ses mondes, mods et réglages restent sur le disque : seule l'entrée du launcher disparaît.</DialogDescription>
-          </DialogHeader>
-          <p className="truncate rounded-md border border-border bg-[#100e0b] px-3 py-2 font-mono text-xs select-text">{last.current?.gameDir}</p>
-          <DialogFooter className="-mx-6 -mb-6 rounded-b-[6px] border-border bg-[#17150f] px-6 py-4">
-            <button type="button" onClick={() => setRemoving(null)} className={secondaryButton}>
-              Annuler
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (removing) onRemove(removing.id);
-                setRemoving(null);
-              }}
-              className={cn(primaryButton, "bg-destructive text-white")}
-            >
-              <Trash2 className="size-4" aria-hidden />
-              Retirer
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog ask={asking} onClose={() => setAsking(null)} />
 
       {exportDialog}
     </main>
@@ -263,15 +253,14 @@ function ExportDialog({ entry, onExport, onClose }: { entry: InstanceEntry | nul
 type Actions = Props & {
   current: InstanceEntry | undefined;
   menu: InstanceActions;
-  onAskRemove: (entry: InstanceEntry) => void;
-  onOpen: (id: string) => void;
+  onAskDelete: (entry: InstanceEntry) => void;
   onOpenSection: (entry: InstanceEntry, section: InstanceSection) => void;
   onEdit: (entry: InstanceEntry) => void;
 };
 
 /**
  * Une carte illustrée par famille de versions. Un clic choisit la dernière instance jouée de la
- * famille et ouvre le panneau de droite sur cette version : ses instances, puis la création.
+ * famille, que la barre du bas lance ; une version sans instance ouvre sa création.
  */
 function Simple({ instances, current, viewing, running, playFor, menu, onSelect, onCreate, services = api }: Actions) {
   const [versions, setVersions] = useState<AvailableVersion[]>([]);
@@ -294,7 +283,7 @@ function Simple({ instances, current, viewing, running, playFor, menu, onSelect,
   return (
     <>
       <p className="mt-4 text-sm text-muted-foreground">
-        {failed ? "Liste des versions indisponible : seules tes instances sont affichées." : "Choisis une version pour voir tes instances ou en créer une."}
+        {failed ? "Liste des versions indisponible : seules tes instances sont affichées." : "Choisis la version à lancer, ou crée une instance pour une autre version."}
       </p>
       <ul aria-label="Versions de Minecraft" className="mt-5 grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
         {families.map((family) => {
@@ -311,12 +300,9 @@ function Simple({ instances, current, viewing, running, playFor, menu, onSelect,
               <button
                 type="button"
                 aria-pressed={active}
-                onClick={() => {
-                  if (pick) onSelect(pick.id);
-                  onCreate(family.versions[0]);
-                }}
+                onClick={() => (pick ? onSelect(pick.id) : onCreate(family.versions[0]))}
                 className={cn(
-                  "group relative flex h-full w-full flex-col overflow-hidden rounded-lg border-2 bg-card text-left transition-colors duration-300 hover:bg-[#241f19]",
+                  "group relative flex h-full w-full flex-col overflow-hidden rounded-lg border-2 bg-card text-left transition-colors duration-300 hover:bg-card-hover",
                   active ? "border-primary" : "border-border hover:border-[#e9e3d4]/30",
                 )}
               >
@@ -384,13 +370,13 @@ function LaunchBar({ instances, current, playFor, running, onSelect, onPlay, onS
     ...(current.kind === "vanilla" ? [] : [{ label: "Mods", Icon: Puzzle, onClick: () => onOpenSection(current, "mods") }]),
     { label: "Mondes", Icon: Globe, onClick: () => onOpenSection(current, "saves") },
     { label: "Dossier", Icon: FolderOpen, onClick: () => onOpenFolder(current.id, "game") },
-    { label: "Paramètres", Icon: Settings2, onClick: () => onEdit(current) },
+    { label: "Réglages", Icon: Settings2, onClick: () => onEdit(current) },
   ];
   return (
-    <aside aria-label="Instance choisie" className="@container flex shrink-0 items-center gap-4 border-t border-border bg-[#100e0b] px-12 py-4">
+    <aside aria-label="Instance choisie" className="@container flex shrink-0 items-center gap-4 border-t border-border bg-sunken px-10 py-4">
       <span key={`${current.id}-art`} className="relative shrink-0 motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-300">
         <img src={versionImage(current.minecraft ?? "")} alt="" className="size-14 rounded-lg object-cover" />
-        <span className={cn("absolute -right-1.5 -bottom-1.5 grid size-6 place-items-center rounded-md border-2 border-[#100e0b]", current.kind === "clover" ? "bg-primary text-primary-foreground" : "bg-secondary")}>
+        <span className={cn("absolute -right-1.5 -bottom-1.5 grid size-6 place-items-center rounded-md border-2 border-sunken", current.kind === "clover" ? "bg-primary text-primary-foreground" : "bg-secondary")}>
           <Icon className="size-3.5" strokeWidth={2.5} aria-hidden />
         </span>
       </span>
@@ -410,7 +396,9 @@ function LaunchBar({ instances, current, playFor, running, onSelect, onPlay, onS
               </SelectContent>
             </Select>
           ) : (
-            <span className="truncate font-display text-xl leading-none">{current.name}</span>
+            <button type="button" onClick={() => onOpenSection(current, "overview")} title={`Ouvrir la page de ${current.name}`} className="truncate font-display text-xl leading-none hover:text-primary">
+              {current.name}
+            </button>
           )}
           {isRunning && <RunningBadge />}
         </span>
@@ -433,7 +421,7 @@ function LaunchBar({ instances, current, playFor, running, onSelect, onPlay, onS
 }
 
 /** Toutes les instances, avec recherche et tri. */
-function Expert({ instances, selected, playFor, running, menu, onSelect, onOpen, onPlay, onStop, onEdit, onOpenFolder, onAskRemove }: Actions) {
+function Expert({ instances, selected, playFor, running, menu, onOpen, onPlay, onStop, onEdit, onOpenFolder, onAskDelete }: Actions) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"name" | "recent">("recent");
   const shown = instances
@@ -445,17 +433,7 @@ function Expert({ instances, selected, playFor, running, menu, onSelect, onOpen,
   return (
     <>
       <div className="mt-5 flex items-center gap-3">
-        <label className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            aria-label="Rechercher une instance"
-            placeholder="Nom, version, Fabric…"
-            className="h-10 w-full rounded-md border border-border bg-[#100e0b] pr-3 pl-9 text-sm text-foreground outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
-          />
-        </label>
+        <SearchField className="flex-1" label="Rechercher une instance" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Nom, version…" />
         <Select value={sort} onValueChange={(value) => value && setSort(value as typeof sort)}>
           <SelectTrigger aria-label="Trier" className="w-44">
             <SelectValue />
@@ -471,7 +449,7 @@ function Expert({ instances, selected, playFor, running, menu, onSelect, onOpen,
         {shown.map((entry) => {
           const active = entry.id === selected;
           const play = playFor(entry.id);
-          // Pas de modification ni de retrait pendant le lancement ou la partie de l'instance.
+          // Pas de modification ni de suppression pendant le lancement ou la partie de l'instance.
           const locked = play.kind !== "ready";
           const { Icon } = KINDS[entry.kind];
           return (
@@ -481,11 +459,8 @@ function Expert({ instances, selected, playFor, running, menu, onSelect, onOpen,
                 type="button"
                 aria-pressed={active}
                 aria-label={`Ouvrir ${entry.name}`}
-                onClick={() => {
-                  onSelect(entry.id);
-                  onOpen(entry.id);
-                }}
-                className={cn("absolute inset-0 rounded-lg border bg-card transition-colors hover:bg-[#241f19]", active ? "border-primary" : "border-border")}
+                onClick={() => onOpen(entry.id)}
+                className={cn("absolute inset-0 rounded-lg border bg-card transition-colors hover:bg-card-hover", active ? "border-primary" : "border-border")}
               />
               <span className="pointer-events-none relative shrink-0">
                 <img src={versionImage(entry.minecraft ?? "")} alt="" className="size-14 rounded-md object-cover" />
@@ -510,11 +485,11 @@ function Expert({ instances, selected, playFor, running, menu, onSelect, onOpen,
                 <button type="button" title="Ouvrir le dossier" aria-label={`Ouvrir le dossier de ${entry.name}`} onClick={() => onOpenFolder(entry.id, "game")} className={iconButton}>
                   <FolderOpen className="size-4" aria-hidden />
                 </button>
-                <button type="button" title="Modifier" aria-label={`Modifier ${entry.name}`} onClick={() => onEdit(entry)} className={iconButton}>
+                <button type="button" title="Réglages" aria-label={`Réglages de ${entry.name}`} onClick={() => onEdit(entry)} className={iconButton}>
                   <Settings2 className="size-4" aria-hidden />
                 </button>
                 {entry.id !== "clover" && (
-                  <button type="button" title="Retirer" aria-label={`Retirer ${entry.name}`} onClick={() => onAskRemove(entry)} disabled={locked} className={cn(iconButton, "hover:text-destructive")}>
+                  <button type="button" title="Supprimer" aria-label={`Supprimer ${entry.name}`} onClick={() => onAskDelete(entry)} disabled={locked} className={cn(iconButton, "hover:text-destructive")}>
                     <Trash2 className="size-4" aria-hidden />
                   </button>
                 )}

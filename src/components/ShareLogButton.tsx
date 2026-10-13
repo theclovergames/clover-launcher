@@ -45,7 +45,7 @@ export function ShareLogButton({ log, disabled, services = api }: { log: () => s
                   {step.copied ? "Lien copié : colle-le dans ton message au support sur le Discord." : "Copie ce lien et envoie-le au support sur le Discord."}
                 </DialogDescription>
               </DialogHeader>
-              <p className="truncate rounded-md border border-border bg-[#100e0b] px-3 py-2 font-mono text-xs select-text">{step.url}</p>
+              <p className="truncate rounded-md border border-border bg-sunken px-3 py-2 font-mono text-xs select-text">{step.url}</p>
               <DialogFooter className="-mx-6 -mb-6 rounded-b-[6px] border-border bg-[#17150f] px-6 py-4">
                 <button type="button" onClick={() => void openUrl(step.url)} className={secondaryButton}>
                   <ExternalLink className="size-4" aria-hidden />

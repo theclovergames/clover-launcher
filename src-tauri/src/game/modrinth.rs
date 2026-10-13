@@ -63,6 +63,13 @@ pub struct Hit {
     /// Sélection du catalogue Clover, même avant le premier téléchargement du jeu.
     #[serde(default, skip_deserializing)]
     pub provided_by_clover: bool,
+    /// Page où télécharger soi-même un projet que le launcher n'a pas le droit d'installer
+    /// (monde CurseForge dont l'auteur l'interdit) ; absent : installable.
+    #[serde(default, skip_deserializing)]
+    pub external: Option<String>,
+    /// Taille du fichier, quand la recherche la donne (mondes).
+    #[serde(default, skip_deserializing)]
+    pub size: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -90,7 +97,7 @@ pub struct Project {
     pub description: String,
     /// Description complète en Markdown, telle que Modrinth la donne ; jamais envoyée au front.
     #[serde(default, skip_serializing)]
-    body: String,
+    pub(crate) body: String,
     /// La même, rendue en HTML nettoyé par `project` : seule forme que la page affiche.
     #[serde(skip_deserializing)]
     pub description_html: String,
@@ -108,6 +115,9 @@ pub struct Project {
     /// Images mises en avant d'abord, puis dans l'ordre choisi par l'auteur.
     #[serde(default)]
     pub gallery: Vec<Image>,
+    /// Page du projet hors de Modrinth (CurseForge) ; absente : sa page Modrinth.
+    #[serde(default, skip_deserializing)]
+    pub page_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -124,9 +134,9 @@ pub struct Image {
     pub raw_url: Option<String>,
     pub title: Option<String>,
     #[serde(default, skip_serializing)]
-    featured: bool,
+    pub(crate) featured: bool,
     #[serde(default, skip_serializing)]
-    ordering: i64,
+    pub(crate) ordering: i64,
 }
 
 /// Type de projet cherché ; mêmes noms que le type `ModrinthKind` du front.
@@ -171,20 +181,67 @@ impl Kind {
     }
 }
 
+/// Ordre des résultats ; mêmes noms que le type `SearchSort` du front.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Sort {
+    #[default]
+    Relevance,
+    Downloads,
+    Follows,
+    Newest,
+    Updated,
+}
+
+impl Sort {
+    /// Index Modrinth. Sans texte, la pertinence ne classe rien : les plus téléchargés d'abord.
+    fn index(self, query: &str) -> &'static str {
+        match self {
+            Sort::Relevance if query.is_empty() => "downloads",
+            Sort::Relevance => "relevance",
+            Sort::Downloads => "downloads",
+            Sort::Follows => "follows",
+            Sort::Newest => "newest",
+            Sort::Updated => "updated",
+        }
+    }
+}
+
+/// Tri et catégories choisis dans la recherche ; mêmes noms que le type `SearchFilters` du front.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Filters {
+    #[serde(default)]
+    pub sort: Sort,
+    /// Toutes exigées à la fois.
+    #[serde(default)]
+    pub categories: Vec<String>,
+}
+
+/// Catégorie Modrinth (« worldgen », « 16x », « 512x+ ») : jamais autre chose qu'un nom de facette.
+fn valid_category(category: &str) -> bool {
+    (1..=32).contains(&category.len()) && category.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '+' | '_'))
+}
+
 fn endpoint(path: &str, params: &[(&str, &str)]) -> Result<Url> {
     Url::parse_with_params(&format!("{API}/{path}"), params).map_err(|e| GameError::InvalidVersion(e.to_string()))
 }
 
-/// Projets de type `kind` pour `minecraft`. Sans texte, Modrinth renvoie les plus téléchargés.
-pub async fn search(http: &reqwest::Client, kind: Kind, query: &str, minecraft: &str, loader: &str, offset: u32) -> Result<SearchPage> {
-    let facets = kind.facets(minecraft, loader);
-    let index = if query.trim().is_empty() { "downloads" } else { "relevance" };
+/// Projets de type `kind` pour `minecraft`, triés et filtrés selon `filters`.
+pub async fn search(http: &reqwest::Client, kind: Kind, query: &str, minecraft: &str, loader: &str, filters: &Filters, offset: u32) -> Result<SearchPage> {
+    let mut facets = kind.facets(minecraft, loader);
+    for category in &filters.categories {
+        if !valid_category(category) {
+            return Err(GameError::InvalidVersion(format!("catégorie « {category} »")));
+        }
+        facets.as_array_mut().expect("facettes en liste").push(serde_json::json!([format!("categories:{category}")]));
+    }
+    let query = query.trim();
     let url = endpoint(
         "search",
         &[
-            ("query", query.trim()),
+            ("query", query),
             ("facets", &facets.to_string()),
-            ("index", index),
+            ("index", filters.sort.index(query)),
             ("limit", &PAGE.to_string()),
             ("offset", &offset.to_string()),
         ],
@@ -244,10 +301,15 @@ pub fn description_html(markdown: &str) -> String {
     use pulldown_cmark::{html, Options, Parser};
     let mut raw = String::new();
     html::push_html(&mut raw, Parser::new_ext(markdown, Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH));
+    clean_html(&raw, "https://modrinth.com/")
+}
+
+/// HTML d'une page de projet nettoyé comme ci-dessus ; liens et images relatifs ramenés sur `base`.
+pub fn clean_html(raw: &str, base: &str) -> String {
     ammonia::Builder::default()
-        .url_relative(ammonia::UrlRelative::RewriteWithBase(Url::parse("https://modrinth.com/").expect("URL valide")))
+        .url_relative(ammonia::UrlRelative::RewriteWithBase(Url::parse(base).expect("URL valide")))
         .set_tag_attribute_value("img", "loading", "lazy")
-        .clean(&raw)
+        .clean(raw)
         .to_string()
 }
 
@@ -331,6 +393,32 @@ pub async fn updates(http: &reqwest::Client, hashes: Vec<String>, minecraft: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sorts_and_categories() {
+        assert_eq!(Sort::Relevance.index(""), "downloads");
+        assert_eq!(Sort::Relevance.index("sodium"), "relevance");
+        assert_eq!(Sort::Updated.index(""), "updated");
+        assert!(valid_category("worldgen"));
+        assert!(valid_category("512x+"));
+        assert!(valid_category("8x-"));
+        assert!(!valid_category(""));
+        assert!(!valid_category("worldgen\"]"));
+        assert!(!valid_category("Worldgen"));
+        assert_eq!(serde_json::from_str::<Sort>(r#""newest""#).unwrap(), Sort::Newest);
+    }
+
+    /// Réseau : les catégories s'ajoutent aux filtres du type.
+    #[tokio::test]
+    #[ignore]
+    async fn searches_by_category() {
+        let potato = Filters { sort: Sort::Downloads, categories: vec!["potato".into()] };
+        let page = search(&reqwest::Client::new(), Kind::Shader, "", "1.21.1", "fabric", &potato, 0).await.unwrap();
+        assert!(page.total_hits > 0);
+        let invalid = Filters { sort: Sort::Relevance, categories: vec!["a\"]".into()] };
+        let invalid = search(&reqwest::Client::new(), Kind::Mod, "", "1.21.1", "fabric", &invalid, 0).await;
+        assert!(invalid.is_err());
+    }
 
     #[test]
     fn project_ids_stay_inside_the_api() {

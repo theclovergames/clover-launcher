@@ -3,6 +3,55 @@
 Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git du dépôt repart de la
 0.4.4 : ce fichier garde la trace de tout ce qui précède.
 
+## Pas encore publié
+
+### Nouveautés
+
+- **Découvrir** remplace Mods dans le menu : mods, shaders, packs de ressources, datapacks,
+  mondes et modpacks à installer, avec tri et catégories pour chaque type. Chaque projet a sa
+  vraie page (galerie, description, liens), et ce qui est déjà installé est marqué. « Pour »
+  choisit l'instance où installer, sans changer celle que « Jouer » lance.
+- **Retour et fil d'Ariane** sur toutes les sous-pages (Instances › Survie 1.21 › Shaders,
+  Découvrir › Mods › Sodium) : « Retour » ramène exactement d'où l'on vient, page d'instance et
+  onglet compris.
+- **Mods dans la page de chaque instance**, plus seulement l'instance choisie : catalogue Clover
+  (pour Clover Games) et tes mods dans une seule liste, avec « Ajouter des mods ». Un mod supprimé
+  va à la corbeille.
+- **Accueil refait**, à la manière du launcher officiel : le lobby de Clover Games en grand, ton
+  joueur debout devant avec son pseudo au-dessus de la tête comme en jeu, à côté de l'instance à
+  lancer et de « Jouer ». L'état du serveur et les liens (vote, Discord, boutique, site) sont posés
+  sur l'image ; dessous, les modes de jeu sur une ligne, les dernières actualités et ta semaine.
+  La teinte du bandeau (Paramètres › Apparence) colore le dégradé sur l'image.
+- **Arguments Java optimisés**, activés d'office : le ramasse-miettes G1 réglé comme le launcher
+  officiel, pour moins de saccades. Ils se coupent dans Paramètres › Jeu, ou pour une seule
+  instance dans ses réglages. Un ramasse-miettes tapé à la main (`-XX:+UseZGC`…) les remplace.
+- **Page d'une instance** : « Ouvrir le dossier » pour son dossier de jeu, et « Supprimer » pour
+  une instance personnelle.
+- **Clic droit sur une capture** : agrandir, copier l'image, l'ouvrir avec l'application
+  d'images, l'afficher dans le dossier ou la supprimer.
+- **Mondes** : cartes et mondes de CurseForge pour la version de l'instance, téléchargés,
+  vérifiés et posés dans ses mondes, prêts à jouer. Ceux que leur auteur réserve à CurseForge
+  s'ouvrent sur son site. Chaque monde affiche sa seed, avec « Copier ».
+- **Survie** apparaît dans les modes de jeu, en « Bientôt ».
+- Modpacks CurseForge importés depuis un fichier : leurs mods, packs de ressources et shaders se
+  téléchargent depuis CurseForge. Seuls ceux que leur auteur y réserve restent à ajouter à la main.
+
+### Simplifications
+
+- Les mêmes mots partout : « Ajouter des … » ouvre Découvrir, « Installer » installe,
+  « Supprimer » envoie à la corbeille après confirmation (instances, mods, packs, mondes,
+  captures), « Retirer » enlève une entrée sans toucher aux fichiers (compte, Steam),
+  « Réglages » pour une instance et « Paramètres » pour le launcher, « Compte actif ».
+- Supprimer une instance met son dossier à la corbeille, au lieu de laisser ses fichiers sur le
+  disque. Avec un dossier de jeu commun, ses mondes et réglages restent : ils sont aussi ceux de
+  Clover Games.
+- Instances : vues « Par version » et « Toutes les instances ». Une carte de version choisit
+  l'instance à lancer sans ouvrir le panneau de création, et ouvrir la page d'une instance ne
+  change plus celle que « Jouer » lance.
+- Skins : onglets « Mes skins » et « Galerie », tri dans un menu.
+- Profil : statistiques en français (éliminations, éliminations finales).
+- Mêmes onglets, champs de recherche, listes vides, confirmations et marges sur tous les écrans.
+
 ## 0.4.6 (11 octobre 2026)
 
 ### Nouveautés

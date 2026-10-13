@@ -30,7 +30,7 @@ export function UpdateToast({ update, onInstall, onDismiss }: { update: UpdateSt
         </>
       ) : (
         <>
-          {update.error && <p className="leading-snug text-[#f3a19e]">{update.error}</p>}
+          {update.error && <p className="leading-snug text-error">{update.error}</p>}
           <div className="flex items-center justify-end gap-3">
             <button type="button" onClick={onDismiss} className="text-xs font-semibold text-muted-foreground hover:text-foreground">
               Plus tard

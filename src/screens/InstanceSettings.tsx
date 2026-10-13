@@ -14,6 +14,8 @@ type Services = Pick<typeof api, "updateInstance" | "resetRecommended" | "gameLo
 /** Mémoire proposée, en Go ; « Réglage du launcher » suit les paramètres du launcher. */
 const MEMORY = [2, 3, 4, 6, 8, 12, 16];
 const LAUNCHER = "launcher";
+/** Arguments optimisés : « Comme le launcher » (`null`), oui ou non. */
+const optimizedValue = (value: boolean | null | undefined) => (value === true ? "on" : value === false ? "off" : LAUNCHER);
 const card = "rounded-lg border border-border bg-card";
 
 function Row({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
@@ -37,6 +39,7 @@ export function InstanceSettings({
   entry,
   locked,
   launcherMemoryGb,
+  launcherOptimizedJava,
   onSaved,
   onChangeVersion,
   onNotice,
@@ -47,6 +50,8 @@ export function InstanceSettings({
   locked: boolean;
   /** Mémoire du réglage du launcher, pour l'option « Réglage du launcher ». */
   launcherMemoryGb: number;
+  /** Arguments optimisés des paramètres du launcher, pour l'option « Comme le launcher ». */
+  launcherOptimizedJava: boolean;
   onSaved: () => void;
   /** Instance personnelle : ouvre le panneau de version et de type. */
   onChangeVersion?: () => void;
@@ -56,10 +61,11 @@ export function InstanceSettings({
   const clover = entry.kind === "clover";
   const [name, setName] = useState(entry.name);
   const [memory, setMemory] = useState(entry.memoryMb ? String(entry.memoryMb / 1024) : LAUNCHER);
+  const [optimized, setOptimized] = useState(optimizedValue(entry.optimizedJava));
   const [javaArgs, setJavaArgs] = useState(entry.javaArgs ?? "");
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState<string | null>(null);
-  const changed = (!clover && name.trim() !== entry.name) || memory !== (entry.memoryMb ? String(entry.memoryMb / 1024) : LAUNCHER) || javaArgs.trim() !== (entry.javaArgs ?? "");
+  const changed = (!clover && name.trim() !== entry.name) || memory !== (entry.memoryMb ? String(entry.memoryMb / 1024) : LAUNCHER) || optimized !== optimizedValue(entry.optimizedJava) || javaArgs.trim() !== (entry.javaArgs ?? "");
   const memoryChoices = [...new Set([...MEMORY, ...(entry.memoryMb ? [entry.memoryMb / 1024] : [])])].sort((a, b) => a - b);
   // Journaux de Minecraft et rapports de plantage, relus après une suppression ou la fin d'une partie.
   const [logs, setLogs] = useState<GameLogFile[] | null>(null);
@@ -83,7 +89,7 @@ export function InstanceSettings({
     setState("saving");
     setError(null);
     try {
-      await services.updateInstance(entry.id, clover ? entry.name : name, memory === LAUNCHER ? null : Number(memory) * 1024, javaArgs);
+      await services.updateInstance(entry.id, clover ? entry.name : name, memory === LAUNCHER ? null : Number(memory) * 1024, optimized === LAUNCHER ? null : optimized === "on", javaArgs);
       setState("saved");
       onSaved();
       window.setTimeout(() => setState("idle"), 1500);
@@ -103,7 +109,7 @@ export function InstanceSettings({
             onChange={(event) => setName(event.target.value)}
             disabled={clover || locked}
             maxLength={64}
-            className="h-9 w-full rounded-md border border-border bg-[#100e0b] px-3 pr-9 text-sm text-foreground outline-none select-text focus:border-accent disabled:opacity-70"
+            className="h-9 w-full rounded-md border border-border bg-sunken px-3 pr-9 text-sm text-foreground outline-none select-text focus:border-accent disabled:opacity-70"
           />
           {clover && <Lock className="pointer-events-none absolute top-1/2 right-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />}
         </label>
@@ -111,7 +117,7 @@ export function InstanceSettings({
 
       <Row title="Version" hint={clover ? "Suit le serveur : Minecraft, Fabric et les mods du catalogue se mettent à jour d'eux-mêmes." : undefined}>
         <div className="flex items-center gap-3">
-          <span className="rounded-md border border-border bg-[#100e0b] px-2.5 py-1.5 font-pixel text-[11px]">{instanceSummary(entry)}</span>
+          <span className="rounded-md border border-border bg-sunken px-2.5 py-1.5 font-pixel text-[11px]">{instanceSummary(entry)}</span>
           {onChangeVersion && (
             <button type="button" onClick={onChangeVersion} disabled={locked} className={secondaryButton}>
               <SlidersHorizontal className="size-4" aria-hidden />
@@ -127,7 +133,7 @@ export function InstanceSettings({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={LAUNCHER}>Réglage du launcher ({launcherMemoryGb} Go)</SelectItem>
+            <SelectItem value={LAUNCHER}>Comme le launcher ({launcherMemoryGb} Go)</SelectItem>
             {memoryChoices.map((gb) => (
               <SelectItem key={gb} value={String(gb)}>
                 {gb} Go
@@ -137,14 +143,25 @@ export function InstanceSettings({
         </Select>
       </Row>
 
-      <Row title="Arguments Java" hint="Ajoutés à ceux des paramètres du launcher, pour cette instance seulement.">
+      <Row title="Arguments Java" hint="Optimisés : mémoire libérée par petites touches, pour moins de saccades. Les arguments tapés s'ajoutent à ceux des paramètres du launcher.">
+        <Select value={optimized} onValueChange={(value) => value && setOptimized(value)} disabled={locked}>
+          <SelectTrigger aria-label="Arguments Java de l'instance" className="h-9 w-64">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={LAUNCHER}>Comme le launcher ({launcherOptimizedJava ? "optimisés" : "standard"})</SelectItem>
+            <SelectItem value="on">Optimisés</SelectItem>
+            <SelectItem value="off">Standard</SelectItem>
+          </SelectContent>
+        </Select>
         <input
           value={javaArgs}
           onChange={(event) => setJavaArgs(event.target.value)}
           disabled={locked}
-          placeholder="-XX:+UseZGC"
+          aria-label="Arguments Java en plus"
+          placeholder="Arguments en plus, comme -Xss2M"
           spellCheck={false}
-          className="h-9 w-full max-w-md rounded-md border border-border bg-[#100e0b] px-3 font-mono text-xs text-foreground outline-none select-text placeholder:text-muted-foreground/60 focus:border-accent"
+          className="h-9 w-full max-w-md rounded-md border border-border bg-sunken px-3 font-mono text-xs text-foreground outline-none select-text placeholder:text-muted-foreground/60 focus:border-accent"
         />
       </Row>
 
@@ -162,7 +179,7 @@ export function InstanceSettings({
         <div className="flex gap-2">
           <button type="button" onClick={() => services.openInstanceFolder(entry.id, "logs").catch((reason) => onNotice(String(reason)))} className={secondaryButton}>
             <FolderOpen className="size-4" aria-hidden />
-            Ouvrir le dossier
+            Ouvrir les journaux
           </button>
           <button type="button" onClick={() => void clearLogs()} disabled={locked || !logs?.length} className={secondaryButton}>
             <Trash2 className="size-4" aria-hidden />
@@ -191,7 +208,7 @@ export function InstanceSettings({
       )}
 
       <div className="flex items-center justify-end gap-3 pt-4">
-        {error && <p className="mr-auto text-[13px] text-[#f3a19e]">{error}</p>}
+        {error && <p className="mr-auto text-[13px] text-error">{error}</p>}
         {locked && <p className="mr-auto text-xs text-muted-foreground">Ferme Minecraft pour modifier l'instance.</p>}
         <button type="button" onClick={() => void save()} disabled={!changed || locked || state === "saving"} className={primaryButton}>
           {state === "saved" ? <Check className="size-4" aria-hidden /> : null}
