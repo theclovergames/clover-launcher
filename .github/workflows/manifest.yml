@@ -1,6 +1,6 @@
 # Publication du manifeste d'un canal, à lancer à la main (Actions › Manifeste › Run workflow) après
-# une modification de manifest/<canal>.json ou pour reprendre les dernières versions des mods sur
-# Modrinth. Canal `beta` : manifest/beta.json, lu par les testeurs du canal bêta (sinon prod).
+# une modification de manifest/<canal>.json ou de manifest/<canal>.lock.json (versions des mods,
+# figées par manifest.mjs pin). Canal `beta` : manifest/beta.json, lu par les testeurs du canal bêta (sinon prod).
 # Le journal liste la version retenue pour chaque mod : à relire avant de relancer les joueurs.
 #
 # Secrets : CLOVER_MANIFEST_KEY (contenu de Sécurités/clover-launcher-manifest.pem),

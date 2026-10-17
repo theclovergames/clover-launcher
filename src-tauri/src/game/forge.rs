@@ -202,7 +202,7 @@ fn library_path(paths: &Paths, coordinate: &str) -> Result<PathBuf> {
 }
 
 /// `base/relatif`, sans jamais sortir de `base` (chemins lus dans l'installateur).
-fn safe_join(base: &Path, relative: &str) -> Result<PathBuf> {
+pub(crate) fn safe_join(base: &Path, relative: &str) -> Result<PathBuf> {
     let relative = Path::new(relative.trim_start_matches('/'));
     if relative.components().all(|part| matches!(part, std::path::Component::Normal(_))) {
         Ok(base.join(relative))
@@ -239,8 +239,11 @@ pub async fn prepare(http: &reqwest::Client, paths: &Paths, flavor: Flavor, mine
     let relative = maven_path(&coordinate).ok_or_else(|| GameError::InvalidVersion("installateur introuvable".into()))?;
     let installer = paths.libraries.join(&relative);
     let url = format!("{repository}/{relative}");
-    let sha1 = super::install::maven_sha1(http, &url).await.ok();
-    ensure(http, &Download { url, path: installer.clone(), checksum: sha1.map(Checksum::Sha1), size: None, executable: false })
+    // L'installateur est exécuté : sans empreinte publiée par le dépôt, on refuse de le lancer.
+    let sha1 = super::install::maven_sha1(http, &url)
+        .await
+        .map_err(|_| GameError::InvalidVersion(format!("empreinte de l'installateur {} {loader} introuvable", flavor.label())))?;
+    ensure(http, &Download { url, path: installer.clone(), checksum: Some(Checksum::Sha1(sha1)), size: None, executable: false })
         .await
         .map_err(|error| match error {
             GameError::Network(_) => GameError::InvalidVersion(format!("{} {loader} introuvable pour Minecraft {minecraft}", flavor.label())),

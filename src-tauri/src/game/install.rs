@@ -123,7 +123,7 @@ pub(crate) async fn install_version(
             continue;
         }
         if let Some(resolved) = library.resolve() {
-            let path = paths.libraries.join(&resolved.path);
+            let path = super::forge::safe_join(&paths.libraries, &resolved.path)?;
             classpath.push(path.clone());
             if resolved.url.is_empty() {
                 generated.push(path);
@@ -138,7 +138,7 @@ pub(crate) async fn install_version(
             }
         }
         if let Some(native) = library.native() {
-            let path = paths.libraries.join(&native.path);
+            let path = super::forge::safe_join(&paths.libraries, &native.path)?;
             native_archives.push((path.clone(), library.extract.as_ref().map_or_else(Vec::new, |extract| extract.exclude.clone())));
             downloads.push(Download { url: native.url, path, checksum: native.sha1.map(Checksum::Sha1), size: native.size, executable: false });
         }

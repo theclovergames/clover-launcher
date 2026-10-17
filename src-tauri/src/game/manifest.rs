@@ -31,6 +31,10 @@ pub struct Manifest {
     pub schema: u32,
     pub serial: u64,
     pub min_launcher_version: String,
+    /// Canal pour lequel le manifeste est signé : un manifeste de prod rejoué sur le canal bêta (même
+    /// clé) est refusé. Absent des manifestes publiés avant ce champ, qu'on accepte encore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
     pub minecraft: MinecraftTarget,
     pub fabric: FabricTarget,
     pub server: ServerTarget,
@@ -166,9 +170,9 @@ pub async fn load(http: &reqwest::Client, cache_dir: &Path, channel: &str) -> Re
 }
 
 async fn load_channel(http: &reqwest::Client, cache_dir: &Path, channel: &str) -> Result<Manifest> {
-    let cached = read_cached(cache_dir).await;
+    let cached = read_cached(cache_dir, channel).await;
     let fetched = match fetch(http, channel).await {
-        Ok((bytes, signature)) => Some(verify(&bytes, &signature).map(|manifest| (bytes, signature, manifest))),
+        Ok((bytes, signature)) => Some(verify(&bytes, &signature, channel).map(|manifest| (bytes, signature, manifest))),
         Err(error) => {
             eprintln!("[manifest] téléchargement impossible, repli sur le cache : {error}");
             None
@@ -196,7 +200,7 @@ async fn load_channel(http: &reqwest::Client, cache_dir: &Path, channel: &str) -
 
 /// Refuse un launcher trop ancien pour ce manifeste.
 pub fn check_launcher_version(manifest: &Manifest) -> Result<()> {
-    if version_tuple(env!("CARGO_PKG_VERSION")) < version_tuple(&manifest.min_launcher_version) {
+    if parse_version(env!("CARGO_PKG_VERSION")) < parse_version(&manifest.min_launcher_version) {
         return Err(GameError::LauncherOutdated);
     }
     Ok(())
@@ -225,8 +229,18 @@ pub fn update_endpoints(channel: &str) -> Vec<String> {
     channels.into_iter().map(|channel| format!("{CDN}/{channel}/latest.json")).collect()
 }
 
-fn verify(bytes: &[u8], signature: &str) -> Result<Manifest> {
-    verify_with(&public_key(), bytes, signature)
+fn verify(bytes: &[u8], signature: &str, channel: &str) -> Result<Manifest> {
+    let manifest = verify_with(&public_key(), bytes, signature)?;
+    check_channel(&manifest, channel)?;
+    Ok(manifest)
+}
+
+/// Refuse un manifeste signé pour un autre canal que celui demandé.
+fn check_channel(manifest: &Manifest, channel: &str) -> Result<()> {
+    match manifest.channel.as_deref() {
+        Some(signed) if signed != channel => Err(GameError::ManifestSignature),
+        _ => Ok(()),
+    }
 }
 
 fn public_key() -> VerifyingKey {
@@ -254,10 +268,10 @@ fn verify_with(key: &VerifyingKey, bytes: &[u8], signature: &str) -> Result<Mani
 }
 
 /// Un cache absent, illisible ou dont la signature ne correspond plus est simplement ignoré.
-async fn read_cached(dir: &Path) -> Option<Manifest> {
+async fn read_cached(dir: &Path, channel: &str) -> Option<Manifest> {
     let bytes = tokio::fs::read(dir.join("manifest.json")).await.ok()?;
     let signature = tokio::fs::read_to_string(dir.join("manifest.json.sig")).await.ok()?;
-    verify(&bytes, &signature).ok()
+    verify(&bytes, &signature, channel).ok()
 }
 
 async fn write_cache(dir: &Path, bytes: &[u8], signature: &str) -> Result<()> {
@@ -267,15 +281,13 @@ async fn write_cache(dir: &Path, bytes: &[u8], signature: &str) -> Result<()> {
     Ok(())
 }
 
-/// `1.2.3` → (1, 2, 3) ; un suffixe (`-beta.1`) est ignoré.
-fn version_tuple(version: &str) -> (u64, u64, u64) {
-    let mut parts = version
-        .split(['-', '+'])
-        .next()
-        .unwrap_or_default()
-        .split('.')
-        .map(|part| part.parse().unwrap_or(0));
-    (parts.next().unwrap_or(0), parts.next().unwrap_or(0), parts.next().unwrap_or(0))
+/// Version semver ; `0.2` est lu comme `0.2.0`, une illisible comme `0.0.0`. Une préversion
+/// (`0.5.0-beta.1`) précède sa version finale (`0.5.0`).
+fn parse_version(version: &str) -> semver::Version {
+    let (core, rest) = version.find(['-', '+']).map_or((version, ""), |at| version.split_at(at));
+    let dots = core.matches('.').count();
+    let padded = format!("{core}{}{rest}", ".0".repeat(2usize.saturating_sub(dots)));
+    semver::Version::parse(&padded).unwrap_or_else(|_| semver::Version::new(0, 0, 0))
 }
 
 #[cfg(test)]
@@ -402,8 +414,17 @@ mod tests {
 
     #[test]
     fn compares_launcher_versions() {
-        assert!(version_tuple("0.10.0") > version_tuple("0.9.9"));
-        assert!(version_tuple("1.0.0-beta.1") == version_tuple("1.0.0"));
-        assert!(version_tuple("0.1.0") < version_tuple("0.2"));
+        assert!(parse_version("0.10.0") > parse_version("0.9.9"));
+        assert!(parse_version("1.0.0-beta.1") < parse_version("1.0.0"));
+        assert!(parse_version("0.1.0") < parse_version("0.2"));
+    }
+
+    #[test]
+    fn refuses_a_manifest_signed_for_another_channel() {
+        let mut manifest: Manifest = serde_json::from_str(MANIFEST).unwrap();
+        assert!(check_channel(&manifest, BETA).is_ok(), "ancien manifeste sans canal");
+        manifest.channel = Some(PROD.into());
+        assert!(check_channel(&manifest, PROD).is_ok());
+        assert!(matches!(check_channel(&manifest, BETA), Err(GameError::ManifestSignature)));
     }
 }
