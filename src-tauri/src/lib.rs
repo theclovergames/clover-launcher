@@ -873,7 +873,7 @@ async fn play(
         game::Destination::Mode(_) => presence::Place::Clover,
         game::Destination::Server(address) => presence::Place::server(address),
         game::Destination::World(_) => presence::Place::World,
-        game::Destination::Menu => presence::Place::Menu,
+        game::Destination::Menu => presence::Place::Started,
     };
     let settings = stored.settings;
     let options = game::LaunchOptions {

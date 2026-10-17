@@ -207,6 +207,7 @@ pub async fn spawn(
         tokio::pin!(capture);
         let mut captured = false;
         let mut poll = tokio::time::interval(QUICK_PLAY_POLL);
+        let mut titled = false;
         let code = loop {
             tokio::select! {
                 () = &mut capture, if !captured => captured = true,
@@ -217,7 +218,11 @@ pub async fn spawn(
                 }
                 _ = poll.tick() => {
                     let joined = quick_play::joined_since(&log, started);
+                    // Un titre sans état ne veut dire « menu » qu'une fois un état vu dans cette
+                    // partie : avant 1.15, le jeu n'en écrit jamais.
                     let in_world = pid.and_then(super::window_title::in_world);
+                    titled |= in_world == Some(true);
+                    let in_world = in_world.filter(|&now| now || titled);
                     if let Some(place) = crate::presence::Place::now(in_world, joined.as_ref()) {
                         app.state::<crate::presence::Presence>().set_place(place).await;
                     }

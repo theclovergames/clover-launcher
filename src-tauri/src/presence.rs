@@ -48,6 +48,9 @@ pub enum State {
 /// Où en est la partie.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Place {
+    /// Lieu inconnu : jeu lancé sur son menu, ou version trop ancienne pour être suivie (pas de
+    /// journal Quick Play avant 1.20, pas d'état dans le titre avant 1.15).
+    Started,
     /// Menu du jeu, sur aucun serveur ni monde.
     Menu,
     /// Sur Clover Games (`play.clovergames.fr` ou un de ses modes).
@@ -201,13 +204,18 @@ fn activity(state: State, player: Option<&Player>) -> Activity<'static> {
         return base.details("Dans le launcher").state("Prépare sa partie");
     };
     let (details, place) = match place {
-        Place::Clover => ("Joue à Clover Games", format!("Sur {SERVER_HOST}")),
-        Place::Server(address) => ("Joue à Minecraft", format!("Sur {address}")),
-        Place::World => ("Joue à Minecraft", "En solo".into()),
-        Place::Realms => ("Joue à Minecraft", "Sur Realms".into()),
-        Place::Menu => ("Joue à Minecraft", "Dans le menu".into()),
+        Place::Clover => ("Joue à Clover Games", Some(format!("Sur {SERVER_HOST}"))),
+        Place::Server(address) => ("Joue à Minecraft", Some(format!("Sur {address}"))),
+        Place::World => ("Joue à Minecraft", Some("En solo".into())),
+        Place::Realms => ("Joue à Minecraft", Some("Sur Realms".into())),
+        Place::Menu => ("Joue à Minecraft", Some("Dans le menu".into())),
+        Place::Started => ("Joue à Minecraft", None),
     };
-    base.details(details).state(place).timestamps(Timestamps::new().start(since))
+    let activity = base.details(details).timestamps(Timestamps::new().start(since));
+    match place {
+        Some(place) => activity.state(place),
+        None => activity,
+    }
 }
 
 #[cfg(test)]
@@ -224,7 +232,7 @@ mod tests {
     fn builds_every_activity() {
         let player = Player { uuid: "069a79f4-44e9-4726-a5be-fca90e38aaf5".into(), name: "Notch".into() };
         let _ = activity(State::Launcher, None);
-        for place in [Place::Menu, Place::Clover, Place::Server("mc.hypixel.net".into()), Place::World, Place::Realms] {
+        for place in [Place::Started, Place::Menu, Place::Clover, Place::Server("mc.hypixel.net".into()), Place::World, Place::Realms] {
             let _ = activity(State::Playing { since: 1_790_000_000, place }, Some(&player));
         }
     }
