@@ -1447,6 +1447,7 @@ export default function App() {
               search={searchContent}
               onInstall={installFromModrinth}
               installing={installing}
+              contentRevision={contentRevision}
               modpackVersions={api.modpackVersions}
               worlds={worlds}
               progress={{ modpack: modpackProgress ?? undefined, world: worldProgress ?? undefined }}

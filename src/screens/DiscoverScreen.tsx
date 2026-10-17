@@ -55,6 +55,8 @@ type Props = {
   onInstall: (kind: ContentKind, projectId: string, instance: string, world?: string, version?: string) => Promise<string | void>;
   /** Installations en cours (`installKey`), tenues par `App` : elles survivent à un retour sur cet écran. */
   installing: ReadonlySet<string>;
+  /** Change après chaque installation, même finie après un départ de cet écran : les « installés » sont relus. */
+  contentRevision?: number;
   /** Versions installables d'un modpack, pour en choisir une sur sa page. */
   modpackVersions: (project: string) => Promise<ModpackVersion[]>;
   /** Mondes de l'instance, cibles des datapacks. */
@@ -78,7 +80,7 @@ type Results = { key: string; hits: ModrinthHit[]; total: number } | { key: stri
  * Le texte et les filtres de chaque type restent quand on va et vient entre la liste et une page.
  */
 export function DiscoverScreen(props: Props) {
-  const { route, instances, defaultTarget, installed, search, onInstall, installing, modpackVersions, worlds, progress, load, onPlayWorld, onOpenLink } = props;
+  const { route, instances, defaultTarget, installed, search, onInstall, installing, contentRevision, modpackVersions, worlds, progress, load, onPlayWorld, onOpenLink } = props;
   const kind = route.kind;
   const text = CONTENT_KINDS[kind];
   // Mods et shaders demandent un loader : une instance Vanilla visée cède la place à une autre.
@@ -187,7 +189,7 @@ export function DiscoverScreen(props: Props) {
     return () => {
       alive = false;
     };
-  }, [allowed, id, kind, world, installedKey, installed]);
+  }, [allowed, id, kind, world, installedKey, installed, contentRevision]);
 
   const keyOf = (projectId: string) => installKey(kind, projectId, id, world);
   const installedHere = installedSet?.key === installedKey ? installedSet.projects : null;

@@ -239,11 +239,14 @@ pub async fn prepare(http: &reqwest::Client, paths: &Paths, flavor: Flavor, mine
     let relative = maven_path(&coordinate).ok_or_else(|| GameError::InvalidVersion("installateur introuvable".into()))?;
     let installer = paths.libraries.join(&relative);
     let url = format!("{repository}/{relative}");
-    // L'installateur est exécuté : sans empreinte publiée par le dépôt, on refuse de le lancer.
-    let sha1 = super::install::maven_sha1(http, &url)
-        .await
-        .map_err(|_| GameError::InvalidVersion(format!("empreinte de l'installateur {} {loader} introuvable", flavor.label())))?;
-    ensure(http, &Download { url, path: installer.clone(), checksum: Some(Checksum::Sha1(sha1)), size: None, executable: false })
+    // L'installateur est exécuté : sans empreinte publiée par le dépôt, on refuse de le télécharger.
+    // Hors ligne, celui déjà sur le disque sert tel quel, pour lancer une instance installée.
+    let sha1 = match super::install::maven_sha1(http, &url).await {
+        Ok(sha1) => Some(Checksum::Sha1(sha1)),
+        Err(_) if installer.is_file() => None,
+        Err(_) => return Err(GameError::InvalidVersion(format!("empreinte de l'installateur {} {loader} introuvable", flavor.label()))),
+    };
+    ensure(http, &Download { url, path: installer.clone(), checksum: sha1, size: None, executable: false })
         .await
         .map_err(|error| match error {
             GameError::Network(_) => GameError::InvalidVersion(format!("{} {loader} introuvable pour Minecraft {minecraft}", flavor.label())),
