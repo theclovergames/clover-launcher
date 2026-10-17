@@ -30,7 +30,13 @@ test("corps des POST", () => {
 });
 
 function env(ipOk = true, globalOk = true) {
-  return { CURSEFORGE_API_KEY: "k", LIMITER: { limit: async () => ({ success: ipOk }) }, GLOBAL_LIMITER: { limit: async () => ({ success: globalOk }) } };
+  const calls = { global: 0 };
+  return {
+    CURSEFORGE_API_KEY: "k",
+    calls,
+    LIMITER: { limit: async () => ({ success: ipOk }) },
+    GLOBAL_LIMITER: { limit: async () => (calls.global++, { success: globalOk }) },
+  };
 }
 const call = (method: string, path: string, init: { agent?: string; body?: string } = {}, e = env()) =>
   worker.fetch(new Request("https://curseforge.clovergames.fr" + path, { method, body: init.body, headers: { "user-agent": init.agent ?? AGENT } }), e);
@@ -39,8 +45,13 @@ test("refus hors usage du launcher", async () => {
   assert.equal((await call("GET", "/v1/games")).status, 404);
   assert.equal((await call("GET", "/v1/mods/search", { agent: "curl/8" })).status, 403);
   assert.equal((await call("POST", "/v1/mods", { body: "x" })).status, 400);
-  assert.equal((await call("GET", "/v1/mods/search", {}, env(false))).status, 429);
   assert.equal((await call("GET", "/v1/mods/search", {}, env(true, false))).status, 429);
+});
+
+test("une adresse bloquée n'entame pas le plafond global", async () => {
+  const e = env(false);
+  assert.equal((await call("GET", "/v1/mods/search", {}, e)).status, 429);
+  assert.equal(e.calls.global, 0);
 });
 
 test("relais d'une requête valide", async () => {

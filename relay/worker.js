@@ -54,9 +54,11 @@ export default {
       if (body === null) return new Response("Bad request", { status: 400 });
     }
 
+    // Une adresse déjà bloquée ne doit pas entamer le plafond global, sinon elle seule le vide pour tous.
     const ip = await env.LIMITER.limit({ key: request.headers.get("cf-connecting-ip") ?? "" });
+    if (!ip.success) return new Response("Too many requests", { status: 429 });
     const global = await env.GLOBAL_LIMITER.limit({ key: "global" });
-    if (!ip.success || !global.success) return new Response("Too many requests", { status: 429 });
+    if (!global.success) return new Response("Too many requests", { status: 429 });
 
     const upstream = await fetch(API + url.pathname + url.search, {
       method: request.method,
