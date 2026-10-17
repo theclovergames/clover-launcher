@@ -30,6 +30,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::auth::Session;
+use crate::store::RecentServer;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GameError {
@@ -237,13 +238,13 @@ pub async fn catalogue(app: &AppHandle) -> Result<manifest::Manifest> {
 }
 
 /// Installe ce qui manque puis démarre le jeu sur `destination`.
-/// `on_join` reçoit chaque connexion de la partie (serveur, monde solo), et la dernière à sa fermeture.
+/// `on_join` reçoit chaque serveur rejoint pendant la partie, et le dernier à sa fermeture.
 pub async fn play(
     app: &AppHandle,
     session: &Session,
     options: LaunchOptions,
     destination: Destination,
-    on_join: impl Fn(quick_play::Joined) + Send + 'static,
+    on_join: impl Fn(RecentServer) + Send + 'static,
     instance: &crate::instances::Instance,
 ) -> Result<()> {
     let paths = crate::instances::paths(Paths::new(app)?, instance)?;

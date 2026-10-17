@@ -867,11 +867,13 @@ async fn play(
         }
         (None, None) => mode.map_or(game::Destination::Menu, game::Destination::Mode),
     };
-    // Statut Discord du départ ; chaque connexion de la partie le corrige ensuite (`on_join`).
-    let clover = match &destination {
-        game::Destination::Server(address) => presence::is_clover_address(address),
-        game::Destination::World(_) => false,
-        game::Destination::Menu | game::Destination::Mode(_) => instance.kind == instances::Kind::Clover,
+    // Statut Discord du départ : sur Clover Games seulement si le jeu s'y connecte d'office. La
+    // fenêtre et les connexions de la partie le corrigent ensuite (`game::launch::spawn`).
+    let place = match &destination {
+        game::Destination::Mode(_) => presence::Place::Clover,
+        game::Destination::Server(address) => presence::Place::server(address),
+        game::Destination::World(_) => presence::Place::World,
+        game::Destination::Menu => presence::Place::Menu,
     };
     let settings = stored.settings;
     let options = game::LaunchOptions {
@@ -891,14 +893,9 @@ async fn play(
     };
     let handle = app.clone();
     let joined = instance.id.clone();
-    let on_join = move |connection: game::quick_play::Joined| {
-        let clover = matches!(&connection, game::quick_play::Joined::Server(server) if presence::is_clover_address(&server.address));
-        let presence = handle.clone();
-        tauri::async_runtime::spawn(async move { presence.state::<Presence>().set_clover(clover).await });
-        if let game::quick_play::Joined::Server(server) = connection {
-            handle.state::<history::History>().join(&handle.state::<AppState>().root, &joined, &server.address);
-            handle.state::<AppState>().remember_server(server);
-        }
+    let on_join = move |server: store::RecentServer| {
+        handle.state::<history::History>().join(&handle.state::<AppState>().root, &joined, &server.address);
+        handle.state::<AppState>().remember_server(server);
     };
     // Notée avant le lancement : le jeu peut se fermer avant que `play` ne rende la main.
     app.state::<history::History>().begin(&state.root, &instance.id);
@@ -922,7 +919,7 @@ async fn play(
         if instance.id == instances::BUILTIN { stored.clover_last_played = Some(instances::now()); }
         if let Some(entry) = stored.instances.iter_mut().find(|entry| entry.id == instance.id) { entry.last_played = Some(instances::now()); }
     });
-    presence.set_state(presence::State::playing_now(clover)).await;
+    presence.set_state(presence::State::playing_now(place)).await;
 
     if let Some(window) = app.get_webview_window("main") {
         match settings.on_launch.as_str() {

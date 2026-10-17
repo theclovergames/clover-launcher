@@ -24,8 +24,8 @@ struct Entry {
 #[derive(Debug, PartialEq)]
 pub enum Joined {
     Server(RecentServer),
-    /// Monde solo ou Realms.
-    Elsewhere,
+    World,
+    Realms,
 }
 
 /// Dernier serveur rejoint, `None` sans journal, pour un monde solo ou Realms, ou si le jeu est en
@@ -33,7 +33,7 @@ pub enum Joined {
 pub fn last_server(path: &Path) -> Option<RecentServer> {
     match parse(&std::fs::read(path).ok()?)? {
         Joined::Server(server) => Some(server),
-        Joined::Elsewhere => None,
+        Joined::World | Joined::Realms => None,
     }
 }
 
@@ -49,7 +49,12 @@ pub fn joined_since(path: &Path, since: SystemTime) -> Option<Joined> {
 fn parse(bytes: &[u8]) -> Option<Joined> {
     let entries: Vec<Entry> = serde_json::from_slice(bytes).ok()?;
     let entry = entries.into_iter().next()?;
-    Some(if entry.kind == "multiplayer" { Joined::Server(RecentServer { address: entry.id, name: entry.name }) } else { Joined::Elsewhere })
+    match entry.kind.as_str() {
+        "multiplayer" => Some(Joined::Server(RecentServer { address: entry.id, name: entry.name })),
+        "singleplayer" => Some(Joined::World),
+        "realms" => Some(Joined::Realms),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -61,7 +66,7 @@ mod tests {
         let log = br#"[{"type":"multiplayer","id":"mc.hypixel.net","name":"Hypixel","lastPlayedTime":"2026-10-02T18:04:11.204Z","gamemode":"adventure"}]"#;
         assert_eq!(parse(log), Some(Joined::Server(RecentServer { address: "mc.hypixel.net".into(), name: "Hypixel".into() })));
         let world = br#"[{"type":"singleplayer","id":"Nouveau monde","name":"Nouveau monde","lastPlayedTime":"2026-10-02T18:04:11Z","gamemode":"survival"}]"#;
-        assert_eq!(parse(world), Some(Joined::Elsewhere));
+        assert_eq!(parse(world), Some(Joined::World));
         assert_eq!(parse(br#"[{"type":"multipla"#), None);
     }
 

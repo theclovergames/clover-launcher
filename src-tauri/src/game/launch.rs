@@ -13,9 +13,10 @@ use super::quick_play;
 use super::version::expand;
 use super::{auto_memory_mb, GameError, LaunchOptions, Paths, Result};
 use crate::auth::Session;
+use crate::store::RecentServer;
 
 /// Le jeu remplace son journal Quick Play à chaque connexion : le relire assez souvent pour ne
-/// manquer aucun serveur rejoint pendant la partie.
+/// manquer aucun serveur rejoint pendant la partie. Le statut Discord suit au même rythme.
 const QUICK_PLAY_POLL: Duration = Duration::from_secs(5);
 /// Attente de la fin de la sortie une fois le jeu fermé.
 const OUTPUT_GRACE: Duration = Duration::from_secs(3);
@@ -167,7 +168,7 @@ pub async fn spawn(
     session: &Session,
     quick_play: Option<&QuickPlay>,
     options: &LaunchOptions,
-    on_join: impl Fn(quick_play::Joined) + Send + 'static,
+    on_join: impl Fn(RecentServer) + Send + 'static,
 ) -> Result<()> {
     let arguments = build_arguments(paths, &installation, session, quick_play, options)?;
     let Installation { java, vanilla, loader, .. } = installation;
@@ -214,7 +215,16 @@ pub async fn spawn(
                     eprintln!("[game] fermeture forcée de Minecraft ({instance})");
                     let _ = child.start_kill();
                 }
-                _ = poll.tick() => quick_play::joined_since(&log, started).into_iter().for_each(&on_join),
+                _ = poll.tick() => {
+                    let joined = quick_play::joined_since(&log, started);
+                    let in_world = pid.and_then(super::window_title::in_world);
+                    if let Some(place) = crate::presence::Place::now(in_world, joined.as_ref()) {
+                        app.state::<crate::presence::Presence>().set_place(place).await;
+                    }
+                    if let Some(quick_play::Joined::Server(server)) = joined {
+                        on_join(server);
+                    }
+                }
             }
         };
         // Fin de la sortie lue avant d'annoncer la fermeture : l'écran de plantage la montre. Un
@@ -222,7 +232,9 @@ pub async fn spawn(
         if !captured {
             let _ = tokio::time::timeout(OUTPUT_GRACE, capture).await;
         }
-        quick_play::joined_since(&log, started).into_iter().for_each(&on_join);
+        if let Some(quick_play::Joined::Server(server)) = quick_play::joined_since(&log, started) {
+            on_join(server);
+        }
         eprintln!("[game] Minecraft fermé ({instance}, code {code:?})");
         game.finish(code);
         app.state::<crate::history::History>().finish(&root, &instance, code);
