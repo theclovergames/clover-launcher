@@ -27,8 +27,8 @@ import { ArticleReader, type ReaderTarget } from "@/components/ArticleReader";
 import { InstanceSettings } from "@/screens/InstanceSettings";
 import { ownLoader } from "@/lib/instances";
 import { Page } from "@/components/Page";
-import { CONTENT_KINDS, type ContentKind } from "@/lib/content-kinds";
-import { back, canGoBack, type Names, route, type Route, trail } from "@/lib/routes";
+import { CONTENT_KINDS, type ContentKind, installKey } from "@/lib/content-kinds";
+import { back, canGoBack, type Names, openFromCrumb, route, type Route, trail } from "@/lib/routes";
 import { DiscoverScreen } from "@/screens/DiscoverScreen";
 import { sectionLabel } from "@/screens/InstanceDetail";
 import { InstanceMods, ModDetail } from "@/screens/InstanceMods";
@@ -165,6 +165,8 @@ export default function App() {
   /** Même page, autre onglet ou autre filtre : « Retour » n'y repasse pas. */
   const replace = (next: Route) => setStack((pages) => [...pages.slice(0, -1), next]);
   const goBack = () => setStack(back);
+  /** Maillon du fil d'Ariane : dépile jusqu'à cette page si elle est dans la pile, sinon la remplace. */
+  const openCrumb = (target: Route) => setStack((pages) => openFromCrumb(pages, target));
 
   const [catalogue, setCatalogue] = useState<Catalogue | null>(null);
   const [server, setServer] = useState<ServerStatus | null>(null);
@@ -174,7 +176,11 @@ export default function App() {
   const [storage, setStorage] = useState<StorageUsage | null>(null);
   /** Mods du joueur d'une instance : celle de la page ouverte, sinon celle choisie. */
   const [personal, setPersonal] = useState<{ instance: string; mods: PersonalMod[] } | null>(null);
+  const [personalError, setPersonalError] = useState<{ instance: string; message: string } | null>(null);
+  /** Installations en cours (`instance:type:projet[:monde]`), gardées ici : elles survivent à un aller-retour dans Découvrir. */
+  const [installing, setInstalling] = useState<ReadonlySet<string>>(new Set());
   const personalGeneration = useRef(0);
+  const installingRef = useRef(new Set<string>());
   const [instances, setInstances] = useState<InstanceEntry[]>([]);
   const selectedInstance = stored?.selectedInstance ?? "clover";
   const [instanceDraft, setInstanceDraft] = useState<InstanceDraft | null>(null);
@@ -555,8 +561,8 @@ export default function App() {
 
   const refreshPersonalMods = useCallback((instance: string) => {
     const request = ++personalGeneration.current;
-    return api.personalMods(instance).then((mods) => { if (request === personalGeneration.current) setPersonal({ instance, mods }); })
-      .catch((reason) => { if (request === personalGeneration.current) setNotice(String(reason)); });
+    return api.personalMods(instance).then((mods) => { if (request === personalGeneration.current) { setPersonal({ instance, mods }); setPersonalError(null); } })
+      .catch((reason) => { if (request === personalGeneration.current) { setPersonalError({ instance, message: String(reason) }); setNotice(String(reason)); } });
   }, []);
   /** Instance dont les mods comptent : celle de la page ouverte, sinon celle que « Jouer » lance. */
   const modsInstance = current.tab === "instances" && current.instance ? current.instance : selectedInstance;
@@ -835,6 +841,8 @@ export default function App() {
     <InstanceMods
       catalogue={entry.kind === "clover" ? modInfosOf(entry.id) : undefined}
       personal={modsOf(entry.id)}
+      error={personalError?.instance === entry.id ? personalError.message : null}
+      onRetry={() => void refreshPersonalMods(entry.id)}
       minecraftVersion={entry.minecraft ?? catalogue?.minecraft.version ?? ""}
       onToggle={(id, enabled) => toggleMod(entry.id, id, enabled)}
       onTogglePersonal={(id, enabled) => togglePersonalMod(entry.id, id, enabled)}
@@ -908,6 +916,18 @@ export default function App() {
    * launcher. Un monde renvoie le nom de son dossier, pour y jouer aussitôt.
    */
   const installFromModrinth = async (kind: ContentKind, project: string, instance: string, world?: string, version?: string): Promise<string | void> => {
+    const key = installKey(kind, project, instance, world);
+    if (installingRef.current.has(key)) return;
+    installingRef.current.add(key);
+    setInstalling(new Set(installingRef.current));
+    try {
+      return await installContent(kind, project, instance, world, version);
+    } finally {
+      installingRef.current.delete(key);
+      setInstalling(new Set(installingRef.current));
+    }
+  };
+  const installContent = async (kind: ContentKind, project: string, instance: string, world?: string, version?: string): Promise<string | void> => {
     const target = instances.find((entry) => entry.id === instance);
     if (kind === "world") {
       setWorldProgress(null);
@@ -1281,7 +1301,7 @@ export default function App() {
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
         <SideNav tab={tab} onTab={navigate} head={profile?.skin?.url ?? activeAccount?.skinUrl ?? null} />
         <div className={tab === "home" ? "flex min-w-0 flex-1 flex-col gap-2" : "tile flex min-w-0 flex-1 flex-col overflow-hidden"}>
-          {tab !== "home" && canGoBack(stack) && <Breadcrumb crumbs={trail(current, names)} onBack={goBack} onOpen={replace} />}
+          {tab !== "home" && canGoBack(stack) && <Breadcrumb crumbs={trail(current, names)} onBack={goBack} onOpen={openCrumb} />}
           {tab === "home" && (
             <HomeScreen
               playerName={profile?.name ?? activeAccount?.name ?? ""}
@@ -1426,6 +1446,7 @@ export default function App() {
               installed={installedProjects}
               search={searchContent}
               onInstall={installFromModrinth}
+              installing={installing}
               modpackVersions={api.modpackVersions}
               worlds={worlds}
               progress={{ modpack: modpackProgress ?? undefined, world: worldProgress ?? undefined }}

@@ -1,5 +1,5 @@
 import { ArrowDown, Check, Copy, Eraser, FolderOpen, Search } from "lucide-react";
-import { useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { ShareLogButton } from "@/components/ShareLogButton";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -107,13 +107,20 @@ export function ConsoleScreen({
   const list = useRef<HTMLDivElement>(null);
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
 
-  const counts = { info: 0, warn: 0, error: 0 };
-  for (const entry of entries) counts[entry.level] += 1;
-  const shown = entries.filter((entry) => levels.has(entry.level) && (!deferredQuery || matches(entry, deferredQuery)));
+  const counts = useMemo(() => {
+    const total = { info: 0, warn: 0, error: 0 };
+    for (const entry of entries) total[entry.level] += 1;
+    return total;
+  }, [entries]);
+  const shown = useMemo(() => entries.filter((entry) => levels.has(entry.level) && (!deferredQuery || matches(entry, deferredQuery))), [entries, levels, deferredQuery]);
 
+  // Le dernier identifiant, pas la longueur : la console garde 10 000 lignes, la longueur n'y bouge plus.
+  const lastId = shown[shown.length - 1]?.id;
   useLayoutEffect(() => {
     if (follow && list.current) list.current.scrollTop = list.current.scrollHeight;
-  }, [shown.length, follow]);
+  }, [lastId, shown.length, follow]);
+  // Seules les erreurs sont annoncées aux lecteurs d'écran, pas les milliers de lignes de la sortie.
+  const lastError = useMemo(() => (reading ? undefined : [...entries].reverse().find((entry) => entry.level === "error")), [entries, reading]);
 
   const toggleLevel = (level: LogLevel) =>
     setLevels((current) => {
@@ -260,7 +267,7 @@ export function ConsoleScreen({
       <div className="relative mt-3 min-h-0 flex-1">
         <div
           ref={list}
-          role="log"
+          role="region"
           aria-label="Sortie du jeu"
           tabIndex={0}
           onScroll={(event) => {
@@ -277,6 +284,9 @@ export function ConsoleScreen({
             shown.map((entry) => <Line key={entry.id} entry={entry} />)
           )}
         </div>
+        <p className="sr-only" role="status" aria-live="polite">
+          {lastError ? `Erreur du jeu : ${lastError.message}` : ""}
+        </p>
         {!follow && shown.length > 0 && (
           <button
             type="button"
@@ -292,13 +302,14 @@ export function ConsoleScreen({
   );
 }
 
-function Line({ entry }: { entry: LogEntry }) {
+/** Mémoïsée, et rendue à la demande par le navigateur (`content-visibility`) : 10 000 lignes ne coûtent que celles à l'écran. */
+const Line = memo(function Line({ entry }: { entry: LogEntry }) {
   const prefix = logPrefix(entry);
   return (
-    <div className={cn("break-words whitespace-pre-wrap", TONE[entry.level])}>
+    <div className={cn("break-words whitespace-pre-wrap [contain-intrinsic-size:auto_18px] [content-visibility:auto]", TONE[entry.level])}>
       {prefix && <span className="text-muted-foreground">{prefix} </span>}
       {entry.message}
       {entry.throwable && <div className="pl-4 text-error/85">{entry.throwable}</div>}
     </div>
   );
-}
+});

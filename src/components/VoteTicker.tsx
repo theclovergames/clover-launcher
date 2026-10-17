@@ -12,7 +12,8 @@ export function VoteTicker({ votes, onVote }: { votes: RecentVote[]; onVote: () 
   const [index, setIndex] = useState(0);
 
   useEffect(() => {
-    if (votes.length < 2 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    // Système ou réglage « Animations réduites » du launcher (classe posée sur <html> par App).
+    if (votes.length < 2 || window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.documentElement.classList.contains("reduce-motion")) return;
     const timer = setInterval(() => setIndex((current) => (current + 1) % votes.length), ROTATION_MS);
     return () => clearInterval(timer);
   }, [votes.length]);

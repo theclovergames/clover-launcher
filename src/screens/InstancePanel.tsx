@@ -66,8 +66,16 @@ export function InstancePanel({
     return () => window.removeEventListener("keydown", close);
   }, [onClose]);
 
+  // Le focus entre dans le panneau à l'ouverture et revient à l'élément qui l'a ouvert à la fermeture.
+  const panel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    panel.current?.focus();
+    return () => opener?.focus();
+  }, []);
+
   return (
-    <aside aria-labelledby="instance-panel-title" className="flex w-[380px] shrink-0 flex-col border-l border-border bg-card animate-in slide-in-from-right-8 fade-in duration-200">
+    <aside ref={panel} tabIndex={-1} aria-labelledby="instance-panel-title" className="flex w-[380px] shrink-0 flex-col border-l border-border bg-card outline-none animate-in slide-in-from-right-8 fade-in duration-200">
       {/* `key` : une autre instance repart d'un formulaire neuf ; une autre version garde les choix faits. */}
       <Form key={draft.id ?? "new"} draft={draft} onClose={onClose} onSave={onSave} existing={draft.id ? undefined : existing} serverVersion={serverVersion ?? null} onImportModpack={draft.id ? undefined : onImportModpack} services={services} />
     </aside>
