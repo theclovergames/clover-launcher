@@ -1,5 +1,4 @@
 import { ArrowLeft, ChevronRight } from "lucide-react";
-import { Fragment } from "react";
 
 import type { Crumb, Route } from "@/lib/routes";
 
@@ -17,9 +16,9 @@ export function Breadcrumb({ crumbs, onBack, onOpen }: { crumbs: Crumb[]; onBack
       <span aria-hidden className="h-4 w-px bg-border" />
       <ol className="flex min-w-0 items-center gap-1.5">
         {crumbs.map((crumb, index) => (
-          <Fragment key={`${index}-${crumb.label}`}>
-            {index > 0 && <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/60" aria-hidden />}
-            <li className="min-w-0">
+          <li key={`${index}-${crumb.label}`} className="flex min-w-0 items-center gap-1.5">
+            {index > 0 && <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
+            <span className="min-w-0">
               {crumb.to ? (
                 <button type="button" onClick={() => crumb.to && onOpen(crumb.to)} className="truncate text-muted-foreground transition-colors hover:text-foreground">
                   {crumb.label}
@@ -29,8 +28,8 @@ export function Breadcrumb({ crumbs, onBack, onOpen }: { crumbs: Crumb[]; onBack
                   {crumb.label}
                 </span>
               )}
-            </li>
-          </Fragment>
+            </span>
+          </li>
         ))}
       </ol>
     </nav>

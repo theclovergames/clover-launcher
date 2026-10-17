@@ -76,3 +76,10 @@ export function trail(current: Route, names: Names): Crumb[] {
   crumbs[crumbs.length - 1] = { label: last.label };
   return crumbs;
 }
+
+/** Maillon du fil d'Ariane : dépile jusqu'à cette page si elle est dans la pile, sinon remplace la page ouverte. */
+export function openFromCrumb(stack: Route[], target: Route): Route[] {
+  const wanted = JSON.stringify(target);
+  const index = stack.map((page) => JSON.stringify(page)).lastIndexOf(wanted);
+  return index >= 0 ? stack.slice(0, index + 1) : [...stack.slice(0, -1), target];
+}

@@ -119,7 +119,7 @@ pub async fn install(
     let mut downloads = Vec::new();
     let mut links = Vec::new();
     for (relative, file) in manifest.files {
-        let path = root.join(&relative);
+        let path = super::forge::safe_join(&root, &relative)?;
         match file {
             RuntimeFile::Directory => tokio::fs::create_dir_all(&path).await?,
             RuntimeFile::File { executable, downloads: FileDownloads { raw } } => downloads.push(Download {

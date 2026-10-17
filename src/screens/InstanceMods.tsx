@@ -31,6 +31,9 @@ type Props = Actions & {
   catalogue?: ModInfo[];
   /** Mods ajoutés par le joueur ; `null` pendant leur lecture. */
   personal: PersonalMod[] | null;
+  /** Message de la lecture qui a échoué (`personal` reste `null`), et de quoi la relancer. */
+  error?: string | null;
+  onRetry?: () => void;
   onAddFiles: (files: File[]) => void;
   /** Met à jour d'un coup les mods qui ont une version à installer. */
   onUpdateAll: () => Promise<void>;
@@ -125,7 +128,7 @@ function Catalogue({ catalogue, minecraftVersion, onToggle, onOpen }: Props & { 
                         {mod.name}
                       </label>
                       <p className="text-xs leading-snug text-muted-foreground">{mod.available ? mod.description : `Pas encore disponible pour Minecraft ${minecraftVersion}.`}</p>
-                      {mod.available && mod.version && <p className="truncate font-pixel text-[10px] text-muted-foreground/70">{mod.version}</p>}
+                      {mod.available && mod.version && <p className="truncate font-pixel text-[10px] text-muted-foreground">{mod.version}</p>}
                     </div>
                   </div>
                   <Switch id={`mod-${mod.id}`} className="relative mt-0.5" checked={mod.available && mod.enabled} disabled={!mod.available} onCheckedChange={(checked) => onToggle(mod.id, checked)} />
@@ -139,7 +142,7 @@ function Catalogue({ catalogue, minecraftVersion, onToggle, onOpen }: Props & { 
   );
 }
 
-function Personal({ personal, minecraftVersion, onTogglePersonal, onUpdatePersonal, onRemovePersonal, onAddFiles, onUpdateAll, onAdd, onOpen, onAsk, titled }: Props & { onAsk: (ask: Confirmation) => void; titled: boolean }) {
+function Personal({ personal, error, onRetry, minecraftVersion, onTogglePersonal, onUpdatePersonal, onRemovePersonal, onAddFiles, onUpdateAll, onAdd, onOpen, onAsk, titled }: Props & { onAsk: (ask: Confirmation) => void; titled: boolean }) {
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -159,7 +162,7 @@ function Personal({ personal, minecraftVersion, onTogglePersonal, onUpdatePerson
       onDrop={(event) => {
         event.preventDefault();
         setDragging(false);
-        const files = [...event.dataTransfer.files].filter((file) => file.name.endsWith(".jar"));
+        const files = [...event.dataTransfer.files].filter((file) => file.name.toLowerCase().endsWith(".jar"));
         if (files.length > 0) onAddFiles(files);
       }}
     >
@@ -214,7 +217,23 @@ function Personal({ personal, minecraftVersion, onTogglePersonal, onUpdatePerson
         <p>Ces mods viennent de toi : ils ne sont pas vérifiés par l'équipe Clover Games. Les mods de triche sont interdits sur le serveur et repérés par l'anticheat.</p>
       </div>
 
-      {personal && list.length === 0 ? (
+      {personal === null ? (
+        error ? (
+          <div role="alert" className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-error/30 bg-error/8 px-4 py-3 text-[13px] text-error">
+            <p>{error}</p>
+            {onRetry && (
+              <button type="button" onClick={onRetry} className={secondaryButton}>
+                <RefreshCw className="size-4" aria-hidden />
+                Réessayer
+              </button>
+            )}
+          </div>
+        ) : (
+          <p role="status" className="mt-4 text-[13px] text-muted-foreground">
+            Lecture de tes mods…
+          </p>
+        )
+      ) : list.length === 0 ? (
         <EmptyState
           className={cn("mt-4", dragging && "border-accent bg-accent/5")}
           title="Aucun mod ajouté"
@@ -232,7 +251,7 @@ function Personal({ personal, minecraftVersion, onTogglePersonal, onUpdatePerson
                 <div className={cn("relative flex min-w-0 flex-1 flex-col gap-0.5", mod.projectId && "pointer-events-none")}>
                   <label htmlFor={`personal-${mod.id}`} className={cn("flex items-baseline gap-2 text-sm font-semibold", !usable(mod) && "text-muted-foreground")}>
                     {mod.name}
-                    {mod.version && <span className="truncate font-pixel text-[10px] font-normal text-muted-foreground/70">{mod.version}</span>}
+                    {mod.version && <span className="truncate font-pixel text-[10px] font-normal text-muted-foreground">{mod.version}</span>}
                   </label>
                   {text && <p className={cn("text-xs leading-snug", hasUpdate(mod) ? "text-accent" : "text-error")}>{text}</p>}
                   <p className="truncate text-[11px] text-muted-foreground">{mod.source ?? mod.filename}</p>

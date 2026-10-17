@@ -1372,24 +1372,36 @@ pub async fn play_personal(
 }
 
 #[tauri::command]
-pub fn set_instance_catalogue(mods: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
-    let instance = resolve(&state.snapshot(), None).map_err(|e| e.to_string())?;
-    state.update(|stored| {
-        if let Some(entry) = stored
-            .instances
-            .iter_mut()
-            .find(|entry| entry.id == instance.id)
-        {
-            entry.enabled_mods = Some(mods);
-        } else {
-            stored.settings.enabled_mods = Some(mods);
-        }
-    })
+pub fn set_instance_catalogue(mods: Vec<String>, instance: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    let instance = resolve(&state.snapshot(), instance.as_deref()).map_err(|e| e.to_string())?;
+    state.update(|stored| apply_catalogue(stored, &instance.id, mods))
+}
+
+/// Écrit le catalogue de l'instance `id` ; Clover Games, absente de la liste, garde le sien dans les réglages.
+fn apply_catalogue(stored: &mut crate::store::Stored, id: &str, mods: Vec<String>) {
+    match stored.instances.iter_mut().find(|entry| entry.id == id) {
+        Some(entry) => entry.enabled_mods = Some(mods),
+        None => stored.settings.enabled_mods = Some(mods),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_catalogue_goes_to_the_requested_instance_not_the_selected_one() {
+        let mut stored = crate::store::Stored::default();
+        let fabric = Instance { id: "instance-0123456789abcdef0123456789abcdef".into(), kind: Kind::Fabric, ..Instance::builtin() };
+        stored.selected_instance = Some(fabric.id.clone());
+        stored.instances.push(fabric.clone());
+        apply_catalogue(&mut stored, BUILTIN, vec!["a".into()]);
+        assert_eq!(stored.settings.enabled_mods, Some(vec!["a".into()]));
+        assert_eq!(stored.instances[0].enabled_mods, None);
+        apply_catalogue(&mut stored, &fabric.id, vec!["b".into()]);
+        assert_eq!(stored.instances[0].enabled_mods, Some(vec!["b".into()]));
+        assert_eq!(stored.settings.enabled_mods, Some(vec!["a".into()]));
+    }
 
     #[test]
     fn a_duplicate_copies_the_instance_without_its_logs() {

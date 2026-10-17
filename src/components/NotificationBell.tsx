@@ -99,7 +99,7 @@ export function NotificationBell({ items, onOpen, onReadAll, error, defaultOpen 
                         {!item.read && <span aria-label="Non lue" className="size-2 shrink-0 rounded-full bg-destructive" />}
                       </span>
                       <span className="line-clamp-2 text-xs leading-snug text-muted-foreground">{item.message}</span>
-                      <span className="text-[11px] text-muted-foreground/70">
+                      <span className="text-[11px] text-muted-foreground">
                         {item.source === "game" ? "En jeu" : "Site"} · {ago(item.createdAt)}
                       </span>
                     </span>

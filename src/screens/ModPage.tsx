@@ -75,7 +75,7 @@ export function ModPage({ project, name, icon, version, summary, notice, actions
                 {number.format(page.downloads)} téléchargements
               </span>
             )}
-            {version && <span className="font-pixel text-[10px] text-muted-foreground/70">{version}</span>}
+            {version && <span className="font-pixel text-[10px] text-muted-foreground">{version}</span>}
             <LoaderBadges loaders={page?.loaders} />
           </p>
         </div>

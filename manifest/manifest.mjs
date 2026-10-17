@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // Construit et signe le manifeste distant du Clover Launcher.
 //
-//   node manifest/manifest.mjs build <canal>   résout les mods sur Modrinth, écrit et signe
-//                                              manifest/dist/<canal>/manifest.json(.sig)
+//   node manifest/manifest.mjs pin <canal>     résout la dernière version de chaque mod sur Modrinth et la
+//                                              fige (versionId + sha512) dans manifest/<canal>.lock.json ; le
+//                                              changement se relit dans le diff avant d'être commité
+//   node manifest/manifest.mjs build <canal>   reprend exactement les versions figées, vérifie leur
+//                                              sha512, écrit et signe manifest/dist/<canal>/manifest.json(.sig)
 //   node manifest/manifest.mjs keygen <fichier> crée une paire ed25519 (clé privée PEM dans
 //                                              <fichier>, clé publique affichée pour le launcher)
 //
@@ -28,6 +31,21 @@ async function modrinth(path) {
   if (!response.ok) throw new Error(`Modrinth ${path} → HTTP ${response.status}`);
   return response.json();
 }
+
+/** Version figée d'un mod : refuse une empreinte qui ne correspond plus à celle de Modrinth. */
+async function pinnedVersion(slug, pin) {
+  if (!pin?.versionId || !pin?.sha512) {
+    throw new Error(`${slug} n'est pas figé dans le canal : lancer « manifest.mjs pin <canal> » et relire le diff.`);
+  }
+  const version = await modrinth(`/version/${pin.versionId}`);
+  const file = primaryFile(version);
+  if (file.hashes.sha512 !== pin.sha512) {
+    throw new Error(`${slug} : le sha512 de la version ${pin.versionId} ne correspond plus à celui qui est figé.`);
+  }
+  return version;
+}
+
+const primaryFile = (version) => version.files.find((candidate) => candidate.primary) ?? version.files[0];
 
 /** Version la plus récente compatible, en préférant une release à une bêta puis à une alpha. */
 async function compatibleVersion(project, minecraft) {
@@ -56,7 +74,7 @@ async function description(slug) {
  * (`mod/`), installé à chaque lancement (`always`). `minecraft` liste les versions pour lesquelles ce
  * jar est construit ; pour une autre, le mod est indisponible et le launcher lance le jeu sans lui.
  */
-async function cloverMod(entry, minecraft) {
+async function cloverMod(entry, minecraft, pins, found) {
   const mod = {
     id: entry.slug,
     name: entry.name,
@@ -78,10 +96,16 @@ async function cloverMod(entry, minecraft) {
   const response = await fetch(entry.url, { headers: { "User-Agent": USER_AGENT } });
   if (!response.ok) throw new Error(`${entry.url} → HTTP ${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
+  const sha512 = createHash("sha512").update(bytes).digest("hex");
+  // L'empreinte attendue est figée dans le canal (relue au `pin`), pas prise du CDN qui sert le jar.
+  if (!pins) found[entry.slug] = { sha512 };
+  else if (pins[entry.slug]?.sha512 !== sha512) {
+    throw new Error(`${entry.slug} : le jar servi par le CDN (sha512 ${sha512.slice(0, 16)}…) ne correspond pas à celui du canal.`);
+  }
   mod.file = {
     filename: new URL(entry.url).pathname.split("/").pop(),
     url: entry.url,
-    sha512: createHash("sha512").update(bytes).digest("hex"),
+    sha512,
     size: bytes.length,
   };
   console.log(`  ${mod.id} ${mod.version} (CDN Clover Games)`);
@@ -91,9 +115,10 @@ async function cloverMod(entry, minecraft) {
 /**
  * Résout le catalogue et ses dépendances obligatoires. Les dépendances absentes du catalogue sont
  * ajoutées comme mods cachés : le joueur ne les voit pas, le launcher les installe avec les mods
- * qui en ont besoin.
+ * qui en ont besoin. `pins` fixe la version de chaque mod ; `null` (commande `pin`) prend la plus
+ * récente et la consigne dans `found`.
  */
-async function resolveMods(catalogue, minecraft) {
+async function resolveMods(catalogue, minecraft, pins, found = {}) {
   const resolved = new Map();
   const queue = catalogue.map((entry) => ({ ...entry, hidden: false }));
 
@@ -101,12 +126,19 @@ async function resolveMods(catalogue, minecraft) {
     const entry = queue.shift();
     if (resolved.has(entry.slug)) continue;
     if (entry.url) {
-      resolved.set(entry.slug, await cloverMod(entry, minecraft));
+      resolved.set(entry.slug, await cloverMod(entry, minecraft, pins, found));
       continue;
     }
 
     const project = await modrinth(`/project/${entry.slug}`);
-    const version = await compatibleVersion(project.id, minecraft);
+    // `null` consigné au pin : aucune version compatible alors, le mod reste indisponible.
+    const version =
+      pins?.[entry.slug] === null
+        ? null
+        : pins
+          ? await pinnedVersion(entry.slug, pins[entry.slug])
+          : await compatibleVersion(project.id, minecraft);
+    if (!pins) found[entry.slug] = version ? { versionId: version.id, sha512: primaryFile(version).hashes.sha512 } : null;
     const mod = {
       id: project.slug,
       name: project.title,
@@ -128,7 +160,7 @@ async function resolveMods(catalogue, minecraft) {
       continue;
     }
 
-    const file = version.files.find((candidate) => candidate.primary) ?? version.files[0];
+    const file = primaryFile(version);
     mod.file = { filename: file.filename, url: file.url, sha512: file.hashes.sha512, size: file.size };
 
     const required = version.dependencies.filter((dependency) => dependency.dependency_type === "required");
@@ -173,6 +205,27 @@ async function presets() {
   );
 }
 
+/** Versions figées d'un canal (`<canal>.lock.json`), ou `{}` s'il n'existe pas encore. */
+async function readPins(channel) {
+  const file = join(ROOT, `${channel}.lock.json`);
+  return existsSync(file) ? JSON.parse(await readFile(file, "utf8")) : {};
+}
+
+/** Fige la dernière version compatible de chaque mod dans `<canal>.lock.json`. */
+async function pin(channel) {
+  const source = JSON.parse(await readFile(join(ROOT, `${channel}.json`), "utf8"));
+  const found = {};
+  await resolveMods(source.mods, source.minecraft, null, found);
+  const previous = await readPins(channel);
+  const pins = Object.fromEntries(Object.entries(found).sort(([a], [b]) => a.localeCompare(b)));
+  const path = join(ROOT, `${channel}.lock.json`);
+  await writeFile(path, `${JSON.stringify(pins, null, 2)}\n`);
+  for (const [slug, now] of Object.entries(pins)) {
+    if (previous[slug]?.versionId !== now?.versionId) console.log(`  ${slug} : ${previous[slug]?.versionId ?? "(nouveau)"} → ${now?.versionId ?? "indisponible"}`);
+  }
+  console.log(`Écrit : ${path}`);
+}
+
 async function build(channel) {
   const keyFile = process.env.CLOVER_MANIFEST_KEY;
   if (!keyFile || !existsSync(keyFile)) {
@@ -187,11 +240,13 @@ async function build(channel) {
     // pour qu'un ancien manifeste signé ne puisse pas être rejoué.
     serial: Math.floor(Date.now() / 1000),
     minLauncherVersion: source.minLauncherVersion,
+    // Signé avec le manifeste : le launcher refuse celui d'un autre canal (même clé de signature).
+    channel,
     minecraft: { version: source.minecraft },
     fabric: { loader: source.fabricLoader },
     server: { host: source.server },
     modes: source.modes.map((mode) => ({ image: null, ...mode })),
-    mods: await resolveMods(source.mods, source.minecraft),
+    mods: await resolveMods(source.mods, source.minecraft, await readPins(channel)),
     // Comptes Minecraft (UUID) qui voient le réglage « Canal bêta » du launcher.
     betaTesters: source.betaTesters ?? [],
     presets: await presets(),
@@ -231,9 +286,9 @@ async function keygen(file) {
 }
 
 const [command, argument] = process.argv.slice(2);
-const commands = { build, keygen };
+const commands = { build, pin, keygen };
 if (!commands[command] || !argument) {
-  console.error("Usage : manifest.mjs build <canal> | keygen <fichier>");
+  console.error("Usage : manifest.mjs pin <canal> | build <canal> | keygen <fichier>");
   process.exit(1);
 }
 commands[command](argument).catch((error) => {

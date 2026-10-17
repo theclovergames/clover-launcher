@@ -335,10 +335,10 @@ export function ProfileScreen({ profile, look, animateSkin, sessions, skinCount,
     });
 
   const copyUuid = () => {
-    void navigator.clipboard.writeText(uuid).then(() => {
+    navigator.clipboard.writeText(uuid).then(() => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
-    });
+    }, () => {});
   };
 
   return (

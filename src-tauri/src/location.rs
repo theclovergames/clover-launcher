@@ -19,13 +19,41 @@ const FILE: &str = "location.json";
 /// Nom du dossier créé dans un dossier choisi qui n'est pas vide.
 const FOLDER: &str = "Clover Launcher";
 
+/// Fichier posé dans la destination une fois la copie complète, avant la suppression de l'original.
+const COPIED: &str = ".clover-copie-terminee";
+
 #[derive(Serialize, Deserialize)]
 struct Location {
     root: PathBuf,
+    /// Ancien dossier, tant que le déplacement n'est pas validé : un déplacement interrompu en cours
+    /// de copie repart de lui, qui est alors intact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    from: Option<PathBuf>,
+}
+
+impl Location {
+    /// Dossier à utiliser : la destination si elle existe et que la copie est complète ou que
+    /// l'ancien dossier a disparu (renommage), sinon l'ancien dossier d'un déplacement interrompu.
+    fn resolve(self) -> Option<PathBuf> {
+        match self.from {
+            Some(from) if from.is_dir() && !self.root.join(COPIED).is_file() => Some(from),
+            _ => self.root.is_dir().then_some(self.root),
+        }
+    }
 }
 
 fn file(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|dir| dir.join(FILE))
+}
+
+/// Écriture atomique : l'ancienne adresse reste lisible tant que la nouvelle n'est pas complète.
+fn write_location(path: &Path, location: &Location) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, serde_json::to_vec(location).expect("emplacement sérialisable"))?;
+    std::fs::rename(temporary, path)
 }
 
 /// Dossier choisi par le joueur, s'il existe encore ; sinon l'emplacement par défaut.
@@ -33,7 +61,7 @@ pub fn custom_root(app: &AppHandle) -> Option<PathBuf> {
     static ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
     ROOT.get_or_init(|| {
         let location: Location = serde_json::from_slice(&std::fs::read(file(app)?).ok()?).ok()?;
-        location.root.is_dir().then_some(location.root)
+        location.resolve()
     })
     .clone()
 }
@@ -88,9 +116,31 @@ fn canonical(path: &Path) -> PathBuf {
     resolved
 }
 
+/// Lien symbolique ou jonction : la copie ne le suivrait pas, l'original supprimé l'emporterait.
+fn is_link(entry: &std::fs::DirEntry) -> std::io::Result<bool> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const REPARSE_POINT: u32 = 0x400;
+        Ok(entry.metadata()?.file_attributes() & REPARSE_POINT != 0)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(entry.file_type()?.is_symlink())
+    }
+}
+
+/// Liste les fichiers de `dir` ; un lien symbolique (un `saves` ou un `mods` lié ailleurs) fait
+/// refuser le déplacement entre disques plutôt que de le perdre.
 fn files(dir: &Path, out: &mut Vec<(PathBuf, u64)>) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
+        if is_link(&entry)? {
+            return Err(std::io::Error::other(format!(
+                "{} est un lien vers un autre dossier, impossible à copier sur un autre disque. Remplace-le par un vrai dossier, puis recommence.",
+                entry.path().display()
+            )));
+        }
         let kind = entry.file_type()?;
         if kind.is_dir() {
             files(&entry.path(), out)?;
@@ -136,6 +186,10 @@ fn relocate(from: &Path, to: &Path, progress: &dyn Fn(f64)) -> std::io::Result<(
         return Err(error);
     }
     // Copie complète : l'original peut partir. Un fichier qui résiste ne remet pas la copie en cause.
+    if let Err(error) = std::fs::write(to.join(COPIED), b"") {
+        let _ = std::fs::remove_dir_all(to);
+        return Err(error);
+    }
     if let Err(error) = std::fs::remove_dir_all(from) {
         eprintln!("[dossier] ancien dossier pas entièrement supprimé : {error}");
     }
@@ -169,18 +223,38 @@ pub async fn move_game_dir(chosen: String, app: AppHandle, state: State<'_, AppS
     let location = file(&app).ok_or("Dossier de configuration introuvable.")?;
     let handle = app.clone();
     let moved = target.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    // Nouvelle adresse notée avant le déplacement, avec l'ancien dossier : un arrêt en plein milieu
+    // ne laisse pas le launcher repartir sur un dossier vide.
+    let previous = std::fs::read(&location).ok();
+    write_location(&location, &Location { root: target.clone(), from: Some(current.clone()) }).map_err(|e| format!("Adresse non enregistrée, rien n'a changé : {e}"))?;
+    let restore = || match &previous {
+        Some(bytes) => {
+            let _ = std::fs::write(&location, bytes);
+        }
+        None => {
+            let _ = std::fs::remove_file(&location);
+        }
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
         relocate(&current, &moved, &|ratio| {
             let _ = handle.emit("move-progress", ratio);
         })
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| format!("Déplacement annulé, rien n'a changé : {e}"))?;
-    if let Some(parent) = location.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string());
+    if let Err(error) = result.and_then(|moved| moved.map_err(|e| format!("Déplacement annulé, rien n'a changé : {e}"))) {
+        restore();
+        return Err(error);
     }
-    std::fs::write(&location, serde_json::to_vec(&Location { root: target }).expect("emplacement sérialisable")).map_err(|e| e.to_string())?;
+    // Validation : l'adresse définitive est relue avant de redémarrer dessus.
+    let confirmed = write_location(&location, &Location { root: target.clone(), from: None })
+        .ok()
+        .and_then(|()| serde_json::from_slice::<Location>(&std::fs::read(&location).ok()?).ok())
+        .is_some_and(|saved| saved.root == target && saved.from.is_none());
+    if !confirmed {
+        return Err(format!("Le dossier a été déplacé dans {}, mais son adresse n'a pas pu être enregistrée. Relance le launcher.", target.display()));
+    }
+    let _ = std::fs::remove_file(target.join(COPIED));
     app.restart()
 }
 
@@ -212,6 +286,38 @@ mod tests {
         assert!(destination(&elsewhere, &current).is_err());
         for dir in [current, elsewhere] {
             std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn an_interrupted_move_falls_back_to_the_original_folder() {
+        let (from, to) = (temp("from"), temp("to"));
+        let location = || Location { root: to.clone(), from: Some(from.clone()) };
+        assert_eq!(location().resolve(), Some(from.clone()));
+        std::fs::write(to.join(COPIED), "").unwrap();
+        assert_eq!(location().resolve(), Some(to.clone()));
+        std::fs::remove_dir_all(&from).unwrap();
+        std::fs::remove_file(to.join(COPIED)).unwrap();
+        assert_eq!(location().resolve(), Some(to.clone()));
+        assert_eq!(Location { root: to.clone(), from: None }.resolve(), Some(to.clone()));
+        std::fs::remove_dir_all(to).unwrap();
+    }
+
+    #[test]
+    fn a_linked_folder_refuses_the_cross_disk_copy() {
+        let from = temp("linked");
+        let outside = temp("outside");
+        std::fs::write(outside.join("level.dat"), "monde").unwrap();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_dir(&outside, from.join("saves")).is_ok();
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&outside, from.join("saves")).is_ok();
+        if linked {
+            let error = files(&from, &mut Vec::new()).unwrap_err();
+            assert!(error.to_string().contains("lien"), "{error}");
+        }
+        for dir in [from, outside] {
+            let _ = std::fs::remove_dir_all(dir);
         }
     }
 

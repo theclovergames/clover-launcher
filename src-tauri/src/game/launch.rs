@@ -32,14 +32,44 @@ pub const OPTIMIZED_JAVA_ARGS: &[&str] = &[
     "-XX:G1HeapRegionSize=32M",
 ];
 
+/// Découpe une ligne d'arguments sur les espaces ; des guillemets doubles groupent (`-Dx="a b"` →
+/// `-Dx=a b`). Pas d'échappement par `\` : un chemin Windows (`C:\java\agent.jar`) reste intact.
+fn split_arguments(line: &str) -> Vec<String> {
+    let mut arguments = Vec::new();
+    let mut current = String::new();
+    let (mut quoted, mut started) = (false, false);
+    for character in line.chars() {
+        match character {
+            '"' => {
+                quoted = !quoted;
+                started = true;
+            }
+            character if character.is_whitespace() && !quoted => {
+                if started {
+                    arguments.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            character => {
+                current.push(character);
+                started = true;
+            }
+        }
+    }
+    if started {
+        arguments.push(current);
+    }
+    arguments
+}
+
 /// Arguments Java d'un lancement : les optimisés si demandés, puis ceux du launcher, puis ceux de
 /// l'instance. Un ramasse-miettes choisi à la main (`-XX:+UseZGC`…) remplace les optimisés : Java
 /// refuse d'en avoir deux.
 pub fn java_arguments(optimized: bool, launcher: &str, instance: &str) -> Vec<String> {
-    let chosen: Vec<&str> = launcher.split_whitespace().chain(instance.split_whitespace()).collect();
+    let chosen: Vec<String> = split_arguments(launcher).into_iter().chain(split_arguments(instance)).collect();
     let own_collector = chosen.iter().any(|argument| argument.starts_with("-XX:+Use") && argument.ends_with("GC"));
     let optimized = if optimized && !own_collector { OPTIMIZED_JAVA_ARGS } else { &[] };
-    optimized.iter().copied().chain(chosen).map(str::to_owned).collect()
+    optimized.iter().copied().map(str::to_owned).chain(chosen).collect()
 }
 
 /// Où Quick Play fait entrer le jeu dès son ouverture, au lieu du menu.
@@ -270,6 +300,12 @@ mod tests {
         assert!(old.windows(4).any(|window| window == ["--width", "1280", "--height", "720"]));
         assert!(!old.contains(&"--graphicsBackend".into()));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn quoted_java_arguments_stay_in_one_piece() {
+        assert_eq!(split_arguments(r#"-Dx="a b" -Dy=C:\java\agent.jar  -Xss2M"#), ["-Dx=a b", r"-Dy=C:\java\agent.jar", "-Xss2M"]);
+        assert_eq!(java_arguments(false, r#"-Dx="a b""#, ""), ["-Dx=a b"]);
     }
 
     #[test]

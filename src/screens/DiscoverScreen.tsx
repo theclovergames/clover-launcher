@@ -11,7 +11,7 @@ import { Tabs } from "@/components/Tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
-import { CATEGORIES, CONTENT_KINDS, type ContentKind, KIND_ORDER, kindAllowed, LOADER_FILTERS, sortsFor } from "@/lib/content-kinds";
+import { CATEGORIES, CONTENT_KINDS, type ContentKind, installKey, KIND_ORDER, kindAllowed, LOADER_FILTERS, sortsFor } from "@/lib/content-kinds";
 import { opensWorldsDirectly, preferredModpackVersion } from "@/lib/game-versions";
 import { modLoader } from "@/lib/instances";
 import type { OpenProject, Route } from "@/lib/routes";
@@ -53,6 +53,10 @@ type Props = {
    * `version` : celle du modpack choisie sur sa page ; la dernière stable sans elle.
    */
   onInstall: (kind: ContentKind, projectId: string, instance: string, world?: string, version?: string) => Promise<string | void>;
+  /** Installations en cours (`installKey`), tenues par `App` : elles survivent à un retour sur cet écran. */
+  installing: ReadonlySet<string>;
+  /** Change après chaque installation, même finie après un départ de cet écran : les « installés » sont relus. */
+  contentRevision?: number;
   /** Versions installables d'un modpack, pour en choisir une sur sa page. */
   modpackVersions: (project: string) => Promise<ModpackVersion[]>;
   /** Mondes de l'instance, cibles des datapacks. */
@@ -76,7 +80,7 @@ type Results = { key: string; hits: ModrinthHit[]; total: number } | { key: stri
  * Le texte et les filtres de chaque type restent quand on va et vient entre la liste et une page.
  */
 export function DiscoverScreen(props: Props) {
-  const { route, instances, defaultTarget, installed, search, onInstall, modpackVersions, worlds, progress, load, onPlayWorld, onOpenLink } = props;
+  const { route, instances, defaultTarget, installed, search, onInstall, installing, contentRevision, modpackVersions, worlds, progress, load, onPlayWorld, onOpenLink } = props;
   const kind = route.kind;
   const text = CONTENT_KINDS[kind];
   // Mods et shaders demandent un loader : une instance Vanilla visée cède la place à une autre.
@@ -98,12 +102,15 @@ export function DiscoverScreen(props: Props) {
   const [results, setResults] = useState<Results | null>(null);
   const [loading, setLoading] = useState(false);
   const [installedSet, setInstalledSet] = useState<{ key: string; projects: Set<string> } | null>(null);
-  const [installing, setInstalling] = useState<Set<string>>(new Set());
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [failed, setFailed] = useState<Record<string, string>>({});
   /** Dossier de chaque monde installé ici, pour y jouer aussitôt. */
   const [played, setPlayed] = useState<Record<string, string>>({});
-  const [worldList, setWorldList] = useState<ContentEntry[] | null>(null);
+  /** Mondes de l'instance visée ; ceux d'une autre instance ne sont jamais proposés. */
+  const [worldState, setWorldState] = useState<{ instance: string; list: ContentEntry[] } | null>(null);
+  const worldList = worldState?.instance === id ? worldState.list : null;
+  /** Erreur de « Voir plus » : la liste déjà chargée reste affichée. */
+  const [moreError, setMoreError] = useState<{ key: string; message: string } | null>(null);
   const [imported, setImported] = useState<{ busy: true } | { busy: false; result?: ImportedModpack; error?: string } | null>(null);
   /** Versions du modpack ouvert (`null` : en lecture), et celle choisie pour chaque modpack. */
   const [packVersions, setPackVersions] = useState<{ project: string; list: ModpackVersion[] | null; error?: string } | null>(null);
@@ -120,6 +127,7 @@ export function DiscoverScreen(props: Props) {
   const run = useCallback(async (key: string, searched: ContentKind, value: string, chosen: SearchFilters, offset: number, into: string) => {
     latest.current = key;
     setLoading(true);
+    setMoreError(null);
     try {
       const page = await search(searched, value, chosen, offset, into);
       if (latest.current !== key) return;
@@ -130,7 +138,10 @@ export function DiscoverScreen(props: Props) {
           : { key, hits: page.hits, total: page.totalHits },
       );
     } catch (reason) {
-      if (latest.current === key) setResults({ key, error: String(reason) });
+      if (latest.current !== key) return;
+      // « Voir plus » en échec : on garde les résultats et on affiche l'erreur dessous.
+      if (offset > 0) setMoreError({ key, message: String(reason) });
+      else setResults({ key, error: String(reason) });
     } finally {
       if (latest.current === key) setLoading(false);
     }
@@ -161,8 +172,8 @@ export function DiscoverScreen(props: Props) {
     if (kind !== "datapack" || !id) return;
     let alive = true;
     worlds(id)
-      .then((list) => alive && setWorldList(list))
-      .catch(() => alive && setWorldList([]));
+      .then((list) => alive && setWorldState({ instance: id, list }))
+      .catch(() => alive && setWorldState({ instance: id, list: [] }));
     return () => {
       alive = false;
     };
@@ -178,16 +189,15 @@ export function DiscoverScreen(props: Props) {
     return () => {
       alive = false;
     };
-  }, [allowed, id, kind, world, installedKey, installed]);
+  }, [allowed, id, kind, world, installedKey, installed, contentRevision]);
 
-  /** Une installation par instance (et par monde pour un datapack). */
-  const keyOf = (projectId: string) => `${id}:${kind}:${projectId}${kind === "datapack" ? `:${world}` : ""}`;
+  const keyOf = (projectId: string) => installKey(kind, projectId, id, world);
   const installedHere = installedSet?.key === installedKey ? installedSet.projects : null;
   const isDone = (hit: ModrinthHit) => Boolean(hit.providedByClover) || Boolean(installedHere?.has(hit.projectId)) || added.has(keyOf(hit.projectId));
 
   const install = async (hit: ModrinthHit, version?: string) => {
     const key = keyOf(hit.projectId);
-    setInstalling((current) => new Set(current).add(key));
+    if (installing.has(key)) return;
     setFailed(({ [key]: _, ...rest }) => rest);
     try {
       const folder = await onInstall(kind, hit.projectId, id, world ?? undefined, version);
@@ -195,12 +205,6 @@ export function DiscoverScreen(props: Props) {
       if (kind === "world" && folder) setPlayed((current) => ({ ...current, [key]: folder }));
     } catch (reason) {
       setFailed((current) => ({ ...current, [key]: String(reason) }));
-    } finally {
-      setInstalling((current) => {
-        const next = new Set(current);
-        next.delete(key);
-        return next;
-      });
     }
   };
 
@@ -446,6 +450,12 @@ export function DiscoverScreen(props: Props) {
           </p>
         ) : current && "error" in current ? (
           <p className="px-3 py-10 text-center text-sm text-error">{current.error}</p>
+        ) : !current ? (
+          // Frappe en attente (300 ms) ou première recherche : pas de « Aucun résultat » qui clignote.
+          <p role="status" className="flex items-center justify-center gap-2 px-3 py-10 text-sm text-muted-foreground">
+            <LoaderCircle className="size-4 animate-spin" aria-hidden />
+            Recherche…
+          </p>
         ) : hits.length === 0 && !loading ? (
           <p className="px-3 py-10 text-center text-sm text-muted-foreground">Aucun résultat{kind === "modpack" ? "" : ` pour Minecraft ${minecraft}`}.</p>
         ) : (
@@ -453,7 +463,7 @@ export function DiscoverScreen(props: Props) {
             {hits.map((hit) => {
               const error = failed[keyOf(hit.projectId)];
               return (
-                <li key={hit.projectId} className="relative flex items-center gap-4 px-4 py-3">
+                <li key={hit.projectId} className="relative flex items-center gap-4 px-4 py-3 [contain-intrinsic-size:auto_76px] [content-visibility:auto]">
                   <button
                     type="button"
                     onClick={() => props.onOpenProject({ id: hit.projectId, title: hit.title, icon: hit.iconUrl })}
@@ -467,7 +477,7 @@ export function DiscoverScreen(props: Props) {
                       {hit.author && <span className="shrink-0 text-[11px] font-normal text-muted-foreground">par {hit.author}</span>}
                     </p>
                     <p className="line-clamp-2 text-xs leading-snug text-muted-foreground">{hit.description}</p>
-                    <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-[11px] text-muted-foreground/70">
+                    <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-[11px] text-muted-foreground">
                       <Download className="size-3" aria-hidden />
                       {number.format(hit.downloads)} téléchargements
                       {hit.size != null && ` · ${formatSize(hit.size)}`}
@@ -482,7 +492,8 @@ export function DiscoverScreen(props: Props) {
           </ul>
         )}
 
-        {loading && (
+        {moreError?.key === searchKey && <p role="alert" className="px-3 py-3 text-center text-sm text-error">{moreError.message}</p>}
+        {loading && hits.length > 0 && (
           <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
             <LoaderCircle className="size-4 animate-spin" aria-hidden />
             Recherche…
@@ -491,7 +502,7 @@ export function DiscoverScreen(props: Props) {
         {!loading && current && "hits" in current && hits.length < current.total && (
           <div className="flex justify-center py-3">
             <button type="button" onClick={() => void run(searchKey, kind, query, searchFilters, hits.length, id)} className={secondaryButton}>
-              Voir plus
+              {moreError?.key === searchKey ? "Réessayer" : "Voir plus"}
             </button>
           </div>
         )}

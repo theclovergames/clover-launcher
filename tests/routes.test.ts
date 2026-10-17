@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { back, canGoBack, type Names, type Route, trail } from "../src/lib/routes.ts";
+import { back, canGoBack, type Names, openFromCrumb, type Route, trail } from "../src/lib/routes.ts";
 
 const names: Names = {
   tab: (tab) => ({ instances: "Instances", discover: "Découvrir", home: "Accueil" })[tab as string] ?? tab,
@@ -43,4 +43,12 @@ test("le fil d'Ariane suit la page ouverte", () => {
 test("la version voulue pour un modpack reste en revenant à la liste", () => {
   const pack: Route = { tab: "discover", kind: "modpack", minecraft: "1.20.1", project: { id: "p", title: "P", icon: null } };
   assert.deepEqual(back([pack]), [{ tab: "discover", kind: "modpack", target: undefined, world: undefined, minecraft: "1.20.1" }]);
+});
+
+test("un maillon du fil d'Ariane dépile la pile jusqu'à sa page", () => {
+  const instances: Route = { tab: "instances" };
+  const stack: Route[] = [{ tab: "home" }, instances, { tab: "instances", instance: "x" }, { tab: "instances", instance: "x", section: "mods" }];
+  assert.deepEqual(openFromCrumb(stack, instances), [{ tab: "home" }, instances]);
+  const other: Route = { tab: "discover", kind: "mod" };
+  assert.deepEqual(openFromCrumb(stack, other), [...stack.slice(0, -1), other]);
 });

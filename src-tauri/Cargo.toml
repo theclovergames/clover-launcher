@@ -35,6 +35,7 @@ futures-util = "0.3.34"
 sha1 = "0.11.0"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 ed25519-dalek = "2"
+semver = "1"
 discord-rich-presence = "1.1.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 tauri-plugin-autostart = "2.6.0"

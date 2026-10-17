@@ -50,6 +50,10 @@ export const CONTENT_KINDS: Record<ContentKind, { label: string; hint: (minecraf
   },
 };
 
+/** Une installation par instance, et par monde pour un datapack. */
+export const installKey = (kind: ContentKind, project: string, instance: string, world?: string | null) =>
+  `${instance}:${kind}:${project}${kind === "datapack" ? `:${world}` : ""}`;
+
 export const KIND_ORDER: ContentKind[] = ["mod", "shader", "resourcepack", "datapack", "world", "modpack"];
 
 /** Mods et shaders se chargent par un loader : pas sur une instance Vanilla. */

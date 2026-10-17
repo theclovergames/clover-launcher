@@ -123,7 +123,7 @@ pub(crate) async fn install_version(
             continue;
         }
         if let Some(resolved) = library.resolve() {
-            let path = paths.libraries.join(&resolved.path);
+            let path = super::forge::safe_join(&paths.libraries, &resolved.path)?;
             classpath.push(path.clone());
             if resolved.url.is_empty() {
                 generated.push(path);
@@ -138,7 +138,7 @@ pub(crate) async fn install_version(
             }
         }
         if let Some(native) = library.native() {
-            let path = paths.libraries.join(&native.path);
+            let path = super::forge::safe_join(&paths.libraries, &native.path)?;
             native_archives.push((path.clone(), library.extract.as_ref().map_or_else(Vec::new, |extract| extract.exclude.clone())));
             downloads.push(Download { url: native.url, path, checksum: native.sha1.map(Checksum::Sha1), size: native.size, executable: false });
         }
@@ -284,10 +284,32 @@ pub async fn download_size(http: &reqwest::Client, paths: &Paths, minecraft: &st
     Ok(total)
 }
 
+/// Dossier de `versions/` du profil de Fabric ou de Quilt (`name` : `fabric-loader`, `quilt-loader`).
+fn meta_id(name: &str, minecraft: &str, loader: &str) -> String {
+    format!("{name}-{loader}-{minecraft}")
+}
+
+/// Dossiers de `versions/` qu'une installation avec ce loader utilise, en plus de Minecraft : à
+/// garder au nettoyage. Fabric et Quilt ont un id connu d'avance ; celui de Forge et de NeoForge vient
+/// de l'installateur (`1.20.1-forge-47.2.0`, `neoforge-21.1.77`…), on retient donc les versions
+/// installées qui portent la version du loader.
+pub(crate) fn loader_version_ids(loader: Option<Loader<'_>>, minecraft: &str, installed: &[String]) -> Vec<String> {
+    match loader {
+        Some(Loader::Fabric(version)) => vec![meta_id("fabric-loader", minecraft, version)],
+        Some(Loader::Quilt(version)) => vec![meta_id("quilt-loader", minecraft, version)],
+        Some(Loader::Forge(version) | Loader::NeoForge(version)) => installed
+            .iter()
+            .filter(|id| id.to_lowercase().contains("forge") && id.contains(version))
+            .cloned()
+            .collect(),
+        None => vec![],
+    }
+}
+
 /// Profil de lancement de Fabric ou de Quilt (`name` : `fabric-loader`, `quilt-loader`), gardé
 /// dans les versions après le premier téléchargement.
 async fn meta_json(http: &reqwest::Client, paths: &Paths, meta: &str, name: &str, minecraft: &str, loader: &str) -> Result<VersionJson> {
-    let id = format!("{name}-{loader}-{minecraft}");
+    let id = meta_id(name, minecraft, loader);
     let path = paths.versions.join(&id).join(format!("{id}.json"));
     if tokio::fs::metadata(&path).await.is_err() {
         let url = format!("{meta}/{minecraft}/{loader}/profile/json");
@@ -389,6 +411,17 @@ mod instance_tests {
         }
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn the_kept_versions_cover_every_loader() {
+        let installed: Vec<String> = ["1.20.1-forge-47.2.0", "1.20.1-forge-47.1.0", "neoforge-21.1.77", "neoforge-21.1.1", "fabric-loader-0.16.0-1.21.1", "1.21.1"].map(str::to_owned).into();
+        let ids = |loader, minecraft| loader_version_ids(Some(loader), minecraft, &installed);
+        assert_eq!(ids(Loader::Fabric("0.16.0"), "1.21.1"), ["fabric-loader-0.16.0-1.21.1"]);
+        assert_eq!(ids(Loader::Quilt("0.26.0"), "1.20.1"), ["quilt-loader-0.26.0-1.20.1"]);
+        assert_eq!(ids(Loader::Forge("47.2.0"), "1.20.1"), ["1.20.1-forge-47.2.0"]);
+        assert_eq!(ids(Loader::NeoForge("21.1.77"), "1.21.1"), ["neoforge-21.1.77"]);
+        assert!(loader_version_ids(None, "1.21.1", &installed).is_empty());
+    }
+
     #[tokio::test]
     #[ignore = "profil officiel de Quilt, réseau requis"]
     async fn reads_the_quilt_profile() {

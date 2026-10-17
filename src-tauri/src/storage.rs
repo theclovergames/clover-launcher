@@ -95,14 +95,15 @@ fn unused_versions(root: &Path, keep: &HashSet<String>) -> Vec<(PathBuf, u64)> {
     let mut runtimes = HashSet::new();
     for id in keep {
         let json = root.join("versions").join(id).join(format!("{id}.json"));
-        let component = std::fs::read(json)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-            .and_then(|version| version["javaVersion"]["component"].as_str().map(str::to_owned));
-        // Une version au JSON illisible pourrait demander n'importe quel runtime : on les garde tous.
+        let version = std::fs::read(json).ok().and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+        let component = version.as_ref().and_then(|version| version["javaVersion"]["component"].as_str().map(str::to_owned));
+        // Un profil de loader (Fabric, Quilt, Forge, NeoForge) prend le runtime de la version dont il
+        // hérite, gardée elle aussi. Une version au JSON illisible pourrait demander n'importe quel
+        // runtime : on les garde tous.
         match component {
             Some(component) => runtimes.insert(component),
-            None if root.join("versions").join(id).is_dir() && !id.starts_with("fabric-loader-") => return Vec::new(),
+            None if version.as_ref().is_some_and(|version| version["inheritsFrom"].is_string()) => false,
+            None if root.join("versions").join(id).is_dir() => return Vec::new(),
             None => false,
         };
     }
@@ -172,7 +173,9 @@ mod tests {
             std::fs::write(path, text).unwrap();
         };
         write(root.join("versions/26.2/26.2.json"), r#"{"javaVersion":{"component":"java-runtime-epsilon"}}"#);
-        write(root.join("versions/fabric-loader-0.19.5-26.2/fabric-loader-0.19.5-26.2.json"), "{}");
+        write(root.join("versions/fabric-loader-0.19.5-26.2/fabric-loader-0.19.5-26.2.json"), r#"{"inheritsFrom":"26.2"}"#);
+        write(root.join("versions/quilt-loader-0.30.0-26.2/quilt-loader-0.30.0-26.2.json"), r#"{"inheritsFrom":"26.2"}"#);
+        write(root.join("versions/26.2-forge-62.0.1/26.2-forge-62.0.1.json"), r#"{"inheritsFrom":"26.2"}"#);
         write(root.join("versions/1.21.4/1.21.4.json"), r#"{"javaVersion":{"component":"java-runtime-delta"}}"#);
         write(root.join("versions/fabric-loaders-26.2.json"), "[]");
         write(root.join("natives/fabric-loader-0.19.5-26.2/a.dll"), "x");
@@ -180,7 +183,7 @@ mod tests {
         write(root.join("runtimes/java-runtime-epsilon/bin/java"), "x");
         write(root.join("runtimes/java-runtime-delta/bin/java"), "x");
 
-        let keep: HashSet<String> = ["26.2", "fabric-loader-0.19.5-26.2"].map(str::to_owned).into();
+        let keep: HashSet<String> = ["26.2", "fabric-loader-0.19.5-26.2", "quilt-loader-0.30.0-26.2", "26.2-forge-62.0.1"].map(str::to_owned).into();
         let mut found: Vec<String> = unused_versions(&root, &keep).into_iter().map(|(path, _)| path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/")).collect();
         found.sort();
         assert_eq!(found, ["natives/1.21.4", "runtimes/java-runtime-delta", "versions/1.21.4"]);
