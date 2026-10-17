@@ -13,7 +13,6 @@ use super::quick_play;
 use super::version::expand;
 use super::{auto_memory_mb, GameError, LaunchOptions, Paths, Result};
 use crate::auth::Session;
-use crate::store::RecentServer;
 
 /// Le jeu remplace son journal Quick Play à chaque connexion : le relire assez souvent pour ne
 /// manquer aucun serveur rejoint pendant la partie.
@@ -168,7 +167,7 @@ pub async fn spawn(
     session: &Session,
     quick_play: Option<&QuickPlay>,
     options: &LaunchOptions,
-    on_join: impl Fn(RecentServer) + Send + 'static,
+    on_join: impl Fn(quick_play::Joined) + Send + 'static,
 ) -> Result<()> {
     let arguments = build_arguments(paths, &installation, session, quick_play, options)?;
     let Installation { java, vanilla, loader, .. } = installation;
@@ -178,6 +177,7 @@ pub async fn spawn(
     tokio::fs::create_dir_all(&paths.logs).await?;
     // Écrit ligne par ligne : le fichier reste à jour pendant la partie.
     let output = LineWriter::new(std::fs::File::create(&paths.game_output)?);
+    let started = std::time::SystemTime::now();
     let mut child = tokio::process::Command::new(&java)
         .args(&arguments)
         .current_dir(&paths.game)
@@ -214,7 +214,7 @@ pub async fn spawn(
                     eprintln!("[game] fermeture forcée de Minecraft ({instance})");
                     let _ = child.start_kill();
                 }
-                _ = poll.tick() => quick_play::last_server(&log).into_iter().for_each(&on_join),
+                _ = poll.tick() => quick_play::joined_since(&log, started).into_iter().for_each(&on_join),
             }
         };
         // Fin de la sortie lue avant d'annoncer la fermeture : l'écran de plantage la montre. Un
@@ -222,7 +222,7 @@ pub async fn spawn(
         if !captured {
             let _ = tokio::time::timeout(OUTPUT_GRACE, capture).await;
         }
-        quick_play::last_server(&log).into_iter().for_each(&on_join);
+        quick_play::joined_since(&log, started).into_iter().for_each(&on_join);
         eprintln!("[game] Minecraft fermé ({instance}, code {code:?})");
         game.finish(code);
         app.state::<crate::history::History>().finish(&root, &instance, code);

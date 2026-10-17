@@ -1332,7 +1332,7 @@ pub async fn play_personal(
     options: game::LaunchOptions,
     instance: &Instance,
     world: Option<String>,
-    on_join: impl Fn(crate::store::RecentServer) + Send + 'static,
+    on_join: impl Fn(game::quick_play::Joined) + Send + 'static,
 ) -> game::Result<()> {
     use tauri::Emitter;
     let paths = paths(Paths::new(app)?, instance)?;

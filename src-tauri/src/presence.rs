@@ -82,6 +82,20 @@ impl Presence {
         }
     }
 
+    /// Connexion de la partie en cours, sur Clover Games ou ailleurs. Relue toutes les 5 s : ne
+    /// republie que si elle change, et garde l'heure de début.
+    pub async fn set_clover(&self, clover: bool) {
+        let mut inner = self.inner.lock().await;
+        let Some(State::Playing { since, clover: current }) = inner.state else { return };
+        if current == clover {
+            return;
+        }
+        inner.state = Some(State::Playing { since, clover });
+        if inner.enabled {
+            inner.publish();
+        }
+    }
+
     /// Reconnecte le statut si Discord est ouvert après le launcher ou redémarré, toutes les 30 s,
     /// pour toujours : à lancer une fois au démarrage.
     pub async fn keep_alive(&self) {
@@ -130,6 +144,13 @@ impl Inner {
     }
 }
 
+/// Adresse d'un serveur Clover Games : `play.clovergames.fr` ou un mode
+/// (`bedwars.play.clovergames.fr`), avec ou sans port.
+pub fn is_clover_address(address: &str) -> bool {
+    let host = address.rsplit_once(':').map_or(address, |(host, _)| host).trim_end_matches('.').to_ascii_lowercase();
+    host == "clovergames.fr" || host.ends_with(".clovergames.fr")
+}
+
 fn activity(state: State, player: Option<&Player>) -> Activity<'static> {
     let mut assets = Assets::new().large_image(LOGO_KEY).large_text("Clover Games");
     if let Some(player) = player {
@@ -165,6 +186,25 @@ mod tests {
         let _ = activity(State::Launcher, None);
         let _ = activity(State::Playing { since: 1_790_000_000, clover: true }, Some(&player));
         let _ = activity(State::Playing { since: 1_790_000_000, clover: false }, Some(&player));
+    }
+
+    #[test]
+    fn recognises_clover_addresses() {
+        assert!(is_clover_address("play.clovergames.fr"));
+        assert!(is_clover_address("Bedwars.Play.CloverGames.fr:25565"));
+        assert!(!is_clover_address("mc.hypixel.net"));
+        assert!(!is_clover_address("clovergames.fr.example.com"));
+        assert!(!is_clover_address("notclovergames.fr"));
+    }
+
+    #[tokio::test]
+    async fn joined_server_updates_the_game_state_only() {
+        let presence = Presence::default();
+        presence.set_clover(false).await;
+        assert_eq!(presence.inner.lock().await.state, None);
+        presence.set_state(State::Playing { since: 1_790_000_000, clover: true }).await;
+        presence.set_clover(false).await;
+        assert_eq!(presence.inner.lock().await.state, Some(State::Playing { since: 1_790_000_000, clover: false }));
     }
 
     #[tokio::test]

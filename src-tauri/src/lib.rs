@@ -867,7 +867,12 @@ async fn play(
         }
         (None, None) => mode.map_or(game::Destination::Menu, game::Destination::Mode),
     };
-    let clover = instance.kind == instances::Kind::Clover && matches!(destination, game::Destination::Menu | game::Destination::Mode(_));
+    // Statut Discord du départ ; chaque connexion de la partie le corrige ensuite (`on_join`).
+    let clover = match &destination {
+        game::Destination::Server(address) => presence::is_clover_address(address),
+        game::Destination::World(_) => false,
+        game::Destination::Menu | game::Destination::Mode(_) => instance.kind == instances::Kind::Clover,
+    };
     let settings = stored.settings;
     let options = game::LaunchOptions {
         memory_mb: instance.memory_mb.or_else(|| (!settings.memory_auto).then(|| u64::from(settings.memory_gb) * 1024)),
@@ -886,9 +891,14 @@ async fn play(
     };
     let handle = app.clone();
     let joined = instance.id.clone();
-    let on_join = move |server: store::RecentServer| {
-        handle.state::<history::History>().join(&handle.state::<AppState>().root, &joined, &server.address);
-        handle.state::<AppState>().remember_server(server);
+    let on_join = move |connection: game::quick_play::Joined| {
+        let clover = matches!(&connection, game::quick_play::Joined::Server(server) if presence::is_clover_address(&server.address));
+        let presence = handle.clone();
+        tauri::async_runtime::spawn(async move { presence.state::<Presence>().set_clover(clover).await });
+        if let game::quick_play::Joined::Server(server) = connection {
+            handle.state::<history::History>().join(&handle.state::<AppState>().root, &joined, &server.address);
+            handle.state::<AppState>().remember_server(server);
+        }
     };
     // Notée avant le lancement : le jeu peut se fermer avant que `play` ne rende la main.
     app.state::<history::History>().begin(&state.root, &instance.id);
