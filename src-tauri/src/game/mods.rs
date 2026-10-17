@@ -44,7 +44,7 @@ pub async fn sync(
     let mut entries = tokio::fs::read_dir(mods_dir).await?;
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.ends_with(".jar") && !catalogue.contains(name.as_str()) {
+        if name.to_ascii_lowercase().ends_with(".jar") &&!catalogue.contains(name.as_str()) {
             tokio::fs::remove_file(entry.path()).await?;
         }
     }

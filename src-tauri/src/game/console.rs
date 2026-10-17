@@ -14,6 +14,8 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
 /// Entrées gardées en mémoire ; le fichier garde toute la partie.
 const MAX_ENTRIES: usize = 10_000;
+/// Taille au-delà de laquelle un évènement log4j non refermé est émis tel quel.
+const MAX_EVENT_BYTES: usize = 256 * 1024;
 /// Au démarrage du launcher, seule la fin du journal de la dernière partie est relue.
 const RESUME_BYTES: u64 = 4 * 1024 * 1024;
 /// Remplace le jeton Minecraft s'il apparaît dans la sortie : il ne doit ni passer l'interface, ni
@@ -191,7 +193,8 @@ impl Parser {
         if let Some(event) = &mut self.event {
             event.push('\n');
             event.push_str(line);
-            return line.contains("</log4j:Event>").then(|| self.take()).flatten();
+            // Sans balise fermante, l'évènement grossirait sans limite : au-delà, on le rend tel quel.
+            return (line.contains("</log4j:Event>") || event.len() > MAX_EVENT_BYTES).then(|| self.take()).flatten();
         }
         if line.trim_start().starts_with("<log4j:Event") {
             self.event = Some(line.to_owned());
@@ -314,6 +317,15 @@ mod tests {
         assert_eq!(pack.logger.as_deref(), Some("net.minecraft.server.packs.repository.Pack"));
         assert!(pack.throwable.as_deref().unwrap().ends_with("(Pack.java:56)"));
         assert_eq!(String::from_utf8(output).unwrap().lines().count(), EVENTS.lines().count() + 2);
+    }
+
+    #[test]
+    fn an_unclosed_event_is_flushed_once_too_large() {
+        let mut parser = Parser::default();
+        assert!(parser.line("<log4j:Event logger=\"x\" level=\"INFO\">").is_none());
+        let big = "x".repeat(MAX_EVENT_BYTES);
+        assert!(parser.line(&big).is_some());
+        assert!(parser.finish().is_none());
     }
 
     #[tokio::test]
