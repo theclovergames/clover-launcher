@@ -139,8 +139,27 @@ pub struct Stored {
 }
 
 impl Stored {
+    /// Fichier absent : valeurs par défaut. Fichier illisible : copie en `.bak` avant de repartir
+    /// de ce qui est récupérable (instances lues une à une), pour qu'une sauvegarde ne l'écrase pas.
     pub fn load(path: &Path) -> Self {
-        std::fs::read(path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
+        let Ok(bytes) = std::fs::read(path) else { return Self::default() };
+        if let Ok(stored) = serde_json::from_slice(&bytes) {
+            return stored;
+        }
+        let _ = std::fs::write(path.with_extension("json.bak"), &bytes);
+        Self::salvage(&bytes)
+    }
+
+    fn salvage(bytes: &[u8]) -> Self {
+        let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(bytes) else { return Self::default() };
+        let Some(object) = value.as_object_mut() else { return Self::default() };
+        let instances: Vec<crate::instances::Instance> = match object.remove("instances") {
+            Some(serde_json::Value::Array(entries)) => entries.into_iter().filter_map(|entry| serde_json::from_value(entry).ok()).collect(),
+            _ => vec![],
+        };
+        let mut stored: Self = serde_json::from_value(value).unwrap_or_default();
+        stored.instances = instances;
+        stored
     }
 
     /// Écriture atomique : un plantage pendant l'écriture ne laisse jamais un fichier tronqué.
@@ -231,6 +250,24 @@ mod tests {
         assert_eq!(stored.settings.memory_gb, 8);
         assert!(stored.settings.keep_in_tray);
         assert!(!stored.settings.crash_reports);
+    }
+
+    #[test]
+    fn an_unreadable_file_is_backed_up_and_valid_instances_survive() {
+        let dir = std::env::temp_dir().join(format!("clover-store-bak-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = path(&dir);
+        let good = serde_json::to_value(crate::instances::Instance { id: "instance-0123456789abcdef0123456789abcdef".into(), name: "Survie".into(), ..crate::instances::Instance::builtin() }).unwrap();
+        let broken = serde_json::json!({ "settings": { "scale": "pas un nombre" }, "instances": [good, { "id": 3 }] });
+        std::fs::write(&file, broken.to_string()).unwrap();
+        let loaded = Stored::load(&file);
+        assert_eq!(loaded.instances.len(), 1);
+        assert_eq!(loaded.instances[0].name, "Survie");
+        assert_eq!(std::fs::read_to_string(file.with_extension("json.bak")).unwrap(), broken.to_string());
+        std::fs::write(&file, "{ pas du json").unwrap();
+        assert!(Stored::load(&file).instances.is_empty());
+        assert_eq!(std::fs::read_to_string(file.with_extension("json.bak")).unwrap(), "{ pas du json");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

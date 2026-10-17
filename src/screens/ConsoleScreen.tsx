@@ -123,7 +123,11 @@ export function ConsoleScreen({
     });
 
   const copy = async () => {
-    await navigator.clipboard.writeText(formatLog(shown));
+    try {
+      await navigator.clipboard.writeText(formatLog(shown));
+    } catch {
+      return;
+    }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
   };

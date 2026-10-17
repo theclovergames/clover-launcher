@@ -145,6 +145,9 @@ export default function App() {
   const [importTarget, setImportTarget] = useState<"clover" | "instance">("clover");
   const [importedInstances, setImportedInstances] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  /** Lecture des réglages impossible au démarrage : message affiché à la place du chargement figé. */
+  const [startupError, setStartupError] = useState<string | null>(null);
 
   /** Pages ouvertes, de la première à celle affichée : « Retour » dépile (voir `lib/routes.ts`). */
   const [stack, setStack] = useState<Route[]>([{ tab: "home" }]);
@@ -174,7 +177,6 @@ export default function App() {
   const personalGeneration = useRef(0);
   const [instances, setInstances] = useState<InstanceEntry[]>([]);
   const selectedInstance = stored?.selectedInstance ?? "clover";
-  const activeInstance = instances.find((entry) => entry.id === selectedInstance);
   const [instanceDraft, setInstanceDraft] = useState<InstanceDraft | null>(null);
 
   // Jeux : un lancement à la fois, plusieurs instances ouvertes ensemble.
@@ -237,17 +239,22 @@ export default function App() {
       } catch (reason) {
         error = String(reason);
       }
-      const current = await api.getStored();
-      setStored(current);
-      setConsoleInstance(current.lastLaunchedInstance ?? "clover");
-      // Fenêtre rechargée pendant une partie : les jeux ouverts restent suivis.
-      setRunning(await api.runningGames().catch(() => []));
-      setProfile(restored);
-      if (!current.onboarded) setPhase("onboarding-accounts");
-      else if (restored) setPhase("app");
-      else {
-        if (error) setLogin({ kind: "error", message: error });
-        setPhase("signin");
+      try {
+        const current = await api.getStored();
+        setStored(current);
+        setConsoleInstance(current.lastLaunchedInstance ?? "clover");
+        // Fenêtre rechargée pendant une partie : les jeux ouverts restent suivis.
+        setRunning(await api.runningGames().catch(() => []));
+        setProfile(restored);
+        if (!current.onboarded) setPhase("onboarding-accounts");
+        else if (restored) setPhase("app");
+        else {
+          if (error) setLogin({ kind: "error", message: error });
+          setPhase("signin");
+        }
+      } catch (reason) {
+        setStartupError(String(reason));
+        api.appReady().catch(() => {});
       }
     })();
     api.systemInfo().then(setSystem).catch(() => {});
@@ -264,8 +271,8 @@ export default function App() {
   // ── Fenêtre sans cadre : état agrandi ──
   useEffect(() => {
     const appWindow = getCurrentWindow();
-    appWindow.isMaximized().then(setMaximized);
-    const unlisten = appWindow.onResized(() => appWindow.isMaximized().then(setMaximized));
+    appWindow.isMaximized().then(setMaximized).catch(() => {});
+    const unlisten = appWindow.onResized(() => appWindow.isMaximized().then(setMaximized).catch(() => {}));
     return () => void unlisten.then((stop) => stop());
   }, []);
 
@@ -694,26 +701,32 @@ export default function App() {
   }, [trayAvailable, trayReady, selectedInstance, navigate, startGame]);
 
   const defaultMods = useMemo(() => (catalogue?.mods ?? []).filter((mod) => mod.default && !mod.hidden && mod.available).map((mod) => mod.id), [catalogue]);
-  const enabledIds = (selectedInstance === "clover" ? settings?.enabledMods : activeInstance?.enabledMods) ?? defaultMods;
-  const modInfos: ModInfo[] = (catalogue?.mods ?? [])
-    .filter((mod) => !mod.hidden && mod.category)
-    .map((mod) => ({
-      id: mod.id,
-      name: mod.name,
-      description: mod.description ?? "",
-      category: mod.category!,
-      version: mod.version,
-      icon: mod.icon,
-      available: mod.available,
-      enabled: enabledIds.includes(mod.id),
-    }));
+  // Le catalogue est celui de l'instance dont on ouvre la page, pas de l'instance sélectionnée.
+  const enabledIdsOf = (instanceId: string) =>
+    (instanceId === "clover" ? settings?.enabledMods : instances.find((entry) => entry.id === instanceId)?.enabledMods) ?? defaultMods;
+  const modInfosOf = (instanceId: string): ModInfo[] => {
+    const enabledIds = enabledIdsOf(instanceId);
+    return (catalogue?.mods ?? [])
+      .filter((mod) => !mod.hidden && mod.category)
+      .map((mod) => ({
+        id: mod.id,
+        name: mod.name,
+        description: mod.description ?? "",
+        category: mod.category!,
+        version: mod.version,
+        icon: mod.icon,
+        available: mod.available,
+        enabled: enabledIds.includes(mod.id),
+      }));
+  };
 
-  const toggleMod = (id: string, enabled: boolean) => {
+  const toggleMod = (instanceId: string, id: string, enabled: boolean) => {
+    const enabledIds = enabledIdsOf(instanceId);
     const next = enabled ? [...new Set([...enabledIds, id])] : enabledIds.filter((other) => other !== id);
-    if (selectedInstance === "clover") updateSettings({ enabledMods: next });
+    if (instanceId === "clover") updateSettings({ enabledMods: next });
     else {
-      setInstances((entries) => entries.map((entry) => entry.id === selectedInstance ? { ...entry, enabledMods: next } : entry));
-      api.setInstanceCatalogue(next).then(refreshInstances).catch((reason) => setNotice(String(reason)));
+      setInstances((entries) => entries.map((entry) => entry.id === instanceId ? { ...entry, enabledMods: next } : entry));
+      api.setInstanceCatalogue(next, instanceId).then(refreshInstances).catch((reason) => setNotice(String(reason)));
     }
   };
 
@@ -820,10 +833,10 @@ export default function App() {
   /** Onglet Mods de la page d'une instance : le catalogue Clover pour Clover Games, puis les mods du joueur. */
   const modsTab = (entry: InstanceEntry) => (
     <InstanceMods
-      catalogue={entry.kind === "clover" ? modInfos : undefined}
+      catalogue={entry.kind === "clover" ? modInfosOf(entry.id) : undefined}
       personal={modsOf(entry.id)}
       minecraftVersion={entry.minecraft ?? catalogue?.minecraft.version ?? ""}
-      onToggle={toggleMod}
+      onToggle={(id, enabled) => toggleMod(entry.id, id, enabled)}
       onTogglePersonal={(id, enabled) => togglePersonalMod(entry.id, id, enabled)}
       onUpdatePersonal={(id) => changePersonalMod(entry.id, api.updatePersonalMods(id, entry.id))}
       onRemovePersonal={(id) => changePersonalMod(entry.id, api.removePersonalMod(id, entry.id))}
@@ -843,7 +856,7 @@ export default function App() {
     instance: (id) => instances.find((entry) => entry.id === id)?.name ?? "Instance",
     section: sectionLabel,
     kind: (kind) => CONTENT_KINDS[kind].label,
-    mod: (mod) => (mod.list === "catalogue" ? modInfos.find((other) => other.id === mod.id)?.name : personal?.mods.find((other) => other.id === mod.id)?.name) ?? "Mod",
+    mod: (mod) => (mod.list === "catalogue" ? modInfosOf("clover").find((other) => other.id === mod.id)?.name : personal?.mods.find((other) => other.id === mod.id)?.name) ?? "Mod",
   };
 
   /** Fichiers posés pendant la création d'une instance depuis un modpack. */
@@ -1134,10 +1147,21 @@ export default function App() {
     onToggleMaximize: () => void appWindow.toggleMaximize(),
     onClose: () => void appWindow.close(),
   };
-  const open = (url: string) => void openUrl(url);
+  const open = (url: string) => void openUrl(url).catch((reason) => setNotice(`Le lien n'a pas pu être ouvert : ${reason}`));
   /** Article ouvert dans le lecteur (blog ou note de version), depuis l'accueil ou les Actualités. */
   const [reading, setReading] = useState<ReaderTarget | null>(null);
 
+  if (startupError) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4 bg-background px-10 text-center">
+        <h1 className="font-display text-[26px] leading-none">Le launcher n'a pas pu démarrer</h1>
+        <p className="max-w-[520px] text-sm text-muted-foreground">{startupError}</p>
+        <button type="button" onClick={() => window.location.reload()} className="mc-frame bg-card px-4 py-2 text-sm font-semibold">
+          Recharger
+        </button>
+      </div>
+    );
+  }
   if (phase === "loading" || !stored || !settings) {
     return <div className="h-full bg-background" />;
   }
@@ -1187,10 +1211,19 @@ export default function App() {
             crashReports={settings.crashReports}
             onCrashReports={(crashReports) => updateSettings({ crashReports })}
             onBack={() => setPhase("onboarding-import")}
+            busy={starting}
             onStart={async () => {
-              await api.finishOnboarding();
-              await refreshStored();
-              setPhase("app");
+              if (starting) return;
+              setStarting(true);
+              try {
+                await api.finishOnboarding();
+                await refreshStored();
+                setPhase("app");
+              } catch (reason) {
+                setNotice(String(reason));
+              } finally {
+                setStarting(false);
+              }
             }}
           />
         ) : (
@@ -1299,10 +1332,10 @@ export default function App() {
               <ModDetail
                 key={`${current.instance}-${current.mod.id}`}
                 open={current.mod}
-                catalogue={instances.find((entry) => entry.id === current.instance)?.kind === "clover" ? modInfos : undefined}
+                catalogue={instances.find((entry) => entry.id === current.instance)?.kind === "clover" ? modInfosOf(current.instance ?? selectedInstance) : undefined}
                 personal={modsOf(current.instance ?? selectedInstance)}
                 minecraftVersion={instances.find((entry) => entry.id === current.instance)?.minecraft ?? catalogue?.minecraft.version ?? ""}
-                onToggle={toggleMod}
+                onToggle={(id, enabled) => toggleMod(current.instance ?? selectedInstance, id, enabled)}
                 onTogglePersonal={(id, enabled) => togglePersonalMod(current.instance ?? selectedInstance, id, enabled)}
                 onUpdatePersonal={(id) => changePersonalMod(current.instance ?? selectedInstance, api.updatePersonalMods(id, current.instance))}
                 onRemovePersonal={(id) => changePersonalMod(current.instance ?? selectedInstance, api.removePersonalMod(id, current.instance))}

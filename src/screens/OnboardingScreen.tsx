@@ -599,6 +599,8 @@ type DoneProps = {
   onCrashReports: (value: boolean) => void;
   onBack: () => void;
   onStart: () => void;
+  /** « Commencer » déjà lancé : le bouton est désactivé le temps de l'enregistrement. */
+  busy?: boolean;
 };
 
 function SummaryRow({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
@@ -613,7 +615,7 @@ function SummaryRow({ icon, title, children }: { icon: ReactNode; title: string;
   );
 }
 
-export function OnboardingDone({ steps = ALL_STEPS, accounts, imports, machine, crashReports, onCrashReports, onBack, onStart }: DoneProps) {
+export function OnboardingDone({ steps = ALL_STEPS, accounts, imports, machine, crashReports, onCrashReports, onBack, onStart, busy }: DoneProps) {
   const main = accounts.find((account) => account.active) ?? accounts[0];
   return (
     <OnboardingShell
@@ -624,7 +626,7 @@ export function OnboardingDone({ steps = ALL_STEPS, accounts, imports, machine, 
           <button type="button" onClick={onBack} className={secondaryButton}>
             Retour
           </button>
-          <button type="button" onClick={onStart} className={primaryButton}>
+          <button type="button" onClick={onStart} disabled={busy} className={primaryButton}>
             Commencer
             <ArrowRight className="size-4" aria-hidden />
           </button>

@@ -358,20 +358,35 @@ async fn kept_versions(app: &AppHandle, state: &AppState) -> Option<std::collect
         return None;
     }
     let manifest = game::catalogue(app).await.ok()?;
-    let clover = (manifest.minecraft.version.clone(), Some(manifest.fabric.loader.clone()));
+    use game::install::{loader_version_ids, Loader};
+    let installed: Vec<String> = std::fs::read_dir(state.root.join("versions"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    let clover_loader = manifest.fabric.loader.as_str();
     let mut keep = std::collections::HashSet::new();
     for instance in state.snapshot().instances {
-        let (minecraft, loader) = match instance.kind {
-            instances::Kind::Clover => clover.clone(),
-            _ => (instance.minecraft?, instance.loader),
+        let (minecraft, kind, loader) = match instance.kind {
+            instances::Kind::Clover => (manifest.minecraft.version.clone(), instances::Kind::Fabric, Some(clover_loader.to_owned())),
+            kind => (instance.minecraft?, kind, instance.loader),
         };
-        if let Some(loader) = loader {
-            keep.insert(format!("fabric-loader-{loader}-{minecraft}"));
+        let version = loader.as_deref().unwrap_or_default();
+        let loader = match kind {
+            instances::Kind::Fabric => Some(Loader::Fabric(version)),
+            instances::Kind::Quilt => Some(Loader::Quilt(version)),
+            instances::Kind::Forge => Some(Loader::Forge(version)),
+            instances::Kind::NeoForge => Some(Loader::NeoForge(version)),
+            instances::Kind::Clover | instances::Kind::Vanilla => None,
         }
+        .filter(|_| !version.is_empty());
+        keep.extend(loader_version_ids(loader, &minecraft, &installed));
         keep.insert(minecraft);
     }
-    keep.insert(format!("fabric-loader-{}-{}", clover.1.unwrap_or_default(), clover.0));
-    keep.insert(clover.0);
+    keep.insert(format!("fabric-loader-{clover_loader}-{}", manifest.minecraft.version));
+    keep.insert(manifest.minecraft.version.clone());
     Some(keep)
 }
 
