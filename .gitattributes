@@ -1,0 +1,3 @@
+# Fins de ligne LF dans le dépôt, quel que soit le réglage core.autocrlf de la machine qui commit.
+* text=auto
+*.bat text eol=crlf
