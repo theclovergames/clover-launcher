@@ -1,4 +1,5 @@
-// Relais de l'API CurseForge (worker.js). Depuis ce dossier : `npx wrangler deploy`, et la clé de
+// Relais de l'API CurseForge (worker.js). Déployé par Workers Builds à chaque push sur main qui
+// touche relay/. À la main, depuis ce dossier : `npx wrangler deploy`, et la clé de
 // console.curseforge.com avec `npx wrangler secret put CURSEFORGE_API_KEY`.
 {
   "name": "clover-curseforge",

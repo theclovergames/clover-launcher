@@ -79,8 +79,9 @@ Les clés privées ne sont jamais dans le dépôt. La CI les lit dans ses secret
 `TAURI_SIGNING_PRIVATE_KEY`, `CLOVER_MANIFEST_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID` et
 `R2_SECRET_ACCESS_KEY`. Seules les clés publiques sont dans le code. La clé de l'API CurseForge
 reste dans les secrets du relais `relay/` (Worker Cloudflare sur `curseforge.clovergames.fr`) : le
-launcher n'en embarque aucune. Déploiement depuis `relay/` : `npx wrangler deploy`, et
-`npx wrangler secret put CURSEFORGE_API_KEY` pour changer la clé.
+launcher n'en embarque aucune. Workers Builds le déploie à chaque push sur `main` qui touche
+`relay/` : merger un changement du relais, c'est le mettre en production. À la main, depuis
+`relay/` : `npx wrangler deploy`, et `npx wrangler secret put CURSEFORGE_API_KEY` pour changer la clé.
 
 ## Sécurité
 
