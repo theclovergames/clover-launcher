@@ -1,4 +1,5 @@
-// Relais de l'API CurseForge (worker.js). Depuis ce dossier : `npx wrangler deploy`, et la clé de
+// Relais de l'API CurseForge (worker.js). Déployé par Workers Builds à chaque push sur main qui
+// touche relay/. À la main, depuis ce dossier : `npx wrangler deploy`, et la clé de
 // console.curseforge.com avec `npx wrangler secret put CURSEFORGE_API_KEY`.
 {
   "name": "clover-curseforge",
@@ -7,7 +8,12 @@
   "workers_dev": false,
   "routes": [{ "pattern": "curseforge.clovergames.fr", "custom_domain": true }],
   // 120 requêtes par minute et par adresse IP : une recherche en coûte une, une page de monde deux.
-  "ratelimits": [{ "name": "LIMITER", "namespace_id": "1001", "simple": { "limit": 120, "period": 60 } }],
+  // GLOBAL_LIMITER : 1200 requêtes par minute pour tout le relais, pour qu'un abus réparti sur
+  // de nombreuses adresses n'épuise pas le quota de la clé.
+  "ratelimits": [
+    { "name": "LIMITER", "namespace_id": "1001", "simple": { "limit": 120, "period": 60 } },
+    { "name": "GLOBAL_LIMITER", "namespace_id": "1002", "simple": { "limit": 1200, "period": 60 } }
+  ],
   // Journaux d'invocation (route, statut, durée) : montrent les 429 et un 403 de CurseForge si la clé tombe.
   "observability": { "logs": { "enabled": true } }
 }
