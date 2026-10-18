@@ -195,6 +195,7 @@ pub fn paths(mut paths: Paths, instance: &Instance) -> game::Result<Paths> {
             paths.game = dir.join("game");
         }
         paths.personal_mods = dir.join("personal-mods");
+        paths.clover_mods = dir.join("clover-mods");
         paths.logs = dir.join("logs");
         paths.game_output = paths.logs.join("game-output.log");
         paths.quick_play_log = dir.join("quick-play.json");

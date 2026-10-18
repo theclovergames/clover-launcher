@@ -106,6 +106,8 @@ pub struct Paths {
     pub manifest: PathBuf,
     pub game: PathBuf,
     pub mods: PathBuf,
+    /// Catalogue Clover (mod client compris), hors du dossier de jeu : chargé par `fabric.addMods`.
+    pub clover_mods: PathBuf,
     /// Mods ajoutés par le joueur (« Mes mods »), copiés dans `mods` au lancement.
     pub personal_mods: PathBuf,
     /// Journal Quick Play écrit par le jeu (voir `quick_play`).
@@ -139,6 +141,7 @@ impl Paths {
             manifest: root.join("manifest"),
             game: root.join("game"),
             mods: root.join("game").join("mods"),
+            clover_mods: root.join("clover-mods"),
             personal_mods: root.join("personal-mods"),
             quick_play_log: root.join("quick-play.json"),
         }
@@ -171,6 +174,8 @@ pub struct LaunchOptions {
     pub enabled_mods: Option<HashSet<String>>,
     /// Fichiers de « Mes mods » désactivés par le joueur.
     pub disabled_personal_mods: Vec<String>,
+    /// Jars du catalogue Clover hors de `mods/`, remplis par la synchronisation (`fabric.addMods`).
+    pub clover_mods: Vec<PathBuf>,
 }
 
 /// Quart de la mémoire du poste, borné entre 2 et 6 Go.
@@ -269,8 +274,11 @@ pub async fn play(
     if let Err(error) = apply_presets(&paths, &manifest, &installation.vanilla.id, false) {
         eprintln!("[préréglages] non appliqués : {error}");
     }
+    for name in mods::adopt_unknown(&paths.mods, &paths.personal_mods, &manifest).await? {
+        eprintln!("[mods] {name} déposé dans mods/ : transféré dans « Mes mods »");
+    }
     let personal = personal::loadable(&paths.personal_mods, &options.disabled_personal_mods, &manifest.minecraft.version, personal::ModLoader::Fabric);
-    mods::sync(&http, &paths.mods, &manifest, &enabled, &personal, &|done, total| {
+    options.clover_mods = mods::sync(&http, &paths.mods, &paths.clover_mods, &manifest, &enabled, &personal, &|done, total| {
         progress(Progress { phase: "mods", done, total })
     })
     .await?;

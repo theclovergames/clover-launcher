@@ -12,7 +12,6 @@ use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha512};
 
 use super::download::{download_all, Checksum, Download};
 use super::modrinth;
@@ -492,10 +491,7 @@ pub fn loadable(dir: &Path, disabled: &[String], minecraft: &str, loader: ModLoa
         .collect()
 }
 
-pub(crate) fn sha512(path: &Path) -> std::io::Result<String> {
-    let bytes = std::fs::read(path)?;
-    Ok(Sha512::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect())
-}
+pub(crate) use super::download::sha512;
 
 // ── Versions de Minecraft déclarées par les mods (`depends.minecraft` de `fabric.mod.json`) ──
 

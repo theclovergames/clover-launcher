@@ -882,6 +882,7 @@ async fn play(
         },
         enabled_mods: (if instance.id == instances::BUILTIN { settings.enabled_mods.as_ref() } else { instance.enabled_mods.as_ref() }).map(|mods| mods.iter().cloned().collect()),
         disabled_personal_mods: if instance.id == instances::BUILTIN { stored.disabled_personal_mods } else { instance.disabled_mods.clone() },
+        clover_mods: Vec::new(),
     };
     let handle = app.clone();
     let joined = instance.id.clone();

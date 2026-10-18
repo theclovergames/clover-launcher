@@ -396,7 +396,7 @@ mod instance_tests {
         let paths = Paths::from_root(root.clone());
         let http = super::super::download::client();
         let session = crate::auth::Session { profile: crate::auth::Profile { uuid: "test".into(), name: "Joueur".into(), skin: None, capes: vec![] }, minecraft_token: "synthetic-test-token".into(), expires_at: u64::MAX };
-        let options = crate::game::LaunchOptions { memory_mb: Some(2048), java_args: vec![], fullscreen: false, resolution: None, graphics_backend: None, enabled_mods: None, disabled_personal_mods: vec![] };
+        let options = crate::game::LaunchOptions { memory_mb: Some(2048), java_args: vec![], fullscreen: false, resolution: None, graphics_backend: None, enabled_mods: None, disabled_personal_mods: vec![], clover_mods: vec![] };
         for id in ["1.8.9", "1.12.2", "1.16.5", "1.17.1", "1.18.2", "1.19.4", "1.20.1", "1.21.11", "26.1.2"] {
             let vanilla = vanilla_json(&http, &paths, id).await.unwrap();
             assert!(vanilla.java_version.is_some());
@@ -456,7 +456,7 @@ mod instance_tests {
         let classpath = libraries.iter().filter(|library| allowed(&library.rules, &[])).filter_map(|library| library.resolve()).map(|library| paths.libraries.join(library.path)).collect();
         let mut installation = Installation { java: "java".into(), vanilla, loader: None, classpath, logging_argument: None };
         let session = crate::auth::Session { profile: crate::auth::Profile { uuid: "test".into(), name: "Joueur".into(), skin: None, capes: vec![] }, minecraft_token: "synthetic-test-token".into(), expires_at: u64::MAX };
-        let options = crate::game::LaunchOptions { memory_mb: Some(4096), java_args: vec![], fullscreen: false, resolution: None, graphics_backend: None, enabled_mods: None, disabled_personal_mods: vec![] };
+        let options = crate::game::LaunchOptions { memory_mb: Some(4096), java_args: vec![], fullscreen: false, resolution: None, graphics_backend: None, enabled_mods: None, disabled_personal_mods: vec![], clover_mods: vec![] };
         let arguments = crate::game::launch::build_arguments(&paths, &installation, &session, None, &options).unwrap();
         assert!(!arguments.iter().any(|argument| argument.contains("${")));
         assert!(!arguments.contains(&"--quickPlayMultiplayer".into()));
