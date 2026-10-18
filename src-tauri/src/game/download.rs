@@ -1,6 +1,7 @@
 //! Téléchargements parallèles vérifiés.
 //!
-//! Un fichier déjà présent à la bonne taille est considéré comme installé ; tout nouveau
+//! Un fichier déjà présent à la bonne taille est considéré comme installé (et, s'il a un SHA-512, à la
+//! bonne empreinte) ; tout nouveau
 //! téléchargement est vérifié (SHA-1 ou SHA-512) avant d'être renommé à sa place définitive. Une coupure
 //! laisse au pire un `.part`, repris depuis le début au lancement suivant.
 
@@ -115,14 +116,18 @@ async fn is_installed(download: &Download) -> Result<bool> {
     let Ok(metadata) = tokio::fs::metadata(&download.path).await else {
         return Ok(false);
     };
-    match (download.size, &download.checksum) {
-        (Some(size), _) => Ok(metadata.len() == size),
-        (None, Some(checksum)) => {
+    if download.size.is_some_and(|size| metadata.len() != size) {
+        return Ok(false);
+    }
+    // La taille suffit pour les milliers de fichiers SHA-1 de Minecraft ; un SHA-512 (mods, contenus)
+    // est toujours revérifié, pour qu'un jar modifié de même taille ne passe pas pour installé.
+    match &download.checksum {
+        Some(checksum) if download.size.is_none() || matches!(checksum, Checksum::Sha512(_)) => {
             let mut hasher = Hasher::new(checksum);
             hasher.update(&tokio::fs::read(&download.path).await?);
             Ok(hasher.matches(checksum))
         }
-        (None, None) => Ok(true),
+        _ => Ok(true),
     }
 }
 
@@ -179,4 +184,23 @@ async fn set_executable(path: &Path, executable: bool) -> Result<()> {
 #[cfg(not(unix))]
 async fn set_executable(_path: &Path, _executable: bool) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn sha512_file_of_right_size_must_match() {
+        let path = std::env::temp_dir().join(format!("clover-installed-{}.jar", rand::random::<u64>()));
+        let download = |checksum| Download { url: String::new(), path: path.clone(), checksum: Some(checksum), size: Some(8), executable: false };
+        let sha512 = Checksum::Sha512(hex(&Sha512::digest(b"original")));
+        std::fs::write(&path, b"original").unwrap();
+        assert!(is_installed(&download(sha512.clone())).await.unwrap());
+        std::fs::write(&path, b"modifie!").unwrap();
+        assert!(!is_installed(&download(sha512)).await.unwrap());
+        // SHA-1 (fichiers de Minecraft) : la taille suffit, pas de relecture.
+        assert!(is_installed(&download(Checksum::Sha1("00".into()))).await.unwrap());
+        std::fs::remove_file(path).unwrap();
+    }
 }

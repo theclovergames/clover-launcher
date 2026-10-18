@@ -42,8 +42,9 @@ fn free_name(dir: &Path, name: &str) -> PathBuf {
 
 /// Instance Clover : transfère dans « Mes mods » les jars de `mods/` que le launcher n'y a pas
 /// posés (ajoutés à la main), avant que `sync` ne vide le dossier. Sont reconnus comme posés par
-/// le launcher : un fichier du catalogue (nom ou empreinte d'un mod du manifeste, activé ou non)
-/// et la copie conforme d'un fichier de « Mes mods ». Renvoie les noms transférés.
+/// le launcher : un fichier du catalogue (empreinte d'un mod du manifeste, activé ou non, quel que
+/// soit son nom) et la copie conforme d'un fichier de « Mes mods ». Un homonyme d'un mod du
+/// catalogue au contenu différent est transféré comme les autres. Renvoie les noms transférés.
 pub async fn adopt_unknown(mods_dir: &Path, personal_dir: &Path, manifest: &Manifest) -> Result<Vec<String>> {
     let Ok(mut entries) = tokio::fs::read_dir(mods_dir).await else { return Ok(Vec::new()) };
     let files: Vec<_> = manifest.mods.iter().filter_map(|m| m.file.as_ref()).collect();
@@ -51,7 +52,7 @@ pub async fn adopt_unknown(mods_dir: &Path, personal_dir: &Path, manifest: &Mani
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name().to_string_lossy().into_owned();
         let path = entry.path();
-        if !is_jar(&name) || !path.is_file() || files.iter().any(|file| file.filename == name) {
+        if !is_jar(&name) || !path.is_file() {
             continue;
         }
         let bytes = tokio::fs::read(&path).await?;
@@ -149,6 +150,28 @@ pub async fn sync(
 #[cfg(test)]
 mod instance_tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Serveur HTTP local : `files` à la racine, 404 pour le reste. Renvoie son adresse.
+    async fn serve(files: &'static [(&'static str, &'static [u8])]) -> String {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0u8; 2048];
+                let read = socket.read(&mut request).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&request[..read]).into_owned();
+                let path = request.split_whitespace().nth(1).unwrap_or_default();
+                let (status, body) = match files.iter().find(|(name, _)| path.strip_prefix('/') == Some(name)) {
+                    Some((_, body)) => ("200 OK", *body),
+                    None => ("404 Not Found", &b""[..]),
+                };
+                let head = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                let _ = socket.write_all(&[head.as_bytes(), body].concat()).await;
+            }
+        });
+        format!("http://{address}")
+    }
     #[tokio::test]
     async fn switching_shared_instances_replaces_only_active_jars() {
         let root = std::env::temp_dir().join(format!("clover-mod-switch-{}", rand::random::<u64>()));
@@ -176,49 +199,58 @@ mod instance_tests {
         for dir in [&active, &clover, &source] {
             std::fs::create_dir_all(dir).unwrap();
         }
-        // Posés par le launcher : mod client d'une version précédente, mod désactivé du catalogue
-        // renommé (reconnu à son empreinte), copie conforme d'un mod du joueur.
-        std::fs::write(active.join("cloverclient.jar"), b"c").unwrap();
+        // Posés par le launcher : mod du catalogue d'une version précédente, mod désactivé du
+        // catalogue renommé (reconnus à leur empreinte), copie conforme d'un mod du joueur.
+        std::fs::write(active.join("fabric-api.jar"), b"f").unwrap();
         std::fs::write(active.join("lithium-renomme.jar"), b"l").unwrap();
         std::fs::write(active.join("extra.jar"), b"x").unwrap();
-        // Déposés à la main : un mod inconnu, un mod homonyme d'un mod du joueur mais différent.
+        // Déposés à la main : un mod inconnu, un mod homonyme d'un mod du joueur mais différent, et
+        // des homonymes modifiés (même taille) de mods du catalogue, activés ou non, avec ou sans
+        // fichier dans `clover-mods/`.
         std::fs::write(active.join("mon-mod.jar"), b"m").unwrap();
         std::fs::write(active.join("fabric.jar"), b"modifie").unwrap();
+        std::fs::write(active.join("sodium.jar"), b"S").unwrap();
+        std::fs::write(active.join("cloverclient.jar"), b"C").unwrap();
+        std::fs::write(active.join("iris.jar"), b"I").unwrap();
+        std::fs::write(active.join("lithium.jar"), b"L").unwrap();
         std::fs::write(active.join("note.txt"), b"keep").unwrap();
         std::fs::write(clover.join("sodium.jar"), b"s").unwrap();
         std::fs::write(clover.join("iris.jar"), b"i").unwrap();
         std::fs::write(source.join("fabric.jar"), b"personal").unwrap();
         std::fs::write(source.join("sodium.jar"), b"doublon").unwrap();
         std::fs::write(source.join("extra.jar"), b"x").unwrap();
-        let lithium: String = Sha512::digest(b"l").iter().map(|byte| format!("{byte:02x}")).collect();
-        let manifest: Manifest = serde_json::from_str(&r#"{
-            "schema": 1, "serial": 1, "minLauncherVersion": "0.1.0",
-            "minecraft": {"version": "26.2"}, "fabric": {"loader": "0.19.5"},
-            "server": {"host": "play.clovergames.fr"}, "modes": [],
-            "mods": [
-                {"id": "sodium", "name": "Sodium", "description": null, "category": null, "default": true,
-                 "hidden": false, "available": true, "requires": [],
-                 "file": {"filename": "sodium.jar", "url": "https://x/sodium.jar", "sha512": "00", "size": 1}},
-                {"id": "cloverclient", "name": "Clover", "description": null, "category": null, "default": false,
-                 "hidden": true, "always": true, "available": true, "requires": [],
-                 "file": {"filename": "cloverclient.jar", "url": "https://x/cloverclient.jar", "sha512": "00", "size": 1}},
-                {"id": "lithium", "name": "Lithium", "description": null, "category": null, "default": false,
-                 "hidden": false, "available": true, "requires": [],
-                 "file": {"filename": "lithium.jar", "url": "https://x/lithium.jar", "sha512": "LITHIUM", "size": 1}}
-            ]
-        }"#.replace("LITHIUM", &lithium)).unwrap();
+        let server = serve(&[("cloverclient.jar", b"c")]).await;
+        let mods = [("sodium", "true", "false"), ("cloverclient", "false", "true"), ("fabric-api", "true", "false"), ("iris", "false", "false"), ("lithium", "false", "false")]
+            .map(|(id, default, always)| {
+                let sha512: String = Sha512::digest(&id[..1]).iter().map(|byte| format!("{byte:02x}")).collect();
+                format!(
+                    r#"{{"id": "{id}", "name": "{id}", "description": null, "category": null, "default": {default},
+                        "hidden": false, "always": {always}, "available": true, "requires": [],
+                        "file": {{"filename": "{id}.jar", "url": "{server}/{id}.jar", "sha512": "{sha512}", "size": 1}}}}"#
+                )
+            })
+            .join(",");
+        let manifest: Manifest = serde_json::from_str(&format!(
+            r#"{{"schema": 1, "serial": 1, "minLauncherVersion": "0.1.0",
+                "minecraft": {{"version": "26.2"}}, "fabric": {{"loader": "0.19.5"}},
+                "server": {{"host": "play.clovergames.fr"}}, "modes": [], "mods": [{mods}]}}"#
+        ))
+        .unwrap();
         let mut adopted = adopt_unknown(&active, &source, &manifest).await.unwrap();
         adopted.sort();
-        assert_eq!(adopted, ["fabric-1.jar", "mon-mod.jar"]);
-        assert_eq!(std::fs::read(source.join("mon-mod.jar")).unwrap(), b"m");
-        assert_eq!(std::fs::read(source.join("fabric-1.jar")).unwrap(), b"modifie");
-        assert_eq!(std::fs::read(source.join("fabric.jar")).unwrap(), b"personal");
+        assert_eq!(adopted, ["cloverclient.jar", "fabric-1.jar", "iris.jar", "lithium.jar", "mon-mod.jar", "sodium-1.jar"]);
+        for (name, content) in [("mon-mod.jar", b"m" as &[u8]), ("fabric-1.jar", b"modifie"), ("fabric.jar", b"personal"), ("sodium.jar", b"doublon"), ("sodium-1.jar", b"S"), ("cloverclient.jar", b"C"), ("iris.jar", b"I"), ("lithium.jar", b"L")] {
+            assert_eq!(std::fs::read(source.join(name)).unwrap(), content, "{name}");
+        }
         let personal = ["fabric.jar", "fabric-1.jar", "mon-mod.jar", "sodium.jar"].map(|name| source.join(name));
         let http = super::super::download::client();
         let mut jars = sync(&http, &active, &clover, &manifest, &manifest.default_mods(), &personal, &|_, _| {}).await.unwrap();
         jars.sort();
-        assert_eq!(jars, [clover.join("cloverclient.jar"), clover.join("sodium.jar")]);
-        assert_eq!(std::fs::read(clover.join("cloverclient.jar")).unwrap(), b"c");
+        assert_eq!(jars, ["cloverclient.jar", "fabric-api.jar", "sodium.jar"].map(|name| clover.join(name)));
+        // `fabric-api.jar` est déplacé (le serveur ne le fournit pas), `cloverclient.jar` téléchargé.
+        for (name, content) in [("cloverclient.jar", b"c"), ("fabric-api.jar", b"f"), ("sodium.jar", b"s")] {
+            assert_eq!(std::fs::read(clover.join(name)).unwrap(), content, "{name}");
+        }
         assert!(!clover.join("iris.jar").exists());
         let mut left: Vec<_> = std::fs::read_dir(&active).unwrap().map(|entry| entry.unwrap().file_name()).collect();
         left.sort();
