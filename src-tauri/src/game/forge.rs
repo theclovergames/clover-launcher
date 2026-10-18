@@ -543,7 +543,7 @@ mod tests {
                 minecraft_token: "0".into(),
                 expires_at: 0,
             };
-            let options = crate::game::LaunchOptions { memory_mb: Some(3072), java_args: vec![], fullscreen: false, resolution: None, graphics_backend: None, enabled_mods: None, disabled_personal_mods: vec![] };
+            let options = crate::game::LaunchOptions { memory_mb: Some(3072), java_args: vec![], fullscreen: false, resolution: None, graphics_backend: None, enabled_mods: None, disabled_personal_mods: vec![], clover_mods: vec![] };
             let arguments = crate::game::launch::build_arguments(&paths, &installation, &session, None, &options).unwrap();
             let version_id = installation.loader.as_ref().map_or(installation.vanilla.id.as_str(), |loader| &loader.id);
             std::fs::create_dir_all(paths.natives.join(version_id)).unwrap();

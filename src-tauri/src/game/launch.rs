@@ -131,6 +131,11 @@ pub(crate) fn build_arguments(paths: &Paths, installation: &Installation, sessio
         if cfg!(target_os = "macos") { arguments.push("-XstartOnFirstThread".into()); }
     }
     if let Some(loader) = &loader { arguments.extend(expand(&loader.arguments.jvm, &features)); }
+    // Catalogue Clover chargé hors de `mods/`, que le joueur ne voit pas dans son dossier de jeu.
+    if !options.clover_mods.is_empty() {
+        let mods = options.clover_mods.iter().map(|path| path.to_string_lossy()).collect::<Vec<_>>().join(separator);
+        arguments.push(format!("-Dfabric.addMods={mods}"));
+    }
     arguments.push(main_class);
     arguments.extend(expand(&vanilla.arguments.game, &features));
     // Anciens profils : ceux du loader (Forge 1.12.2…) remplacent ceux de Mojang.
@@ -248,7 +253,7 @@ mod tests {
         let mut installation = Installation { java: "java".into(), vanilla, loader: None, classpath: vec!["client.jar".into()], logging_argument: None };
         let session = Session { profile: crate::auth::Profile { uuid: "test".into(), name: "Joueur".into(), skin: None, capes: vec![] }, minecraft_token: "synthetic-test-token".into(), expires_at: u64::MAX };
         let paths = Paths::from_root(std::env::temp_dir().join("clover-arguments"));
-        let options = LaunchOptions { memory_mb: Some(4096), java_args: vec![], fullscreen: false, resolution: None, graphics_backend: None, enabled_mods: None, disabled_personal_mods: vec![] };
+        let options = LaunchOptions { memory_mb: Some(4096), java_args: vec![], fullscreen: false, resolution: None, graphics_backend: None, enabled_mods: None, disabled_personal_mods: vec![], clover_mods: vec![] };
         let vanilla = build_arguments(&paths, &installation, &session, None, &options).unwrap();
         assert!(vanilla.contains(&"net.minecraft.client.main.Main".into()));
         assert!(!vanilla.contains(&"--quickPlayMultiplayer".into()));
@@ -258,16 +263,22 @@ mod tests {
         assert!(fabric.contains(&"net.fabricmc.loader.impl.launch.knot.KnotClient".into()));
         assert!(fabric.contains(&"-Dfabric=true".into()));
         assert!(!fabric.contains(&"--quickPlayMultiplayer".into()));
+        assert!(!fabric.iter().any(|argument| argument.starts_with("-Dfabric.addMods=")));
+        let options = LaunchOptions { clover_mods: vec![paths.clover_mods.join("cloverclient.jar"), paths.clover_mods.join("sodium.jar")], ..options };
         let clover = build_arguments(&paths, &installation, &session, Some(&QuickPlay::Server("play.clovergames.fr".into())), &options).unwrap();
         assert!(clover.windows(2).any(|pair| pair == ["--quickPlayMultiplayer", "play.clovergames.fr"]));
         assert!(!clover.iter().any(|argument| argument.contains("${")));
+        let separator = if cfg!(windows) { ";" } else { ":" };
+        let add_mods = format!("-Dfabric.addMods={}{separator}{}", options.clover_mods[0].display(), options.clover_mods[1].display());
+        let main = clover.iter().position(|argument| argument == "net.fabricmc.loader.impl.launch.knot.KnotClient").unwrap();
+        assert!(clover[..main].contains(&add_mods));
     }
 
     #[test]
     fn opens_a_world_only_where_the_version_allows_it() {
         let session = Session { profile: crate::auth::Profile { uuid: "test".into(), name: "Joueur".into(), skin: None, capes: vec![] }, minecraft_token: "synthetic-test-token".into(), expires_at: u64::MAX };
         let paths = Paths::from_root(std::env::temp_dir().join("clover-world"));
-        let options = LaunchOptions { memory_mb: Some(4096), java_args: vec![], fullscreen: false, resolution: None, graphics_backend: None, enabled_mods: None, disabled_personal_mods: vec![] };
+        let options = LaunchOptions { memory_mb: Some(4096), java_args: vec![], fullscreen: false, resolution: None, graphics_backend: None, enabled_mods: None, disabled_personal_mods: vec![], clover_mods: vec![] };
         let world = QuickPlay::World("Mon monde".into());
         let recent = serde_json::from_str(r#"{"id":"1.20.1","mainClass":"net.minecraft.client.main.Main","arguments":{"jvm":[],"game":[{"rules":[{"action":"allow","features":{"is_quick_play_singleplayer":true}}],"value":["--quickPlaySingleplayer","${quickPlaySingleplayer}"]},{"rules":[{"action":"allow","features":{"is_quick_play_multiplayer":true}}],"value":["--quickPlayMultiplayer","${quickPlayMultiplayer}"]}]}}"#).unwrap();
         let installation = Installation { java: "java".into(), vanilla: recent, loader: None, classpath: vec![], logging_argument: None };
@@ -288,7 +299,7 @@ mod tests {
         jar.start_file("net/minecraft/client/PreferredGraphicsApi.class", zip::write::SimpleFileOptions::default()).unwrap();
         jar.finish().unwrap();
         let session = Session { profile: crate::auth::Profile { uuid: "test".into(), name: "Joueur".into(), skin: None, capes: vec![] }, minecraft_token: "synthetic-test-token".into(), expires_at: u64::MAX };
-        let options = LaunchOptions { memory_mb: None, java_args: vec![], fullscreen: false, resolution: Some((1280, 720)), graphics_backend: Some("vulkan"), enabled_mods: None, disabled_personal_mods: vec![] };
+        let options = LaunchOptions { memory_mb: None, java_args: vec![], fullscreen: false, resolution: Some((1280, 720)), graphics_backend: Some("vulkan"), enabled_mods: None, disabled_personal_mods: vec![], clover_mods: vec![] };
         let arguments = |id: &str| {
             let vanilla = serde_json::from_str(&format!(r#"{{"id":"{id}","mainClass":"net.minecraft.client.main.Main","arguments":{{"jvm":[],"game":[]}}}}"#)).unwrap();
             build_arguments(&paths, &Installation { java: "java".into(), vanilla, loader: None, classpath: vec![], logging_argument: None }, &session, None, &options).unwrap()
