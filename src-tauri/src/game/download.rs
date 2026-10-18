@@ -5,6 +5,7 @@
 //! téléchargement est vérifié (SHA-1 ou SHA-512) avant d'être renommé à sa place définitive. Une coupure
 //! laisse au pire un `.part`, repris depuis le début au lancement suivant.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use futures_util::{stream, StreamExt};
@@ -53,15 +54,41 @@ impl Hasher {
         }
     }
 
-    fn matches(self, checksum: &Checksum) -> bool {
-        let actual = match self {
-            Self::Sha1(hasher) => hex(&hasher.finalize()),
-            Self::Sha512(hasher) => hex(&hasher.finalize()),
-        };
-        match checksum {
-            Checksum::Sha1(expected) | Checksum::Sha512(expected) => actual == *expected,
+    /// Lit `path` par blocs dans le hacheur, sans charger le fichier entier en mémoire.
+    fn read_file(mut self, path: &Path) -> std::io::Result<Self> {
+        let mut file = std::fs::File::open(path)?;
+        let mut buffer = vec![0; 64 * 1024];
+        loop {
+            match file.read(&mut buffer)? {
+                0 => return Ok(self),
+                read => self.update(&buffer[..read]),
+            }
         }
     }
+
+    fn finish(self) -> String {
+        match self {
+            Self::Sha1(hasher) => hex(&hasher.finalize()),
+            Self::Sha512(hasher) => hex(&hasher.finalize()),
+        }
+    }
+
+    fn matches(self, checksum: &Checksum) -> bool {
+        match checksum {
+            Checksum::Sha1(expected) | Checksum::Sha512(expected) => self.finish() == *expected,
+        }
+    }
+}
+
+/// SHA-512 d'un fichier, en hexadécimal minuscule, calculé en flux.
+pub(crate) fn sha512(path: &Path) -> std::io::Result<String> {
+    Ok(Hasher::Sha512(Sha512::new()).read_file(path)?.finish())
+}
+
+/// `sha512` hors du fil d'exécution asynchrone.
+pub(crate) async fn sha512_async(path: &Path) -> std::io::Result<String> {
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || sha512(&path)).await.map_err(std::io::Error::other)?
 }
 
 pub fn client() -> reqwest::Client {
@@ -123,8 +150,8 @@ async fn is_installed(download: &Download) -> Result<bool> {
     // est toujours revérifié, pour qu'un jar modifié de même taille ne passe pas pour installé.
     match &download.checksum {
         Some(checksum) if download.size.is_none() || matches!(checksum, Checksum::Sha512(_)) => {
-            let mut hasher = Hasher::new(checksum);
-            hasher.update(&tokio::fs::read(&download.path).await?);
+            let (hasher, path) = (Hasher::new(checksum), download.path.clone());
+            let hasher = tokio::task::spawn_blocking(move || hasher.read_file(&path)).await.map_err(std::io::Error::other)??;
             Ok(hasher.matches(checksum))
         }
         _ => Ok(true),

@@ -10,9 +10,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha512};
-
-use super::download::{download_all, Checksum, Download};
+use super::download::{download_all, sha512_async, Checksum, Download};
 use super::manifest::Manifest;
 use super::personal;
 use super::{GameError, Result};
@@ -55,11 +53,10 @@ pub async fn adopt_unknown(mods_dir: &Path, personal_dir: &Path, manifest: &Mani
         if !is_jar(&name) || !path.is_file() {
             continue;
         }
-        let bytes = tokio::fs::read(&path).await?;
-        if tokio::fs::read(personal_dir.join(&name)).await.is_ok_and(|copy| copy == bytes) {
+        let sha512 = sha512_async(&path).await?;
+        if sha512_async(&personal_dir.join(&name)).await.is_ok_and(|copy| copy == sha512) {
             continue;
         }
-        let sha512: String = Sha512::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect();
         if files.iter().any(|file| file.sha512.eq_ignore_ascii_case(&sha512)) {
             continue;
         }
@@ -150,6 +147,7 @@ pub async fn sync(
 #[cfg(test)]
 mod instance_tests {
     use super::*;
+    use sha2::{Digest, Sha512};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     /// Serveur HTTP local : `files` à la racine, 404 pour le reste. Renvoie son adresse.
