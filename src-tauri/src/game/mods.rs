@@ -4,10 +4,13 @@
 //! dossier de jeu, et chargé par `fabric.addMods` : il n'apparaît pas dans `mods/`. Ce dossier
 //! et `mods/` appartiennent au launcher : tout `.jar` qui ne correspond pas à un mod sélectionné
 //! est retiré, pour qu'un mod désactivé ou remplacé par une nouvelle version ne reste pas chargé.
-//! Les mods du joueur (« Mes mods ») sont recopiés dans `mods/` à chaque lancement.
+//! Les mods du joueur (« Mes mods ») sont recopiés dans `mods/` à chaque lancement ; un jar déposé
+//! à la main dans `mods/` est d'abord transféré dans « Mes mods » (`adopt_unknown`), jamais supprimé.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha512};
 
 use super::download::{download_all, Checksum, Download};
 use super::manifest::Manifest;
@@ -29,6 +32,45 @@ pub async fn sync_personal(mods_dir: &Path, personal: &[PathBuf]) -> Result<()> 
 
 fn is_jar(name: &str) -> bool {
     name.to_ascii_lowercase().ends_with(".jar")
+}
+
+/// Premier nom libre dans `dir` pour `name` : `mod.jar`, puis `mod-1.jar`, `mod-2.jar`…
+fn free_name(dir: &Path, name: &str) -> PathBuf {
+    let (stem, extension) = name.rsplit_once('.').unwrap_or((name, "jar"));
+    (0..).map(|n| dir.join(if n == 0 { name.to_owned() } else { format!("{stem}-{n}.{extension}") })).find(|path| !path.exists()).unwrap()
+}
+
+/// Instance Clover : transfère dans « Mes mods » les jars de `mods/` que le launcher n'y a pas
+/// posés (ajoutés à la main), avant que `sync` ne vide le dossier. Sont reconnus comme posés par
+/// le launcher : un fichier du catalogue (nom ou empreinte d'un mod du manifeste, activé ou non)
+/// et la copie conforme d'un fichier de « Mes mods ». Renvoie les noms transférés.
+pub async fn adopt_unknown(mods_dir: &Path, personal_dir: &Path, manifest: &Manifest) -> Result<Vec<String>> {
+    let Ok(mut entries) = tokio::fs::read_dir(mods_dir).await else { return Ok(Vec::new()) };
+    let files: Vec<_> = manifest.mods.iter().filter_map(|m| m.file.as_ref()).collect();
+    let mut adopted = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        if !is_jar(&name) || !path.is_file() || files.iter().any(|file| file.filename == name) {
+            continue;
+        }
+        let bytes = tokio::fs::read(&path).await?;
+        if tokio::fs::read(personal_dir.join(&name)).await.is_ok_and(|copy| copy == bytes) {
+            continue;
+        }
+        let sha512: String = Sha512::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect();
+        if files.iter().any(|file| file.sha512.eq_ignore_ascii_case(&sha512)) {
+            continue;
+        }
+        tokio::fs::create_dir_all(personal_dir).await?;
+        let target = free_name(personal_dir, &name);
+        if tokio::fs::rename(&path, &target).await.is_err() {
+            tokio::fs::copy(&path, &target).await?;
+            tokio::fs::remove_file(&path).await?;
+        }
+        adopted.push(target.file_name().unwrap_or_default().to_string_lossy().into_owned());
+    }
+    Ok(adopted)
 }
 
 /// Instance Clover : le catalogue va dans `clover_dir`, hors du dossier de jeu, et `mods/` ne garde
@@ -59,7 +101,8 @@ pub async fn sync(
         }
     }
     // `mods/` ne garde aucun jar : ceux du catalogue posés là par les versions précédentes sont
-    // déplacés (pas de nouveau téléchargement), les autres retirés puis recopiés de « Mes mods ».
+    // déplacés (pas de nouveau téléchargement), les autres — copies de « Mes mods », les jars
+    // inconnus ayant été transférés par `adopt_unknown` — retirés puis recopiés de « Mes mods ».
     let mut entries = tokio::fs::read_dir(mods_dir).await?;
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -133,15 +176,22 @@ mod instance_tests {
         for dir in [&active, &clover, &source] {
             std::fs::create_dir_all(dir).unwrap();
         }
-        // Mod client posé dans `mods/` par une version précédente, mod retiré du catalogue.
+        // Posés par le launcher : mod client d'une version précédente, mod désactivé du catalogue
+        // renommé (reconnu à son empreinte), copie conforme d'un mod du joueur.
         std::fs::write(active.join("cloverclient.jar"), b"c").unwrap();
-        std::fs::write(active.join("old.jar"), b"o").unwrap();
+        std::fs::write(active.join("lithium-renomme.jar"), b"l").unwrap();
+        std::fs::write(active.join("extra.jar"), b"x").unwrap();
+        // Déposés à la main : un mod inconnu, un mod homonyme d'un mod du joueur mais différent.
+        std::fs::write(active.join("mon-mod.jar"), b"m").unwrap();
+        std::fs::write(active.join("fabric.jar"), b"modifie").unwrap();
         std::fs::write(active.join("note.txt"), b"keep").unwrap();
         std::fs::write(clover.join("sodium.jar"), b"s").unwrap();
         std::fs::write(clover.join("iris.jar"), b"i").unwrap();
         std::fs::write(source.join("fabric.jar"), b"personal").unwrap();
         std::fs::write(source.join("sodium.jar"), b"doublon").unwrap();
-        let manifest: Manifest = serde_json::from_str(r#"{
+        std::fs::write(source.join("extra.jar"), b"x").unwrap();
+        let lithium: String = Sha512::digest(b"l").iter().map(|byte| format!("{byte:02x}")).collect();
+        let manifest: Manifest = serde_json::from_str(&r#"{
             "schema": 1, "serial": 1, "minLauncherVersion": "0.1.0",
             "minecraft": {"version": "26.2"}, "fabric": {"loader": "0.19.5"},
             "server": {"host": "play.clovergames.fr"}, "modes": [],
@@ -151,10 +201,19 @@ mod instance_tests {
                  "file": {"filename": "sodium.jar", "url": "https://x/sodium.jar", "sha512": "00", "size": 1}},
                 {"id": "cloverclient", "name": "Clover", "description": null, "category": null, "default": false,
                  "hidden": true, "always": true, "available": true, "requires": [],
-                 "file": {"filename": "cloverclient.jar", "url": "https://x/cloverclient.jar", "sha512": "00", "size": 1}}
+                 "file": {"filename": "cloverclient.jar", "url": "https://x/cloverclient.jar", "sha512": "00", "size": 1}},
+                {"id": "lithium", "name": "Lithium", "description": null, "category": null, "default": false,
+                 "hidden": false, "available": true, "requires": [],
+                 "file": {"filename": "lithium.jar", "url": "https://x/lithium.jar", "sha512": "LITHIUM", "size": 1}}
             ]
-        }"#).unwrap();
-        let personal = [source.join("fabric.jar"), source.join("sodium.jar")];
+        }"#.replace("LITHIUM", &lithium)).unwrap();
+        let mut adopted = adopt_unknown(&active, &source, &manifest).await.unwrap();
+        adopted.sort();
+        assert_eq!(adopted, ["fabric-1.jar", "mon-mod.jar"]);
+        assert_eq!(std::fs::read(source.join("mon-mod.jar")).unwrap(), b"m");
+        assert_eq!(std::fs::read(source.join("fabric-1.jar")).unwrap(), b"modifie");
+        assert_eq!(std::fs::read(source.join("fabric.jar")).unwrap(), b"personal");
+        let personal = ["fabric.jar", "fabric-1.jar", "mon-mod.jar", "sodium.jar"].map(|name| source.join(name));
         let http = super::super::download::client();
         let mut jars = sync(&http, &active, &clover, &manifest, &manifest.default_mods(), &personal, &|_, _| {}).await.unwrap();
         jars.sort();
@@ -163,7 +222,7 @@ mod instance_tests {
         assert!(!clover.join("iris.jar").exists());
         let mut left: Vec<_> = std::fs::read_dir(&active).unwrap().map(|entry| entry.unwrap().file_name()).collect();
         left.sort();
-        assert_eq!(left, ["fabric.jar", "note.txt"]);
+        assert_eq!(left, ["fabric-1.jar", "fabric.jar", "mon-mod.jar", "note.txt"]);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -274,6 +274,9 @@ pub async fn play(
     if let Err(error) = apply_presets(&paths, &manifest, &installation.vanilla.id, false) {
         eprintln!("[préréglages] non appliqués : {error}");
     }
+    for name in mods::adopt_unknown(&paths.mods, &paths.personal_mods, &manifest).await? {
+        eprintln!("[mods] {name} déposé dans mods/ : transféré dans « Mes mods »");
+    }
     let personal = personal::loadable(&paths.personal_mods, &options.disabled_personal_mods, &manifest.minecraft.version, personal::ModLoader::Fabric);
     options.clover_mods = mods::sync(&http, &paths.mods, &paths.clover_mods, &manifest, &enabled, &personal, &|done, total| {
         progress(Progress { phase: "mods", done, total })
