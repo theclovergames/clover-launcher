@@ -830,7 +830,6 @@ async fn play(
     app: AppHandle,
     state: State<'_, AppState>,
     current: State<'_, CurrentSession>,
-    presence: State<'_, Presence>,
     mode: Option<String>,
     server: Option<String>,
     world: Option<String>,
@@ -866,14 +865,6 @@ async fn play(
             game::Destination::World(world)
         }
         (None, None) => mode.map_or(game::Destination::Menu, game::Destination::Mode),
-    };
-    // Statut Discord du départ : sur Clover Games seulement si le jeu s'y connecte d'office. La
-    // fenêtre et les connexions de la partie le corrigent ensuite (`game::launch::spawn`).
-    let place = match &destination {
-        game::Destination::Mode(_) => presence::Place::Clover,
-        game::Destination::Server(address) => presence::Place::server(address),
-        game::Destination::World(_) => presence::Place::World,
-        game::Destination::Menu => presence::Place::Started,
     };
     let settings = stored.settings;
     let options = game::LaunchOptions {
@@ -919,7 +910,6 @@ async fn play(
         if instance.id == instances::BUILTIN { stored.clover_last_played = Some(instances::now()); }
         if let Some(entry) = stored.instances.iter_mut().find(|entry| entry.id == instance.id) { entry.last_played = Some(instances::now()); }
     });
-    presence.set_state(presence::State::playing_now(place)).await;
 
     if let Some(window) = app.get_webview_window("main") {
         match settings.on_launch.as_str() {

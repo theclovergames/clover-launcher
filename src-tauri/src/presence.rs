@@ -48,9 +48,9 @@ pub enum State {
 /// Où en est la partie.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Place {
-    /// Lieu inconnu : jeu lancé sur son menu, ou version trop ancienne pour être suivie (pas de
-    /// journal Quick Play avant 1.20, pas d'état dans le titre avant 1.15).
-    Started,
+    /// Lieu inconnu : partie que le journal Quick Play ne nomme pas (avant 1.20), ou jeu dont le
+    /// titre ne dit pas quand il quitte le menu (avant 1.15).
+    Unknown,
     /// Menu du jeu, sur aucun serveur ni monde.
     Menu,
     /// Sur Clover Games (`play.clovergames.fr` ou un de ses modes).
@@ -102,11 +102,12 @@ impl Presence {
         }
     }
 
-    /// Où en est la partie en cours. Relu toutes les 5 s : ne republie que si cela change, et
-    /// garde l'heure de début.
-    pub async fn set_place(&self, place: Place) {
+    /// Suit la partie en cours (`Place::follow`). Relu toutes les 2 s : ne republie que si le lieu
+    /// change, et garde l'heure de début.
+    pub async fn follow(&self, in_world: Option<bool>, joined: Option<&Joined>) {
         let mut inner = self.inner.lock().await;
         let Some(State::Playing { since, place: current }) = &inner.state else { return };
+        let place = current.follow(in_world, joined);
         if *current == place {
             return;
         }
@@ -165,22 +166,24 @@ impl Inner {
 }
 
 impl Place {
-    /// Lieu de départ d'une partie lancée sur ce serveur.
+    /// Lieu d'une partie sur ce serveur.
     pub fn server(address: &str) -> Self {
         if is_clover_address(address) { Self::Clover } else { Self::Server(address.chars().take(MAX_ADDRESS).collect()) }
     }
 
-    /// Lieu actuel, d'après la fenêtre du jeu (`in_world` : une partie y est ouverte, `None` si son
-    /// titre est illisible) et la dernière connexion de la partie (`joined`). `None` : rien de
-    /// nouveau, le statut ne change pas.
-    pub fn now(in_world: Option<bool>, joined: Option<&Joined>) -> Option<Self> {
+    /// Lieu qui suit celui-ci, d'après la fenêtre du jeu (`in_world` : une partie y est ouverte,
+    /// `None` si son titre ne le dit pas) et la dernière connexion de la partie (`joined`).
+    pub fn follow(&self, in_world: Option<bool>, joined: Option<&Joined>) -> Self {
         match (in_world, joined) {
             // Menu du jeu : plus sur aucun serveur, même si le journal garde le dernier rejoint.
-            (Some(false), _) => Some(Self::Menu),
-            (_, Some(Joined::Server(server))) => Some(Self::server(&server.address)),
-            (_, Some(Joined::World)) => Some(Self::World),
-            (_, Some(Joined::Realms)) => Some(Self::Realms),
-            (_, None) => None,
+            (Some(false), _) => Self::Menu,
+            (_, Some(Joined::Server(server))) => Self::server(&server.address),
+            (_, Some(Joined::World)) => Self::World,
+            (_, Some(Joined::Realms)) => Self::Realms,
+            // Partie ouverte depuis le menu, sans connexion notée : avant 1.20, ou journal pas
+            // encore écrit.
+            (Some(true), None) if *self == Self::Menu => Self::Unknown,
+            _ => self.clone(),
         }
     }
 }
@@ -209,7 +212,7 @@ fn activity(state: State, player: Option<&Player>) -> Activity<'static> {
         Place::World => ("Joue à Minecraft", Some("En solo".into())),
         Place::Realms => ("Joue à Minecraft", Some("Sur Realms".into())),
         Place::Menu => ("Joue à Minecraft", Some("Dans le menu".into())),
-        Place::Started => ("Joue à Minecraft", None),
+        Place::Unknown => ("Joue à Minecraft", None),
     };
     let activity = base.details(details).timestamps(Timestamps::new().start(since));
     match place {
@@ -232,7 +235,7 @@ mod tests {
     fn builds_every_activity() {
         let player = Player { uuid: "069a79f4-44e9-4726-a5be-fca90e38aaf5".into(), name: "Notch".into() };
         let _ = activity(State::Launcher, None);
-        for place in [Place::Started, Place::Menu, Place::Clover, Place::Server("mc.hypixel.net".into()), Place::World, Place::Realms] {
+        for place in [Place::Unknown, Place::Menu, Place::Clover, Place::Server("mc.hypixel.net".into()), Place::World, Place::Realms] {
             let _ = activity(State::Playing { since: 1_790_000_000, place }, Some(&player));
         }
     }
@@ -251,22 +254,25 @@ mod tests {
     fn follows_the_current_connection() {
         let server = |address: &str| Joined::Server(crate::store::RecentServer { address: address.into(), name: String::new() });
         let clover = server("play.clovergames.fr");
-        assert_eq!(Place::now(Some(true), Some(&clover)), Some(Place::Clover));
+        assert_eq!(Place::Menu.follow(Some(true), Some(&clover)), Place::Clover);
         // Revenu au menu après Clover Games.
-        assert_eq!(Place::now(Some(false), Some(&clover)), Some(Place::Menu));
-        assert_eq!(Place::now(None, Some(&server("mc.hypixel.net"))), Some(Place::Server("mc.hypixel.net".into())));
-        assert_eq!(Place::now(Some(true), Some(&Joined::World)), Some(Place::World));
-        // Partie ouverte, connexion pas encore notée : on attend.
-        assert_eq!(Place::now(Some(true), None), None);
+        assert_eq!(Place::Clover.follow(Some(false), Some(&clover)), Place::Menu);
+        assert_eq!(Place::Menu.follow(None, Some(&server("mc.hypixel.net"))), Place::Server("mc.hypixel.net".into()));
+        assert_eq!(Place::Menu.follow(Some(true), Some(&Joined::World)), Place::World);
+        // Partie ouverte que le journal ne nomme pas : plus au menu, lieu inconnu.
+        assert_eq!(Place::Menu.follow(Some(true), None), Place::Unknown);
+        // Lancé vers Clover Games, connexion pas encore notée : on garde la destination.
+        assert_eq!(Place::Clover.follow(Some(true), None), Place::Clover);
+        assert_eq!(Place::Unknown.follow(None, None), Place::Unknown);
     }
 
     #[tokio::test]
     async fn joined_server_updates_the_game_state_only() {
         let presence = Presence::default();
-        presence.set_place(Place::Menu).await;
+        presence.follow(Some(false), None).await;
         assert_eq!(presence.inner.lock().await.state, None);
         presence.set_state(State::Playing { since: 1_790_000_000, place: Place::Clover }).await;
-        presence.set_place(Place::Menu).await;
+        presence.follow(Some(false), None).await;
         assert_eq!(presence.inner.lock().await.state, Some(State::Playing { since: 1_790_000_000, place: Place::Menu }));
     }
 
