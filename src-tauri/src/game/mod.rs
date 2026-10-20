@@ -208,15 +208,15 @@ pub fn installed_java(paths: &Paths) -> Option<String> {
     })
 }
 
-/// Réglages de départ du niveau de la machine (fichiers absents seulement, sauf `replace`) et pack
-/// de ressources des serveurs du réseau accepté d'office. Renvoie les fichiers écrits.
+/// Réglages de départ du niveau de la machine (fichiers absents seulement, sauf `replace`) et
+/// serveurs du réseau dans `servers.dat` (`servers_dat::prepare`). Renvoie les fichiers écrits.
 pub fn apply_presets(paths: &Paths, manifest: &manifest::Manifest, version_id: &str, replace: bool) -> Result<Vec<String>> {
     let mut written = Vec::new();
     if let Some(preset) = manifest.presets.get(crate::machine::profile().level.key()) {
         let data_version = presets::data_version(&paths.versions.join(version_id).join(format!("{version_id}.jar")));
         written = presets::apply(&paths.game, preset, data_version, replace)?;
     }
-    if servers_dat::accept_packs(&paths.game.join("servers.dat"), &manifest.hosts())? > 0 {
+    if servers_dat::prepare(&paths.game.join("servers.dat"), &manifest.server.host, &manifest.mode_hosts())? > 0 {
         written.push("servers.dat".into());
     }
     Ok(written)
