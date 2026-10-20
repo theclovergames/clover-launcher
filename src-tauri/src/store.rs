@@ -16,6 +16,8 @@ pub struct Settings {
     pub auto_update: bool,
     pub beta_channel: bool,
     pub system_notifications: bool,
+    /// Son des nouveaux messages et demandes d'amis (celui du site).
+    pub message_sound: bool,
     pub scale: u32,
     pub animations: String,
     pub animated_skin: bool,
@@ -56,6 +58,7 @@ impl Default for Settings {
             auto_update: true,
             beta_channel: false,
             system_notifications: true,
+            message_sound: true,
             scale: 100,
             animations: "system".into(),
             animated_skin: true,
