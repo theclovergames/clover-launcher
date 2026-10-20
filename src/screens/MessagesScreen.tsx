@@ -66,10 +66,12 @@ import { cn } from "@/lib/utils";
 import { type Confirmation, ConfirmDialog, ReportDialog } from "@/screens/Dialogs";
 import type { ChatFriend, ChatMessage, Conversation, FriendRequest, GifResult, Inbox, MessagePreview, MessageSource, Thread } from "@/types";
 
-/** Conversation ouverte, fenêtre au premier plan : nouveaux messages toutes les 3 s. */
+/** Conversation ouverte : nouveaux messages toutes les 3 s au premier plan, 5 s fenêtre visible derrière une autre (le site où l'on écrit). */
 const THREAD_POLL_MS = 3_000;
-/** Liste des conversations, tant que la page est ouverte. */
-const LIST_POLL_MS = 15_000;
+const THREAD_BACKGROUND_POLL_MS = 5_000;
+/** Liste des conversations, tant que la page est ouverte : 5 s fenêtre visible, 30 s cachée. */
+const LIST_POLL_MS = 5_000;
+const LIST_HIDDEN_POLL_MS = 30_000;
 /** Distance du bas sous laquelle la conversation suit les nouveaux messages. */
 const STICK_PX = 64;
 /** Distance du haut où les messages plus anciens se chargent. */
@@ -131,11 +133,18 @@ function scrollWithin(box: HTMLElement, target: HTMLElement, align: "start" | "c
   box.scrollTo({ top, behavior });
 }
 
-/** Fenêtre visible et au premier plan : la conversation ouverte se relève, et se marque lue. */
-function useWindowActive() {
-  const [active, setActive] = useState(windowActive);
+/**
+ * État de la fenêtre : `active` (visible et au premier plan) marque la conversation lue ;
+ * `visible` (même derrière une autre fenêtre) suffit pour la relever.
+ */
+function useWindowState() {
+  const read = () => ({ active: windowActive(), visible: !document.hidden });
+  const [state, setState] = useState(read);
   useEffect(() => {
-    const update = () => setActive(windowActive());
+    const update = () => setState((previous) => {
+      const next = read();
+      return next.active === previous.active && next.visible === previous.visible ? previous : next;
+    });
     window.addEventListener("focus", update);
     window.addEventListener("blur", update);
     document.addEventListener("visibilitychange", update);
@@ -145,7 +154,7 @@ function useWindowActive() {
       document.removeEventListener("visibilitychange", update);
     };
   }, []);
-  return active;
+  return state;
 }
 
 function Skeleton({ className }: { className?: string }) {
@@ -803,7 +812,7 @@ function ThreadPane(props: {
 }) {
   const { conversation, services, updateInbox, onNotice } = props;
   const uuid = conversation.friend.uuid;
-  const active = useWindowActive();
+  const { active, visible } = useWindowState();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Dernière relève échouée : les messages restent, avec un mot d'explication. */
@@ -897,14 +906,15 @@ function ThreadPane(props: {
     }
   }, [services, uuid, updateInbox]);
 
-  // Relève toutes les 3 s, seulement fenêtre visible et au premier plan ; tout de suite au retour.
+  // Relève toutes les 3 s au premier plan, 5 s fenêtre visible derrière une autre (on écrit souvent
+  // depuis le site à côté) ; rien fenêtre cachée, la liste prend le relais. Tout de suite au retour.
   const ready = loaded !== null;
   useEffect(() => {
-    if (!active || !ready) return;
+    if (!visible || !ready) return;
     void poll();
-    const timer = window.setInterval(() => void poll(), THREAD_POLL_MS);
+    const timer = window.setInterval(() => void poll(), active ? THREAD_POLL_MS : THREAD_BACKGROUND_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [active, ready, poll]);
+  }, [active, visible, ready, poll]);
 
   // Lue jusqu'au dernier message reçu, tant que la fenêtre est au premier plan.
   const lastIncoming = loaded ? lastIncomingId(loaded.messages) : null;
@@ -1436,9 +1446,29 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
   /** Change quand une conversation est vidée depuis la liste : ouverte, elle se recharge vide. */
   const [cleared, setCleared] = useState(0);
   useEffect(() => {
-    void refreshInbox();
-    const timer = window.setInterval(() => void refreshInbox(), LIST_POLL_MS);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer = 0;
+    let running = false;
+    const poll = async () => {
+      if (running) return;
+      running = true;
+      await refreshInbox();
+      running = false;
+      if (!cancelled) timer = window.setTimeout(poll, document.hidden ? LIST_HIDDEN_POLL_MS : LIST_POLL_MS);
+    };
+    void poll();
+    // Fenêtre de nouveau affichée : la liste se relit sans attendre.
+    const shown = () => {
+      if (document.hidden) return;
+      window.clearTimeout(timer);
+      void poll();
+    };
+    document.addEventListener("visibilitychange", shown);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", shown);
+    };
   }, [refreshInbox]);
 
   const answer = async (request: FriendRequest, action: RequestAction) => {
