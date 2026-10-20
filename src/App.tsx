@@ -9,6 +9,7 @@ import { type NavTab, SideNav, TAB_LABELS } from "@/components/SideNav";
 import { AccountMenu } from "@/components/AccountMenu";
 import { TitleBar } from "@/components/TitleBar";
 import { type UpdateState, UpdateToast } from "@/components/UpdateToast";
+import { MessageToast } from "@/components/MessageToast";
 import { VoteTicker } from "@/components/VoteTicker";
 import { api, type Catalogue, type MachineLevel, type ServerStatus, type SiteFeed, type SkinEntry, type Stored, type StorageUsage, type SystemInfo } from "@/lib/api";
 import { ownedCapeText } from "@/lib/capes";
@@ -66,6 +67,11 @@ const SETTINGS_SAVED_MS = 600;
 /** Notifications du site : toutes les minutes fenêtre ouverte, toutes les 5 min sinon. */
 const NOTIFICATIONS_POLL_MS = 60_000;
 const NOTIFICATIONS_HIDDEN_POLL_MS = 5 * 60_000;
+/** Messages et demandes d'amis : plus souvent que la cloche, une conversation n'attend pas. */
+const INBOX_POLL_MS = 15_000;
+const INBOX_HIDDEN_POLL_MS = 30_000;
+/** Alerte d'un message dans le launcher, fenêtre au premier plan. */
+const MESSAGE_TOAST_MS = 8_000;
 /** Compte Minecraft lié à aucun compte du site : la cloche explique comment le lier. */
 const LINK_NOTIFICATION: LauncherNotification = {
   id: "link-account",
@@ -160,6 +166,9 @@ export default function App() {
   const tab = current.tab;
   const tabRef = useRef(tab);
   tabRef.current = tab;
+  /** Page ouverte, lue par la relève : la conversation affichée n'a pas d'alerte. */
+  const routeRef = useRef(current);
+  routeRef.current = current;
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   /** Menu, roue dentée : une pile neuve, sans fil d'Ariane. */
   const navigate = useCallback((next: NavTab | Route) => {
@@ -504,6 +513,8 @@ export default function App() {
   const knownRequests = useRef<Set<string> | null>(null);
   /** Change avec le compte : une relève partie avant le changement est ignorée. */
   const inboxGeneration = useRef(0);
+  /** Nouveau message ou demande d'ami, montré dans le launcher quand il est au premier plan. */
+  const [messageToast, setMessageToast] = useState<{ key: string; name: string; title: string; text: string; open: Route } | null>(null);
   const refreshInbox = useCallback(async () => {
     const generation = inboxGeneration.current;
     try {
@@ -513,10 +524,29 @@ export default function App() {
       knownMessages.current = known;
       const requests = freshRequests(knownRequests.current, next.requests.incoming);
       knownRequests.current = requests.known;
-      // Comme la cloche : une bulle seulement fenêtre cachée ou au second plan, si le réglage le permet.
-      if ((document.hidden || !document.hasFocus()) && desktopNotifications.current) {
-        for (const conversation of fresh) void api.systemNotification(`Nouveau message de ${conversation.friend.name}`, conversation.last ? previewText(conversation.last) : "").catch(() => {});
-        for (const request of requests.fresh) void api.systemNotification(`Demande d'ami de ${request.name}`, "Accepte-la dans les Messages du launcher, sur le site ou en jeu.").catch(() => {});
+      // Fenêtre cachée ou au second plan : une bulle du système, si le réglage le permet. Au premier
+      // plan : une alerte dans le launcher, sauf pour la conversation affichée.
+      const away = document.hidden || !document.hasFocus();
+      const page = routeRef.current;
+      const shown = (uuid: string) => !away && page?.tab === "messages" && page.friend !== undefined && page.friend.replace(/-/g, "") === uuid.replace(/-/g, "");
+      const unseen = fresh.filter((conversation) => !shown(conversation.friend.uuid));
+      if (away) {
+        if (desktopNotifications.current) {
+          for (const conversation of unseen) void api.systemNotification(`Nouveau message de ${conversation.friend.name}`, conversation.last ? previewText(conversation.last) : "").catch(() => {});
+          for (const request of requests.fresh) void api.systemNotification(`Demande d'ami de ${request.name}`, "Accepte-la dans les Messages du launcher, sur le site ou en jeu.").catch(() => {});
+        }
+      } else if (unseen.length > 0) {
+        const conversation = unseen[unseen.length - 1];
+        setMessageToast({
+          key: `m${conversation.last?.id}`,
+          name: conversation.friend.name,
+          title: unseen.length > 1 ? `${unseen.length} nouvelles conversations` : `Nouveau message de ${conversation.friend.name}`,
+          text: conversation.last ? previewText(conversation.last) : "",
+          open: { tab: "messages", friend: conversation.friend.uuid },
+        });
+      } else if (requests.fresh.length > 0) {
+        const request = requests.fresh[0];
+        setMessageToast({ key: `r${request.uuid}${request.at}`, name: request.name, title: `Demande d'ami de ${request.name}`, text: "Accepte-la ou refuse-la dans les Messages.", open: { tab: "messages" } });
       }
       setInbox({ ...next, conversations: sortConversations(next.conversations) });
       setInboxError(null);
@@ -533,14 +563,7 @@ export default function App() {
     let cancelled = false;
     let timer = 0;
     seenNotifications.current = null;
-    inboxGeneration.current += 1;
-    knownMessages.current = null;
-    knownRequests.current = null;
-    setInbox(null);
-    setInboxError(null);
     const poll = async () => {
-      // Non-lus des messages au même rythme que la cloche ; la page Messages relève elle-même sa liste.
-      if (tabRef.current !== "messages") void refreshInbox();
       try {
         const feed = await api.notifications();
         if (cancelled) return;
@@ -564,7 +587,37 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
+  }, [signedIn, profile?.uuid]);
+
+  // Messages et demandes d'amis, toutes les 15 s (30 s fenêtre cachée) ; la page Messages relève
+  // elle-même sa liste. Un autre compte repart d'une liste vide.
+  useEffect(() => {
+    if (!signedIn) return;
+    let cancelled = false;
+    let timer = 0;
+    inboxGeneration.current += 1;
+    knownMessages.current = null;
+    knownRequests.current = null;
+    setInbox(null);
+    setInboxError(null);
+    setMessageToast(null);
+    const poll = async () => {
+      if (tabRef.current !== "messages") await refreshInbox();
+      if (!cancelled) timer = window.setTimeout(poll, document.hidden ? INBOX_HIDDEN_POLL_MS : INBOX_POLL_MS);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [signedIn, profile?.uuid, refreshInbox]);
+
+  // L'alerte d'un message s'efface d'elle-même au bout de 8 s.
+  useEffect(() => {
+    if (!messageToast) return;
+    const timer = window.setTimeout(() => setMessageToast(null), MESSAGE_TOAST_MS);
+    return () => window.clearTimeout(timer);
+  }, [messageToast]);
 
   const openNotification = (item: LauncherNotification) => {
     if (item.url) open(item.url.startsWith("/") ? `${SITE_URL}${item.url}` : item.url);
@@ -1678,6 +1731,19 @@ export default function App() {
 
       <div className="fixed right-4 bottom-4 z-50 flex flex-col items-end gap-3">
         {update && <UpdateToast update={update} onInstall={() => void installUpdate()} onDismiss={() => setUpdate(null)} />}
+        {messageToast && (
+          <MessageToast
+            key={messageToast.key}
+            name={messageToast.name}
+            title={messageToast.title}
+            text={messageToast.text}
+            onOpen={() => {
+              push(messageToast.open);
+              setMessageToast(null);
+            }}
+            onDismiss={() => setMessageToast(null)}
+          />
+        )}
         {noticeToast}
       </div>
     </div>

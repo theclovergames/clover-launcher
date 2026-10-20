@@ -32,6 +32,10 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
 - **Demandes d'amis** : ajoute un joueur depuis son profil ou par son pseudo dans les Messages,
   accepte ou refuse celles que tu reçois. Elles arrivent aussi en jeu et sur le site, et la
   pastille des Messages les compte.
+- **Alerte des messages** : un nouveau message s'affiche dans le launcher quand il est au premier
+  plan (un clic ouvre la conversation), et arrive en 15 secondes au plus au lieu d'une minute (5
+  quand la fenêtre était cachée). Clic droit sur une conversation, un message ou une demande
+  d'ami pour ses actions.
 
 ### Corrections
 
