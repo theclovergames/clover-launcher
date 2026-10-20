@@ -13,7 +13,6 @@ import {
   Heart,
   LocateFixed,
   type LucideIcon,
-  Medal,
   RotateCcw,
   Rocket,
   Shield,
@@ -24,12 +23,12 @@ import {
   Trophy,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { IdleAnimation, SkinViewer } from "skinview3d";
 
 import { EmptyState } from "@/components/EmptyState";
 import { Skeleton } from "@/components/PlayerStats";
 import { SearchField } from "@/components/SearchField";
-import { SkinFront } from "@/components/SkinFront";
 import { Tabs } from "@/components/Tabs";
 import { api } from "@/lib/api";
 import { secondaryButton } from "@/lib/buttons";
@@ -37,7 +36,7 @@ import { headUrl } from "@/lib/friends";
 import { columnsOf, formatValue, isMe, rankRows, type Sort } from "@/lib/leaderboard";
 import { SITE_URL } from "@/lib/site";
 import { cn, fold } from "@/lib/utils";
-import type { LeaderboardBoard, LeaderboardRow, LeaderboardStat, PlayerLook, SkinModel } from "@/types";
+import type { LeaderboardBoard, LeaderboardRow, LeaderboardStat } from "@/types";
 
 /** Joueurs par page du tableau, comme sur le site. */
 const PAGE_SIZE = 25;
@@ -57,68 +56,104 @@ const COLORS: Record<string, string> = {
   slate: "#94a3b8",
 };
 
-/** Or, argent, bronze. */
-const PODIUM = ["#e8bc5c", "#c9ccd1", "#c98a5a"];
+type PodiumRank = 1 | 2 | 3;
 
-/** Les trois premiers, debout : skin de Mojang s'il est lu, sinon celui de minotar. */
-function Podium({ board, entries, onOpen }: { board: LeaderboardBoard; entries: { row: LeaderboardRow; rank: number }[]; onOpen: (name: string) => void }) {
-  const [looks, setLooks] = useState<Record<string, PlayerLook | null>>({});
-  const names = entries.map((entry) => entry.row.name).join(",");
+/**
+ * Marches du podium, comme sur le site : blocs d'or, de fer et de cuivre en relief, dont la hauteur
+ * dessine la silhouette du podium (le premier au centre et plus haut). `text` : couleur du score.
+ */
+const PODIUM: Record<PodiumRank, { block: string; face: string; height: string; text: string }> = {
+  1: { block: "bg-[#D9A441]", face: "text-[#5A3D0A]", height: "h-28", text: "text-amber-300" },
+  2: { block: "bg-[#C9CDD2]", face: "text-[#3F454C]", height: "h-20", text: "text-slate-200" },
+  3: { block: "bg-[#C0703A]", face: "text-[#4A2410]", height: "h-14", text: "text-orange-300" },
+};
+
+/**
+ * Joueur debout sur sa marche, en 3D comme sur le site mais figé : ni rotation ni zoom, il respire
+ * seulement (aucun mouvement si le système en demande moins). Skin et cape de Mojang, sinon le skin
+ * de minotar. Le clic va au bouton du joueur.
+ */
+function PodiumSkin({ name, width, height }: { name: string; width: number; height: number }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
+    if (!canvas.current) return;
     let alive = true;
-    for (const name of names.split(",").filter(Boolean)) {
-      api
-        .playerLook(name)
-        .then((look) => alive && setLooks((current) => ({ ...current, [name]: look })))
-        .catch(() => alive && setLooks((current) => ({ ...current, [name]: null })));
-    }
+    const viewer = new SkinViewer({ canvas: canvas.current, width, height, skin: `https://minotar.net/skin/${encodeURIComponent(name)}`, zoom: 0.9 });
+    viewer.autoRotate = false;
+    viewer.background = null;
+    viewer.globalLight.intensity = 3;
+    viewer.cameraLight.intensity = 0.7;
+    viewer.controls.enabled = false;
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) viewer.animation = new IdleAnimation();
+    api
+      .playerLook(name)
+      .then((look) => {
+        if (!alive || !look) return;
+        if (look.texture) void viewer.loadSkin(look.texture, { model: look.model === "slim" ? "slim" : "default" });
+        if (look.cape) void viewer.loadCape(look.cape);
+      })
+      .catch(() => {});
     return () => {
       alive = false;
+      viewer.dispose();
     };
-  }, [names]);
+  }, [name, width, height]);
+  return <canvas ref={canvas} aria-hidden className="pointer-events-none block" />;
+}
+
+/** Les trois premiers sur le podium ; tout l'emplacement ouvre le profil du joueur. */
+function Podium({ board, entries, me, onOpen }: { board: LeaderboardBoard; entries: { row: LeaderboardRow; rank: number }[]; me: { uuid: string; name: string }; onOpen: (name: string) => void }) {
   const key = columnsOf(board).find((stat) => stat.key === board.sortKey)!;
   return (
     // Lu dans l'ordre ; affiché avec le premier au centre, le deuxième à gauche, le troisième à droite.
-    <ol aria-label="Podium" className="grid grid-cols-3 items-end gap-3">
+    <ol aria-label="Podium" className={cn("mx-auto grid max-w-3xl items-end gap-2", entries.length >= 3 ? "grid-cols-3" : entries.length === 2 ? "grid-cols-2" : "grid-cols-1")}>
       {entries.map(({ row, rank }) => {
-        const look = looks[row.name];
-        const texture = look?.texture ?? `https://minotar.net/skin/${encodeURIComponent(row.name)}`;
-        const model: SkinModel = look?.model ?? "classic";
-        const color = PODIUM[rank - 1];
+        const meta = PODIUM[rank as PodiumRank];
+        const champion = rank === 1;
+        const value = formatValue(row.values[board.sortKey], key.format);
         return (
-          <li key={row.name} className={cn("flex min-w-0 flex-col items-center", rank === 1 ? "order-2" : rank === 2 ? "order-1" : "order-3")}>
+          <li key={row.name} className={cn("min-w-0", rank === 1 ? "order-2" : rank === 2 ? "order-1" : "order-3")}>
             <button
               type="button"
               onClick={() => onOpen(row.name)}
-              title={`Voir le profil de ${row.name}`}
-              className="group flex w-full min-w-0 flex-col items-center gap-2 rounded-lg px-2 pt-3 pb-3 transition-colors hover:bg-white/[0.03]"
+              aria-label={`${rank}${champion ? "er" : "e"} : ${row.name}, ${value} ${key.label.toLowerCase()}`}
+              className="group flex w-full flex-col items-center text-center outline-none"
             >
-              <span className="relative">
-                {look === undefined ? <Skeleton className={rank === 1 ? "h-[128px] w-[64px]" : "h-[104px] w-[52px]"} /> : <SkinFront texture={texture} model={model} scale={rank === 1 ? 4 : 3.25} className="transition-transform duration-200 motion-safe:group-hover:-translate-y-1" />}
+              <span className="transition-transform duration-300 motion-safe:group-hover:-translate-y-1">
+                <PodiumSkin name={row.name} width={champion ? 160 : 120} height={champion ? 220 : 160} />
               </span>
-              <span className="flex max-w-full items-center gap-1.5">
-                {rank === 1 ? <Crown className="size-4 shrink-0" style={{ color }} aria-hidden /> : <Medal className="size-4 shrink-0" style={{ color }} aria-hidden />}
-                <span className="truncate font-display text-lg leading-none">{row.name}</span>
+              <span className={cn("mt-1 flex max-w-full items-center gap-1.5 px-2 font-black transition-colors group-hover:text-primary group-focus-visible:underline", champion ? "text-xl" : "text-base")}>
+                <span className="truncate">{row.name}</span>
+                {isMe(row, me) && <span className="shrink-0 rounded border border-primary/30 bg-primary/10 px-1.5 text-[9px] leading-[16px] font-bold text-primary">Toi</span>}
               </span>
-              <span className="font-pixel text-[15px] leading-none" style={{ color }}>
-                {formatValue(row.values[board.sortKey], key.format)}
+              <span className={cn("font-pixel leading-tight", meta.text, champion ? "text-2xl" : "text-lg")}>
+                {value}
+                <span className="ml-1.5 font-sans text-[10px] font-bold tracking-[0.15em] text-muted-foreground uppercase">{key.label}</span>
               </span>
-              <span className="text-[11px] text-muted-foreground">{key.label}</span>
+              {/* Marche */}
+              <span aria-hidden className={cn("mc-bevel mt-3 flex w-full items-start justify-center pt-2", meta.block, meta.height)}>
+                <span className={cn("text-3xl font-black", meta.face)}>{rank}</span>
+              </span>
             </button>
-            {/* Marche du podium, plus haute pour le premier. */}
-            <span
-              aria-hidden
-              className={cn("mc-slot grid w-full place-items-center font-pixel text-xl", rank === 1 ? "h-16" : rank === 2 ? "h-11" : "h-8")}
-              style={{ color }}
-            >
-              {rank}
-            </span>
-            <span className="sr-only">{`${rank}${rank === 1 ? "er" : "e"}`}</span>
           </li>
         );
       })}
     </ol>
   );
+}
+
+/** Rang du tableau : petit bloc d'or, de fer ou de cuivre pour les trois premiers (tri du site), numéro sinon. */
+function RankLabel({ rank, podium }: { rank: number; podium: boolean }) {
+  if (podium && rank <= 3) {
+    const meta = PODIUM[rank as PodiumRank];
+    return (
+      <span className={cn("mc-bevel inline-flex size-7 items-center justify-center text-sm font-black tabular-nums [--mc-radius:4px]", meta.block, meta.face)}>
+        <span className="sr-only">Rang </span>
+        {rank}
+      </span>
+    );
+  }
+  return <span className="font-pixel text-[13px] text-muted-foreground">{rank}</span>;
 }
 
 function SortHeader({ stat, sort, onSort }: { stat: LeaderboardStat; sort: Sort; onSort: (key: string) => void }) {
@@ -256,8 +291,8 @@ export function LeaderboardScreen({ me, onOpenPlayer, onOpenLink, services = api
           />
 
           {podium.length > 0 && (
-            <section aria-label={`Podium ${board.name}`} className="mx-auto mt-6 w-full max-w-2xl">
-              <Podium board={board} entries={podium} onOpen={onOpenPlayer} />
+            <section aria-label={`Podium ${board.name}`} className="mt-6 w-full">
+              <Podium board={board} entries={podium} me={me} onOpen={onOpenPlayer} />
             </section>
           )}
 
@@ -291,8 +326,8 @@ export function LeaderboardScreen({ me, onOpenPlayer, onOpenLink, services = api
                         id={self ? "leaderboard-me" : undefined}
                         className={cn("border-t border-border transition-colors hover:bg-white/[0.03]", self && "bg-primary/[0.08]", focused === row.name && "outline-2 -outline-offset-2 outline-primary/60")}
                       >
-                        <td className="px-3 py-2 font-pixel text-[13px]" style={rank <= 3 ? { color: PODIUM[rank - 1] } : undefined}>
-                          {rank}
+                        <td className="px-3 py-1.5">
+                          <RankLabel rank={rank} podium={defaultOrder} />
                         </td>
                         <td className="px-3 py-1.5">
                           <button type="button" onClick={() => onOpenPlayer(row.name)} title={`Voir le profil de ${row.name}`} className="group flex min-w-0 items-center gap-2.5 text-left">
