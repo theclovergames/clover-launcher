@@ -93,7 +93,7 @@ export type ModInfo = {
   enabled: boolean;
 };
 
-export type Tab = "home" | "news" | "instances" | "discover" | "skins" | "console" | "settings" | "profile" | "messages";
+export type Tab = "home" | "news" | "instances" | "discover" | "skins" | "console" | "settings" | "profile" | "messages" | "leaderboard" | "player";
 
 export type InstanceKind = "clover" | "vanilla" | "fabric" | "quilt" | "forge" | "neoforge";
 export type Instance = {
@@ -432,8 +432,10 @@ export type ChatMessage = {
   deleted: boolean;
 };
 export type Conversation = { friend: ChatFriend; last: MessagePreview | null; unread: number; archived: boolean; muted: boolean; canWrite: boolean };
-/** `now` : heure du site ; `gifs` : recherche de GIF disponible. */
-export type Inbox = { now: number; unread: number; gifs: boolean; conversations: Conversation[] };
+/** Demande d'ami en attente ; dates en millisecondes, elle expire d'elle-même à `expiresAt`. */
+export type FriendRequest = { uuid: string; name: string; at: number; expiresAt: number };
+/** `now` : heure du site ; `gifs` : recherche de GIF disponible ; `requests` : demandes d'amis en attente. */
+export type Inbox = { now: number; unread: number; gifs: boolean; conversations: Conversation[]; requests: { incoming: FriendRequest[]; outgoing: FriendRequest[] } };
 /** Une page de conversation ; `updates` : messages modifiés ou supprimés depuis la page précédente. */
 export type Thread = {
   now: number;
@@ -447,6 +449,31 @@ export type Thread = {
   archived: boolean;
   muted: boolean;
 };
+/** Lien du compte actif avec un autre joueur : demande `outgoing` envoyée, `incoming` reçue. */
+export type Relation = "self" | "friend" | "outgoing" | "incoming" | "none";
+/** Profil d'un autre joueur (`/api/launcher/players`) : sans pièces ni amis, présence réservée à ses amis. */
+export type OtherPlayer = { uuid: string; name: string; relation: Relation; canRequest: boolean; stats: PlayerStats };
+/** Résultat d'une demande d'ami : `accepted` si ce joueur avait déjà demandé. */
+export type RequestSent = { result: "sent" | "accepted"; player: { uuid: string; name: string } };
+
+// ── Classement (`/api/launcher/leaderboard`, réglé dans l'administration du site) ──
+
+/** Colonne d'un tableau ; une durée est en secondes. */
+export type LeaderboardStat = { key: string; label: string; format: "number" | "duration" };
+export type LeaderboardRow = { uuid: string | null; name: string; values: Record<string, number | null> };
+/** Un tableau (un mode, le niveau, le temps de jeu…), déjà trié par `sortKey` et dédoublonné par le site. */
+export type LeaderboardBoard = {
+  id: string;
+  name: string;
+  /** Clés d'icône Lucide et de couleur du site. */
+  icon: string | null;
+  color: string | null;
+  stats: LeaderboardStat[];
+  sortKey: string;
+  ascending: boolean;
+  rows: LeaderboardRow[];
+};
+
 export type GifResult = { id: string; title: string; url: string; width: number; height: number };
 /** `next` : décalage de la page suivante, `null` à la fin. */
 export type GifPage = { gifs: GifResult[]; next: number | null };

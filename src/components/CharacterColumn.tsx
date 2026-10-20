@@ -28,6 +28,8 @@ type Props = {
   label: string;
   /** Pseudo affiché au-dessus de la tête. */
   name: string;
+  /** Nom du rendu 3D pour les lecteurs d'écran ; par défaut, celui du skin du compte. */
+  skinLabel?: string;
   look: SkinLook;
   animate?: boolean;
   elytra?: boolean;
@@ -47,7 +49,7 @@ type Props = {
  * contenu, pseudo au-dessus de la tête, fond teinté par une image floutée qui change en fondu
  * (mode choisi, skin essayé), lueur verte du launcher sans image.
  */
-export function CharacterColumn({ label, name, look, animate, elytra, tints, tint, top, overlay, children }: Props) {
+export function CharacterColumn({ label, name, skinLabel, look, animate, elytra, tints, tint, top, overlay, children }: Props) {
   const skin = useSkinStage();
   const tinted = tints.some((entry) => entry.id === tint);
   return (
@@ -72,7 +74,7 @@ export function CharacterColumn({ label, name, look, animate, elytra, tints, tin
         <div className="relative flex shrink-0 flex-col items-center">
           <p className="max-w-48 truncate bg-black/40 px-2.5 pt-1.5 pb-1 font-pixel text-[16px] leading-none">{name}</p>
           <div aria-hidden className="absolute bottom-1 left-1/2 h-4 w-24 -translate-x-1/2 rounded-[50%] bg-black/60 blur-[6px]" />
-          <SkinViewer look={look} width={Math.round(skin.height * 0.78)} height={skin.height} animate={animate} elytra={elytra} />
+          <SkinViewer look={look} width={Math.round(skin.height * 0.78)} height={skin.height} animate={animate} elytra={elytra} label={skinLabel} />
           {overlay && <div className="absolute bottom-0 left-1/2 -translate-x-1/2">{overlay}</div>}
         </div>
       </div>

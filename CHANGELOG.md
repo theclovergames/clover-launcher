@@ -23,6 +23,15 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
   notification du bureau annonce un nouveau message quand le launcher est en arrière-plan.
   « Écrire » depuis la liste d'amis du Profil ouvre la conversation, « Rejoindre » connecte à
   l'ami en jeu.
+- **Classement** : une nouvelle page, en bas de la colonne avec les Messages. Les mêmes
+  classements que sur le site, un onglet chacun : les trois premiers sur un podium, puis les 100
+  premiers triables par colonne, une recherche par pseudo et « Ma place » pour retrouver ta ligne.
+- **Profil des autres joueurs** : un pseudo du Classement, d'une conversation (ou « Voir le
+  profil » dans ses options) ou de ta liste d'amis ouvre son profil : son personnage, son niveau,
+  ses modes avec son rang, son temps de jeu et ses succès.
+- **Demandes d'amis** : ajoute un joueur depuis son profil ou par son pseudo dans les Messages,
+  accepte ou refuse celles que tu reçois. Elles arrivent aussi en jeu et sur le site, et la
+  pastille des Messages les compte.
 
 ### Corrections
 

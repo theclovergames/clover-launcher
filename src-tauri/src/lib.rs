@@ -5,6 +5,7 @@ mod game;
 mod history;
 mod import;
 mod instances;
+mod leaderboard;
 mod location;
 mod machine;
 mod messages;
@@ -1204,6 +1205,8 @@ pub fn run() {
             reset_recommended,
             notifications::notifications,
             profile::player_stats,
+            profile::player_profile,
+            leaderboard::leaderboard,
             notifications::mark_notifications_read,
             notifications::system_notification,
             messages::message_conversations,
@@ -1216,6 +1219,8 @@ pub fn run() {
             messages::conversation_state,
             messages::report_message,
             messages::search_gifs,
+            messages::send_friend_request,
+            messages::answer_friend_request,
             location::pick_game_dir,
             location::move_game_dir,
             steam::steam_status,

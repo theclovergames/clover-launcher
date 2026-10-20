@@ -3,7 +3,7 @@
  * relevées, jours, suites de messages, « Vu », non-lus et nouveaux messages à annoncer. Testé par
  * `tests/messages.test.ts`.
  */
-import type { ChatMessage, Conversation, MessagePreview } from "../types";
+import type { ChatMessage, Conversation, FriendRequest, MessagePreview } from "../types";
 
 /** Longueur d'un message, en points de code comme le site. */
 export const BODY_MAX = 1000;
@@ -25,10 +25,16 @@ export function toPreview(message: ChatMessage): MessagePreview {
   return { id: message.id, fromMe: message.fromMe, kind: message.kind, preview: text, at: message.at, deleted: message.deleted };
 }
 
-/** Texte d'un aperçu : « Message supprimé », « GIF : chat qui danse ». */
+/**
+ * Texte d'un aperçu : « Message supprimé », « GIF · chat qui danse ». Le site écrit déjà « GIF · »
+ * devant le titre ; un aperçu fait ici (message envoyé) n'a que le titre.
+ */
 export function previewText(preview: MessagePreview): string {
   if (preview.deleted) return "Message supprimé";
-  if (preview.kind === "gif") return preview.preview ? `GIF : ${preview.preview}` : "GIF";
+  if (preview.kind === "gif") {
+    const title = preview.preview.replace(/^GIF(?: · |$)/, "").trim();
+    return title ? `GIF · ${title}` : "GIF";
+  }
   return preview.preview;
 }
 
@@ -173,6 +179,16 @@ export function freshIncoming(known: ReadonlyMap<string, number> | null, list: C
     if (known && !last.fromMe && !last.deleted && conversation.unread > 0 && !conversation.muted) fresh.push(conversation);
   }
   return { known: next, fresh };
+}
+
+/**
+ * Demandes d'amis reçues depuis la relève précédente, pour les bulles du système ; aucune à la
+ * première relève (`known` à `null`), qui ne fait que les noter.
+ */
+export function freshRequests(known: ReadonlySet<string> | null, incoming: FriendRequest[]): { known: Set<string>; fresh: FriendRequest[] } {
+  const key = (request: FriendRequest) => `${request.uuid}:${request.at}`;
+  const next = new Set(incoming.map(key));
+  return { known: next, fresh: known ? incoming.filter((request) => !known.has(key(request))) : [] };
 }
 
 /** Message fait seulement d'un à quelques émojis : affiché en grand. */

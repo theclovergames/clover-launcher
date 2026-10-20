@@ -1,7 +1,7 @@
-//! Messages entre amis du compte actif, par le site (`/api/launcher/messages`, contrat commun au
-//! plugin, au site et au launcher). Le jeton du site reste ici, comme pour la cloche : l'interface
-//! ne reçoit que des conversations déjà filtrées (pseudos valides, textes bornés, GIF hébergés par
-//! Giphy seulement) et des erreurs en français.
+//! Messages et demandes d'amis du compte actif, par le site (`/api/launcher/messages` et
+//! `/api/launcher/friends/requests`, contrat commun au plugin, au site et au launcher). Le jeton du
+//! site reste ici, comme pour la cloche : l'interface ne reçoit que des conversations déjà filtrées
+//! (pseudos valides, textes bornés, GIF hébergés par Giphy seulement) et des erreurs en français.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -31,6 +31,8 @@ const GIF_SIDE_MAX: u32 = 4096;
 const PAGE_MAX: u32 = 50;
 /// Giphy ne pagine pas au-delà.
 const GIF_OFFSET_MAX: u32 = 4999;
+/// Demandes gardées par sens : au-delà, la liste d'amis (50) serait de toute façon pleine.
+const REQUESTS_MAX: usize = 100;
 /// Plus grand entier exact en JavaScript : un identifiant au-delà serait arrondi par l'interface.
 const ID_MAX: u64 = (1 << 53) - 1;
 /// Seuls hôtes d'où un GIF s'affiche : ceux où le site résout les GIF de Giphy.
@@ -174,6 +176,27 @@ pub struct Conversation {
     pub can_write: bool,
 }
 
+/// Demande d'ami en attente, reçue ou envoyée ; elle expire d'elle-même à `expires_at`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FriendRequest {
+    pub uuid: String,
+    pub name: String,
+    #[serde(default)]
+    pub at: i64,
+    #[serde(default)]
+    pub expires_at: i64,
+}
+
+/// Demandes d'amis en attente, plus récentes d'abord.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Requests {
+    #[serde(default, deserialize_with = "items")]
+    pub incoming: Vec<FriendRequest>,
+    #[serde(default, deserialize_with = "items")]
+    pub outgoing: Vec<FriendRequest>,
+}
+
 /// Conversations du compte : tous les amis, même sans message, et les anciens amis avec historique.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -188,6 +211,9 @@ pub struct Inbox {
     pub gifs: bool,
     #[serde(default, deserialize_with = "items")]
     pub conversations: Vec<Conversation>,
+    /// Absentes d'un site antérieur aux demandes d'amis : aucune.
+    #[serde(default, deserialize_with = "requests")]
+    pub requests: Requests,
 }
 
 /// Une page d'une conversation, avec les messages modifiés ou supprimés depuis `since`.
@@ -301,6 +327,10 @@ fn items<'de, D: Deserializer<'de>, T: DeserializeOwned>(deserializer: D) -> Res
     })
 }
 
+fn requests<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Requests, D::Error> {
+    Ok(lenient::<D, Requests>(deserializer)?.unwrap_or_default())
+}
+
 /// Texte, `null` lu comme vide.
 fn text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     Ok(match Value::deserialize(deserializer)? {
@@ -344,7 +374,7 @@ fn is_bidi_control(c: char) -> bool {
 
 /// Texte du site prêt à afficher : sans caractères de contrôle ni marques de direction, les sauts
 /// de ligne gardés seulement si `multiline`, tronqué à `max` caractères.
-fn clean(text: &str, max: usize, multiline: bool) -> String {
+pub(crate) fn clean(text: &str, max: usize, multiline: bool) -> String {
     text.chars()
         .filter_map(|c| match c {
             '\n' if multiline => Some('\n'),
@@ -357,7 +387,7 @@ fn clean(text: &str, max: usize, multiline: bool) -> String {
 }
 
 /// UUID avec tirets, en minuscules, comme dans les bases du jeu.
-fn is_uuid(text: &str) -> bool {
+pub(crate) fn is_uuid(text: &str) -> bool {
     text.len() == 36
         && text.bytes().enumerate().all(|(index, byte)| match index {
             8 | 13 | 18 | 23 => byte == b'-',
@@ -423,8 +453,21 @@ fn conversation(mut conversation: Conversation) -> Option<Conversation> {
     Some(conversation)
 }
 
+/// Demandes au pseudo et à l'UUID valides, comme les amis.
+fn friend_requests(list: Vec<FriendRequest>) -> Vec<FriendRequest> {
+    list.into_iter()
+        .filter_map(|mut request| {
+            request.uuid = request.uuid.to_ascii_lowercase();
+            (is_uuid(&request.uuid) && is_player_name(&request.name)).then_some(request)
+        })
+        .take(REQUESTS_MAX)
+        .collect()
+}
+
 fn inbox(mut inbox: Inbox) -> Inbox {
     inbox.conversations = inbox.conversations.into_iter().filter_map(conversation).collect();
+    inbox.requests.incoming = friend_requests(std::mem::take(&mut inbox.requests.incoming));
+    inbox.requests.outgoing = friend_requests(std::mem::take(&mut inbox.requests.outgoing));
     inbox
 }
 
@@ -484,15 +527,47 @@ fn decode<T: DeserializeOwned>(body: &str) -> Result<T, String> {
 /// Appel authentifié au site, avec l'en-tête du contrat : corps de la réponse si elle réussit,
 /// sinon l'erreur à afficher.
 async fn request(current: &CurrentSession, tokens: &SiteTokens, send: impl Fn(&reqwest::Client, &str) -> reqwest::RequestBuilder) -> Result<String, String> {
-    let session = session(current).await?;
-    let response = authorized_response(tokens, &session, |http, base, token| send(http, base).bearer_auth(token).header(CONTRACT.0, CONTRACT.1)).await?;
-    let status = response.status().as_u16();
-    let body = response.text().await.map_err(|_| UNREADABLE.to_owned())?;
+    let (status, body) = site_response(current, tokens, send).await?;
     if (200..300).contains(&status) {
         Ok(body)
     } else {
         Err(failure_message(status, &body))
     }
+}
+
+/// Code et corps de la réponse du site, pour l'appelant qui lit lui-même un code d'erreur.
+pub(crate) async fn site_response(current: &CurrentSession, tokens: &SiteTokens, send: impl Fn(&reqwest::Client, &str) -> reqwest::RequestBuilder) -> Result<(u16, String), String> {
+    let session = session(current).await?;
+    let response = authorized_response(tokens, &session, |http, base, token| send(http, base).bearer_auth(token).header(CONTRACT.0, CONTRACT.1)).await?;
+    let status = response.status().as_u16();
+    let body = response.text().await.map_err(|_| UNREADABLE.to_owned())?;
+    Ok((status, body))
+}
+
+/// Réponse d'erreur au format du contrat (`{"schema":1,"error":…}`) : elle vient de la route, pas
+/// d'une page 404 d'un site qui ne la connaît pas encore.
+pub(crate) fn is_contract_error(body: &str) -> bool {
+    serde_json::from_str::<Value>(body).is_ok_and(|value| value.get("schema").is_some() && value.get("error").is_some_and(Value::is_string))
+}
+
+pub(crate) fn failure(status: u16, body: &str, unavailable: &str) -> String {
+    let error = failure_message(status, body);
+    if error == UNAVAILABLE { unavailable.to_owned() } else { error }
+}
+
+/// Comme `request`, pour une route plus récente que les messages : une route absente dit
+/// `unavailable` plutôt que « messages pas encore disponibles ».
+async fn site_request(current: &CurrentSession, tokens: &SiteTokens, unavailable: &str, send: impl Fn(&reqwest::Client, &str) -> reqwest::RequestBuilder) -> Result<String, String> {
+    let (status, body) = site_response(current, tokens, send).await?;
+    if (200..300).contains(&status) {
+        Ok(body)
+    } else {
+        Err(failure(status, &body, unavailable))
+    }
+}
+
+pub(crate) fn decode_body<T: DeserializeOwned>(body: &str) -> Result<T, String> {
+    decode(body)
 }
 
 fn friend_id(friend: &str) -> Result<String, String> {
@@ -688,6 +763,51 @@ pub async fn search_gifs(query: Option<String>, offset: Option<u32>, current: St
     Ok(gif_page(decode(&body)?))
 }
 
+const REQUESTS_UNAVAILABLE: &str = "Les demandes d'amis ne sont pas encore disponibles dans le launcher.";
+
+/// Joueur d'une demande envoyée.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RequestedPlayer {
+    pub uuid: String,
+    pub name: String,
+}
+
+/// `accepted` : ce joueur avait déjà demandé, vous voilà amis.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RequestSent {
+    pub result: String,
+    pub player: RequestedPlayer,
+}
+
+/// Demande d'ami à un joueur déjà venu sur le serveur, par son pseudo.
+#[tauri::command]
+pub async fn send_friend_request(name: String, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<RequestSent, String> {
+    let name = name.trim();
+    if !is_player_name(name) {
+        return Err("Pseudo invalide : 3 à 16 lettres, chiffres ou _.".into());
+    }
+    let payload = serde_json::json!({ "name": name });
+    let body = site_request(&current, &tokens, REQUESTS_UNAVAILABLE, |http, base| http.post(format!("{base}/api/launcher/friends/requests")).json(&payload)).await?;
+    let mut sent: RequestSent = decode(&body)?;
+    sent.player.uuid = sent.player.uuid.to_ascii_lowercase();
+    if !is_uuid(&sent.player.uuid) || !is_player_name(&sent.player.name) || !matches!(sent.result.as_str(), "sent" | "accepted") {
+        return Err(UNREADABLE.into());
+    }
+    Ok(sent)
+}
+
+/// Accepter ou refuser une demande reçue, annuler une demande envoyée.
+#[tauri::command]
+pub async fn answer_friend_request(player: String, action: String, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<(), String> {
+    let player = Some(player.trim().to_ascii_lowercase()).filter(|player| is_uuid(player)).ok_or("Demande introuvable.")?;
+    if !matches!(action.as_str(), "accept" | "decline" | "cancel") {
+        return Err("Action inconnue.".into());
+    }
+    let payload = serde_json::json!({ "action": action });
+    site_request(&current, &tokens, REQUESTS_UNAVAILABLE, |http, base| http.post(format!("{base}/api/launcher/friends/requests/{player}")).json(&payload)).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,6 +843,29 @@ mod tests {
         // Ancien ami : lecture seule, et un aperçu illisible est simplement absent.
         let former = &inbox.conversations[1];
         assert!(!former.can_write && former.last.is_none());
+    }
+
+    #[test]
+    fn reads_friend_requests() {
+        let inbox = inbox(
+            serde_json::from_str::<Inbox>(&format!(
+                r#"{{"schema":1,"conversations":[],"requests":{{
+                  "incoming":[{{"uuid":"{}","name":"Kanname","at":1,"expiresAt":2}},{{"uuid":"{KANNAME}","name":"../x","at":1,"expiresAt":2}},"oops"],
+                  "outgoing":"oops"}}}}"#,
+                KANNAME.to_uppercase(),
+            ))
+            .unwrap(),
+        );
+        assert_eq!(inbox.requests.incoming.len(), 1);
+        assert_eq!((inbox.requests.incoming[0].uuid.as_str(), inbox.requests.incoming[0].expires_at), (KANNAME, 2));
+        assert!(inbox.requests.outgoing.is_empty());
+        // Site antérieur aux demandes d'amis : aucune.
+        let older = inbox_of(r#"{"schema":1,"conversations":[]}"#);
+        assert!(older.requests.incoming.is_empty() && older.requests.outgoing.is_empty());
+    }
+
+    fn inbox_of(json: &str) -> Inbox {
+        inbox(serde_json::from_str(json).unwrap())
     }
 
     #[test]
@@ -789,6 +932,9 @@ mod tests {
     fn maps_site_errors_to_french_messages() {
         // Route absente : page 404 du site, sans message.
         assert_eq!(failure_message(404, "<!DOCTYPE html><html>…</html>"), UNAVAILABLE);
+        assert_eq!(failure(404, "<!DOCTYPE html>", "Profils indisponibles."), "Profils indisponibles.");
+        assert!(is_contract_error(r#"{"schema":1,"error":"Joueur introuvable."}"#));
+        assert!(!is_contract_error("<!DOCTYPE html>") && !is_contract_error(r#"{"error":"x"}"#));
         assert_eq!(failure_message(404, r#"{"schema":1,"error":"Ce joueur n'est pas ton ami."}"#), "Ce joueur n'est pas ton ami.");
         assert_eq!(failure_message(429, ""), TOO_MANY);
         assert_eq!(failure_message(429, r#"{"schema":1,"error":"Doucement !"}"#), "Doucement !");

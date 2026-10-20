@@ -8,6 +8,7 @@ import {
   filterConversations,
   firstUnreadId,
   freshIncoming,
+  freshRequests,
   groupByDay,
   isEmojiOnly,
   lastIncomingId,
@@ -178,4 +179,24 @@ test("la grille de GIF équilibre la hauteur de ses colonnes", () => {
     2,
   );
   assert.deepEqual(columns.map((column) => column.map((item) => item.id)), [["a"], ["b", "c", "d"]]);
+});
+
+test("une demande d'ami ne fait une bulle qu'à son arrivée, pas à la première relève", () => {
+  const kanname = { uuid: "f1", name: "Kanname", at: 1, expiresAt: 2 };
+  const first = freshRequests(null, [kanname]);
+  assert.deepEqual(first.fresh, []);
+  const again = freshRequests(first.known, [kanname]);
+  assert.deepEqual(again.fresh, []);
+  const steve = { uuid: "f2", name: "Steve", at: 3, expiresAt: 4 };
+  assert.deepEqual(freshRequests(again.known, [steve, kanname]).fresh, [steve]);
+  // Refusée puis renvoyée : une nouvelle demande.
+  assert.deepEqual(freshRequests(again.known, [{ ...kanname, at: 5 }]).fresh.length, 1);
+});
+
+test("un GIF s'annonce une seule fois « GIF · », qu'il vienne du site ou d'un envoi", () => {
+  const gif = { id: 1, fromMe: true, kind: "gif" as const, at: 1, deleted: false };
+  assert.equal(previewText({ ...gif, preview: "GIF · Good Game Fist Bump GIF" }), "GIF · Good Game Fist Bump GIF");
+  assert.equal(previewText({ ...gif, preview: "Good Game Fist Bump GIF" }), "GIF · Good Game Fist Bump GIF");
+  assert.equal(previewText({ ...gif, preview: "GIF" }), "GIF");
+  assert.equal(previewText({ ...gif, preview: "" }), "GIF");
 });
