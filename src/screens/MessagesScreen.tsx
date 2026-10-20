@@ -29,13 +29,14 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { type FormEvent, type KeyboardEvent, type ReactNode, type UIEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ComponentType, type FormEvent, type KeyboardEvent, type ReactNode, type UIEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { EmojiPicker } from "@/components/EmojiPicker";
 import { EmptyState } from "@/components/EmptyState";
 import { GifPicker } from "@/components/GifPicker";
 import { SearchField } from "@/components/SearchField";
 import { Tabs } from "@/components/Tabs";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api } from "@/lib/api";
@@ -161,39 +162,119 @@ function FriendHead({ friend, size }: { friend: ChatFriend; size: number }) {
   );
 }
 
-function ConversationRow({ conversation, selected, modes, onOpen }: { conversation: Conversation; selected: boolean; modes: Mode[]; onOpen: () => void }) {
+/** Entrées d'un menu, du bouton « … » (DropdownMenu) ou du clic droit (ContextMenu) : mêmes actions dans les deux. */
+type MenuParts = {
+  Item: ComponentType<{ destructive?: boolean; disabled?: boolean; onSelect?: () => void; children: ReactNode }>;
+  Separator: ComponentType;
+};
+const DROPDOWN: MenuParts = { Item: DropdownMenuItem, Separator: DropdownMenuSeparator };
+const CONTEXT: MenuParts = { Item: ContextMenuItem, Separator: ContextMenuSeparator };
+
+/** Actions sur une conversation, depuis la liste ou son en-tête ; absentes si elles n'ont pas de sens ici. */
+type ConversationActions = {
+  onOpen?: () => void;
+  onProfile: () => void;
+  join?: { label: string; disabled: boolean; onSelect: () => void };
+  onMarkRead?: () => void;
+  archived: boolean;
+  muted: boolean;
+  onState: (change: { archived?: boolean; muted?: boolean }) => void;
+  onClear?: { disabled: boolean; onSelect: () => void };
+};
+
+function ConversationMenuItems({ parts: { Item, Separator }, actions }: { parts: MenuParts; actions: ConversationActions }) {
+  return (
+    <>
+      {actions.onOpen && (
+        <Item onSelect={actions.onOpen}>
+          <MessageCircle aria-hidden />
+          Ouvrir la conversation
+        </Item>
+      )}
+      <Item onSelect={actions.onProfile}>
+        <UserRound aria-hidden />
+        Voir le profil
+      </Item>
+      {actions.join && (
+        <Item disabled={actions.join.disabled} onSelect={actions.join.onSelect}>
+          <Play aria-hidden />
+          {actions.join.label}
+        </Item>
+      )}
+      <Separator />
+      {actions.onMarkRead && (
+        <Item onSelect={actions.onMarkRead}>
+          <CheckCheck aria-hidden />
+          Marquer comme lu
+        </Item>
+      )}
+      <Item onSelect={() => actions.onState({ archived: !actions.archived })}>
+        {actions.archived ? <ArchiveRestore aria-hidden /> : <Archive aria-hidden />}
+        {actions.archived ? "Désarchiver" : "Archiver"}
+      </Item>
+      <Item onSelect={() => actions.onState({ muted: !actions.muted })}>
+        {actions.muted ? <Bell aria-hidden /> : <BellOff aria-hidden />}
+        {actions.muted ? "Rétablir les notifications" : "Couper les notifications"}
+      </Item>
+      {actions.onClear && (
+        <>
+          <Separator />
+          <Item destructive disabled={actions.onClear.disabled} onSelect={actions.onClear.onSelect}>
+            <Eraser aria-hidden />
+            Vider la conversation
+          </Item>
+        </>
+      )}
+    </>
+  );
+}
+
+/** Clic droit sur `children` : le menu s'ouvre sous le curseur ; sans `menu`, rien ne change. */
+function RightClickMenu({ label, children, menu }: { label: string; children: ReactNode; menu: ReactNode }) {
+  if (!menu) return children;
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent aria-label={label}>{menu}</ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+function ConversationRow({ conversation, selected, modes, onOpen, actions }: { conversation: Conversation; selected: boolean; modes: Mode[]; onOpen: () => void; actions: ConversationActions }) {
   const { friend, last, unread, muted } = conversation;
   const loud = unread > 0 && !muted;
   const where = friend.online ? (friend.server ? (findMode(modes, friend.server)?.name ?? friend.server) : "En ligne") : null;
   return (
     <li>
-      <button
-        type="button"
-        aria-current={selected ? "true" : undefined}
-        onClick={onOpen}
-        className={cn("flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors", selected ? "bg-primary/12 ring-1 ring-primary/25 ring-inset" : "hover:bg-white/[0.04]")}
-      >
-        <FriendHead friend={friend} size={36} />
-        <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="flex min-w-0 items-baseline gap-2">
-            <span className={cn("truncate text-[13px]", loud ? "font-extrabold" : "font-bold")}>{friend.name}</span>
-            {where && <span className="min-w-0 truncate text-[11px] text-primary">{where}</span>}
-            {last && <span className={cn("ml-auto shrink-0 text-[11px] tabular-nums", loud ? "text-foreground" : "text-muted-foreground")}>{shortWhen(last.at, Date.now())}</span>}
-          </span>
-          <span className="flex min-w-0 items-center gap-2">
-            <span className={cn("min-w-0 flex-1 truncate text-xs", loud ? "text-foreground" : "text-muted-foreground", last?.deleted && "italic")}>
-              {last ? `${last.fromMe ? "Toi : " : ""}${previewText(last)}` : conversation.canWrite ? "Aucun message" : "Ancien ami"}
+      <RightClickMenu label={`Actions pour la conversation avec ${friend.name}`} menu={<ConversationMenuItems parts={CONTEXT} actions={actions} />}>
+        <button
+          type="button"
+          aria-current={selected ? "true" : undefined}
+          onClick={onOpen}
+          className={cn("flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors", selected ? "bg-primary/12 ring-1 ring-primary/25 ring-inset" : "hover:bg-white/[0.04]")}
+        >
+          <FriendHead friend={friend} size={36} />
+          <span className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className={cn("truncate text-[13px]", loud ? "font-extrabold" : "font-bold")}>{friend.name}</span>
+              {where && <span className="min-w-0 truncate text-[11px] text-primary">{where}</span>}
+              {last && <span className={cn("ml-auto shrink-0 text-[11px] tabular-nums", loud ? "text-foreground" : "text-muted-foreground")}>{shortWhen(last.at, Date.now())}</span>}
             </span>
-            {muted && <BellOff className="size-3.5 shrink-0 text-muted-foreground" aria-label="Notifications coupées" />}
-            {unread > 0 && (
-              <span className={cn("grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full px-1 font-pixel text-[10px] leading-none", muted ? "bg-secondary text-muted-foreground" : "bg-primary text-primary-foreground")}>
-                {unread > 99 ? "99+" : unread}
-                <span className="sr-only"> non lu{unread > 1 ? "s" : ""}</span>
+            <span className="flex min-w-0 items-center gap-2">
+              <span className={cn("min-w-0 flex-1 truncate text-xs", loud ? "text-foreground" : "text-muted-foreground", last?.deleted && "italic")}>
+                {last ? `${last.fromMe ? "Toi : " : ""}${previewText(last)}` : conversation.canWrite ? "Aucun message" : "Ancien ami"}
               </span>
-            )}
+              {muted && <BellOff className="size-3.5 shrink-0 text-muted-foreground" aria-label="Notifications coupées" />}
+              {unread > 0 && (
+                <span className={cn("grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full px-1 font-pixel text-[10px] leading-none", muted ? "bg-secondary text-muted-foreground" : "bg-primary text-primary-foreground")}>
+                  {unread > 99 ? "99+" : unread}
+                  <span className="sr-only"> non lu{unread > 1 ? "s" : ""}</span>
+                </span>
+              )}
+            </span>
           </span>
-        </span>
-      </button>
+        </button>
+      </RightClickMenu>
     </li>
   );
 }
@@ -231,29 +312,60 @@ function RequestButton({ label, tone, busy, onClick, children }: { label: string
  */
 function FriendRequests({ requests, busy, onAnswer, onOpenPlayer }: { requests: Inbox["requests"]; busy: string | null; onAnswer: (request: FriendRequest, action: RequestAction) => void; onOpenPlayer: (name: string) => void }) {
   const row = (request: FriendRequest, incoming: boolean) => (
-    <li key={request.uuid} className="flex items-center gap-3 rounded-lg px-2.5 py-2">
-      <img src={headUrl(request.name)} alt="" width={36} height={36} draggable={false} className="pixelated size-9 shrink-0 rounded-[4px]" />
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <button type="button" onClick={() => onOpenPlayer(request.name)} title={`Voir le profil de ${request.name}`} className="truncate text-left text-[13px] font-bold underline-offset-2 hover:underline">
-          {request.name}
-        </button>
-        <span className="truncate text-[11px] text-muted-foreground">{incoming ? "Veut devenir ton ami" : "Demande envoyée"}</span>
-      </span>
-      {incoming ? (
+    <RightClickMenu
+      key={request.uuid}
+      label={`Demande ${incoming ? "de" : "à"} ${request.name}`}
+      menu={
         <>
-          <RequestButton label={`Accepter la demande de ${request.name}`} tone="primary" busy={busy === request.uuid} onClick={() => onAnswer(request, "accept")}>
-            <Check className="size-4" aria-hidden />
-          </RequestButton>
-          <RequestButton label={`Refuser la demande de ${request.name}`} tone="plain" busy={busy === request.uuid} onClick={() => onAnswer(request, "decline")}>
+          <ContextMenuItem onSelect={() => onOpenPlayer(request.name)}>
+            <UserRound aria-hidden />
+            Voir le profil
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          {incoming ? (
+            <>
+              <ContextMenuItem disabled={busy === request.uuid} onSelect={() => onAnswer(request, "accept")}>
+                <Check aria-hidden />
+                Accepter
+              </ContextMenuItem>
+              <ContextMenuItem destructive disabled={busy === request.uuid} onSelect={() => onAnswer(request, "decline")}>
+                <X aria-hidden />
+                Refuser
+              </ContextMenuItem>
+            </>
+          ) : (
+            <ContextMenuItem destructive disabled={busy === request.uuid} onSelect={() => onAnswer(request, "cancel")}>
+              <X aria-hidden />
+              Annuler la demande
+            </ContextMenuItem>
+          )}
+        </>
+      }
+    >
+      <li className="flex items-center gap-3 rounded-lg px-2.5 py-2">
+        <img src={headUrl(request.name)} alt="" width={36} height={36} draggable={false} className="pixelated size-9 shrink-0 rounded-[4px]" />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <button type="button" onClick={() => onOpenPlayer(request.name)} title={`Voir le profil de ${request.name}`} className="truncate text-left text-[13px] font-bold underline-offset-2 hover:underline">
+            {request.name}
+          </button>
+          <span className="truncate text-[11px] text-muted-foreground">{incoming ? "Veut devenir ton ami" : "Demande envoyée"}</span>
+        </span>
+        {incoming ? (
+          <>
+            <RequestButton label={`Accepter la demande de ${request.name}`} tone="primary" busy={busy === request.uuid} onClick={() => onAnswer(request, "accept")}>
+              <Check className="size-4" aria-hidden />
+            </RequestButton>
+            <RequestButton label={`Refuser la demande de ${request.name}`} tone="plain" busy={busy === request.uuid} onClick={() => onAnswer(request, "decline")}>
+              <X className="size-4" aria-hidden />
+            </RequestButton>
+          </>
+        ) : (
+          <RequestButton label={`Annuler la demande à ${request.name}`} tone="plain" busy={busy === request.uuid} onClick={() => onAnswer(request, "cancel")}>
             <X className="size-4" aria-hidden />
           </RequestButton>
-        </>
-      ) : (
-        <RequestButton label={`Annuler la demande à ${request.name}`} tone="plain" busy={busy === request.uuid} onClick={() => onAnswer(request, "cancel")}>
-          <X className="size-4" aria-hidden />
-        </RequestButton>
-      )}
-    </li>
+        )}
+      </li>
+    </RightClickMenu>
   );
   return (
     <section aria-labelledby="friend-requests" className="mb-2 border-b border-border pb-2">
@@ -334,6 +446,7 @@ function ConversationList({
   onAnswer,
   onSendRequest,
   onOpenPlayer,
+  actionsFor,
 }: {
   inbox: Inbox | null;
   error: string | null;
@@ -344,6 +457,7 @@ function ConversationList({
   onAnswer: (request: FriendRequest, action: RequestAction) => void;
   onSendRequest: (name: string) => Promise<boolean>;
   onOpenPlayer: (name: string) => void;
+  actionsFor: (conversation: Conversation) => ConversationActions;
 }) {
   const [view, setView] = useState<"all" | "archived">("all");
   const [query, setQuery] = useState("");
@@ -397,6 +511,7 @@ function ConversationList({
                 selected={selected !== null && plain(selected) === plain(conversation.friend.uuid)}
                 modes={modes}
                 onOpen={() => onOpen(conversation.friend.uuid)}
+                actions={actionsFor(conversation)}
               />
             ))}
           </ul>
@@ -461,9 +576,51 @@ type MessageActions = {
   onReport?: () => void;
 };
 
-function MessageMenu({ mine, actions, open, onOpenChange }: { mine: boolean; actions: MessageActions; open: boolean; onOpenChange: (open: boolean) => void }) {
+function MessageMenuItems({ parts: { Item, Separator }, actions }: { parts: MenuParts; actions: MessageActions }) {
   return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+    <>
+      {actions.onReply && (
+        <Item onSelect={actions.onReply}>
+          <Reply aria-hidden />
+          Répondre
+        </Item>
+      )}
+      {actions.onEdit && (
+        <Item onSelect={actions.onEdit}>
+          <PenLine aria-hidden />
+          Modifier
+        </Item>
+      )}
+      {actions.onCopy && (
+        <Item onSelect={actions.onCopy}>
+          <Copy aria-hidden />
+          Copier
+        </Item>
+      )}
+      <Separator />
+      <Item destructive onSelect={actions.onDeleteForMe}>
+        <Trash2 aria-hidden />
+        Supprimer pour moi
+      </Item>
+      {actions.onDeleteForAll && (
+        <Item destructive onSelect={actions.onDeleteForAll}>
+          <Trash2 aria-hidden />
+          Supprimer pour tous
+        </Item>
+      )}
+      {actions.onReport && (
+        <Item destructive onSelect={actions.onReport}>
+          <Flag aria-hidden />
+          Signaler
+        </Item>
+      )}
+    </>
+  );
+}
+
+function MessageMenu({ mine, actions }: { mine: boolean; actions: MessageActions }) {
+  return (
+    <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -474,41 +631,7 @@ function MessageMenu({ mine, actions, open, onOpenChange }: { mine: boolean; act
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align={mine ? "end" : "start"} aria-label="Actions du message">
-        {actions.onReply && (
-          <DropdownMenuItem onSelect={actions.onReply}>
-            <Reply aria-hidden />
-            Répondre
-          </DropdownMenuItem>
-        )}
-        {actions.onEdit && (
-          <DropdownMenuItem onSelect={actions.onEdit}>
-            <PenLine aria-hidden />
-            Modifier
-          </DropdownMenuItem>
-        )}
-        {actions.onCopy && (
-          <DropdownMenuItem onSelect={actions.onCopy}>
-            <Copy aria-hidden />
-            Copier
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem destructive onSelect={actions.onDeleteForMe}>
-          <Trash2 aria-hidden />
-          Supprimer pour moi
-        </DropdownMenuItem>
-        {actions.onDeleteForAll && (
-          <DropdownMenuItem destructive onSelect={actions.onDeleteForAll}>
-            <Trash2 aria-hidden />
-            Supprimer pour tous
-          </DropdownMenuItem>
-        )}
-        {actions.onReport && (
-          <DropdownMenuItem destructive onSelect={actions.onReport}>
-            <Flag aria-hidden />
-            Signaler
-          </DropdownMenuItem>
-        )}
+        <MessageMenuItems parts={DROPDOWN} actions={actions} />
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -548,7 +671,6 @@ function MessageRow(props: {
   onMediaLoad: () => void;
 }) {
   const { entry, friend, runStart, runEnd, seen, highlighted, actions } = props;
-  const [menu, setMenu] = useState(false);
   const message = entry.message;
   const pending = entry.pending;
   const mine = entry.fromMe;
@@ -567,60 +689,57 @@ function MessageRow(props: {
       {!mine && <span className="w-7 shrink-0">{runEnd && <img src={headUrl(friend.name)} alt="" width={28} height={28} draggable={false} className="pixelated size-7 rounded-[4px]" />}</span>}
       <div className={cn("flex max-w-[min(72%,540px)] min-w-0 flex-col gap-1", mine ? "items-end" : "items-start")}>
         <div className={cn("flex max-w-full min-w-0 items-center gap-1", mine && "flex-row-reverse")}>
-          <div
-            onContextMenu={(event) => {
-              if (!actions) return;
-              event.preventDefault();
-              setMenu(true);
-            }}
-            className={cn(
-              "relative max-w-full min-w-0 rounded-xl text-[14px] leading-snug transition-[outline-color] duration-300",
-              deleted
-                ? "border border-dashed border-border px-3 py-2 text-muted-foreground italic"
-                : emojiOnly
-                  ? "px-0.5 text-[34px] leading-tight"
-                  : cn(
-                      kind === "gif" && gif ? "p-1" : "px-3 py-2",
-                      mine ? "bg-primary/15 ring-1 ring-primary/25 ring-inset" : "bg-card ring-1 ring-border ring-inset",
-                      runEnd && (mine ? "rounded-br-sm" : "rounded-bl-sm"),
-                    ),
-              pending?.state === "sending" && "opacity-70",
-              failed && "ring-destructive/60",
-              highlighted ? "outline-2 outline-offset-2 outline-accent" : "outline-2 outline-offset-2 outline-transparent",
-            )}
-          >
-            {replyTo && !deleted && (
-              <div className={cn(kind === "gif" && gif && "px-2 pt-1")}>
-                <Quote preview={replyTo} friendName={friend.name} onJump={message ? () => props.onJump(replyTo.id) : undefined} />
-              </div>
-            )}
-            {deleted ? (
-              <span className="flex items-center gap-1.5">
-                <Ban className="size-3.5" aria-hidden />
-                Message supprimé
-              </span>
-            ) : kind === "gif" ? (
-              gif ? (
-                <img
-                  src={gif.url}
-                  alt={body ? `GIF : ${body}` : "GIF"}
-                  title={body || undefined}
-                  width={gif.width || undefined}
-                  height={gif.height || undefined}
-                  loading="lazy"
-                  draggable={false}
-                  onLoad={props.onMediaLoad}
-                  style={{ width: Math.min(GIF_WIDTH_PX, gif.width || GIF_WIDTH_PX), aspectRatio: gif.width > 0 && gif.height > 0 ? `${gif.width} / ${gif.height}` : undefined }}
-                  className="block h-auto max-w-full rounded-lg bg-sunken"
-                />
+          <RightClickMenu label="Actions du message" menu={actions && <MessageMenuItems parts={CONTEXT} actions={actions} />}>
+            <div
+              className={cn(
+                "relative max-w-full min-w-0 rounded-xl text-[14px] leading-snug transition-[outline-color] duration-300",
+                deleted
+                  ? "border border-dashed border-border px-3 py-2 text-muted-foreground italic"
+                  : emojiOnly
+                    ? "px-0.5 text-[34px] leading-tight"
+                    : cn(
+                        kind === "gif" && gif ? "p-1" : "px-3 py-2",
+                        mine ? "bg-primary/15 ring-1 ring-primary/25 ring-inset" : "bg-card ring-1 ring-border ring-inset",
+                        runEnd && (mine ? "rounded-br-sm" : "rounded-bl-sm"),
+                      ),
+                pending?.state === "sending" && "opacity-70",
+                failed && "ring-destructive/60",
+                highlighted ? "outline-2 outline-offset-2 outline-accent" : "outline-2 outline-offset-2 outline-transparent",
+              )}
+            >
+              {replyTo && !deleted && (
+                <div className={cn(kind === "gif" && gif && "px-2 pt-1")}>
+                  <Quote preview={replyTo} friendName={friend.name} onJump={message ? () => props.onJump(replyTo.id) : undefined} />
+                </div>
+              )}
+              {deleted ? (
+                <span className="flex items-center gap-1.5">
+                  <Ban className="size-3.5" aria-hidden />
+                  Message supprimé
+                </span>
+              ) : kind === "gif" ? (
+                gif ? (
+                  <img
+                    src={gif.url}
+                    alt={body ? `GIF : ${body}` : "GIF"}
+                    title={body || undefined}
+                    width={gif.width || undefined}
+                    height={gif.height || undefined}
+                    loading="lazy"
+                    draggable={false}
+                    onLoad={props.onMediaLoad}
+                    style={{ width: Math.min(GIF_WIDTH_PX, gif.width || GIF_WIDTH_PX), aspectRatio: gif.width > 0 && gif.height > 0 ? `${gif.width} / ${gif.height}` : undefined }}
+                    className="block h-auto max-w-full rounded-lg bg-sunken"
+                  />
+                ) : (
+                  <span className="text-muted-foreground italic">GIF indisponible{body ? ` : ${body}` : ""}</span>
+                )
               ) : (
-                <span className="text-muted-foreground italic">GIF indisponible{body ? ` : ${body}` : ""}</span>
-              )
-            ) : (
-              <p className="break-words whitespace-pre-wrap select-text [overflow-wrap:anywhere]">{body}</p>
-            )}
-          </div>
-          {actions && <MessageMenu mine={mine} actions={actions} open={menu} onOpenChange={setMenu} />}
+                <p className="break-words whitespace-pre-wrap select-text [overflow-wrap:anywhere]">{body}</p>
+              )}
+            </div>
+          </RightClickMenu>
+          {actions && <MessageMenu mine={mine} actions={actions} />}
         </div>
         {showMeta && (
           <p className={cn("flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-[11px] text-muted-foreground", mine && "justify-end")}>
@@ -1038,7 +1157,13 @@ function ThreadPane(props: {
   const actionsFor = (message: ChatMessage): MessageActions => ({
     onReply: canWrite && !message.deleted ? () => startReply(message) : undefined,
     onEdit: canEdit(message, now) ? () => startEdit(message) : undefined,
-    onCopy: message.deleted ? undefined : () => void navigator.clipboard.writeText(message.kind === "gif" ? (message.gif?.url ?? message.body) : message.body).then(() => setAnnounce("Message copié."), () => {}),
+    onCopy: message.deleted
+      ? undefined
+      : () => {
+          const selected = window.getSelection()?.toString() ?? "";
+          const whole = message.kind === "gif" ? (message.gif?.url ?? message.body) : message.body;
+          void navigator.clipboard.writeText(selected && message.kind === "text" && message.body.includes(selected) ? selected : whole).then(() => setAnnounce("Message copié."), () => {});
+        },
     onDeleteForMe: () => remove(message, false),
     onDeleteForAll: message.fromMe && !message.deleted ? () => remove(message, true) : undefined,
     onReport: !message.fromMe && !message.deleted ? () => setReporting(message) : undefined,
@@ -1046,6 +1171,14 @@ function ThreadPane(props: {
 
   const join = joinableMode(friend, props.modes);
   const modeName = friend.server ? findMode(props.modes, friend.server)?.name : undefined;
+  const headerActions: ConversationActions = {
+    onProfile: () => props.onOpenPlayer(name),
+    join: join && { label: `Rejoindre sur ${join.name}`, disabled: props.playBusy, onSelect: () => props.onPlay(join.id) },
+    archived,
+    muted,
+    onState: (change) => void changeState(change),
+    onClear: { disabled: !loaded || loaded.messages.length === 0, onSelect: clearConversation },
+  };
   const seenId = loaded ? seenMessageId(loaded.messages, loaded.seenUpTo) : null;
   const entries = [...(loaded?.messages ?? []).map(entryOf), ...pending.map(pendingEntry)];
   const days = groupByDay(entries, now);
@@ -1053,67 +1186,52 @@ function ThreadPane(props: {
 
   return (
     <section aria-label={`Conversation avec ${name}`} className="relative flex min-w-0 flex-1 flex-col">
-      <header className="flex h-[68px] shrink-0 items-center gap-3 border-b border-border px-5">
-        <button type="button" onClick={() => props.onOpenPlayer(name)} aria-label={`Voir le profil de ${name}`} title={`Voir le profil de ${name}`} className="shrink-0 rounded-[4px] transition-opacity hover:opacity-80">
-          <FriendHead friend={friend} size={40} />
-        </button>
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <h2 className="flex min-w-0 items-center gap-2">
-            <button type="button" onClick={() => props.onOpenPlayer(name)} title={`Voir le profil de ${name}`} className="truncate font-display text-[22px] leading-none underline-offset-4 hover:underline">
-              {name}
-            </button>
-            {archived && <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">Archivée</span>}
-            {muted && <BellOff className="size-3.5 shrink-0 text-muted-foreground" aria-label="Notifications coupées" />}
-          </h2>
-          <p className={cn("truncate text-xs", friend.online ? "text-primary" : "text-muted-foreground")}>
-            {presence(friend, modeName)}
-            {friend.status && <span className="text-muted-foreground italic"> · {friend.status}</span>}
-          </p>
-        </div>
-        {join && (
-          <button
-            type="button"
-            disabled={props.playBusy}
-            onClick={() => props.onPlay(join.id)}
-            title={`Rejoindre ${name} sur ${join.name}`}
-            className="flex shrink-0 items-center gap-1 rounded-md border border-primary/35 bg-primary/10 px-2.5 py-1.5 text-xs font-bold text-primary transition-colors enabled:hover:bg-primary/20 disabled:opacity-60"
-          >
-            <Play className="size-3 fill-current" aria-hidden />
-            Rejoindre
+      <RightClickMenu label="Options de la conversation" menu={<ConversationMenuItems parts={CONTEXT} actions={headerActions} />}>
+        <header className="flex h-[68px] shrink-0 items-center gap-3 border-b border-border px-5">
+          <button type="button" onClick={() => props.onOpenPlayer(name)} aria-label={`Voir le profil de ${name}`} title={`Voir le profil de ${name}`} className="shrink-0 rounded-[4px] transition-opacity hover:opacity-80">
+            <FriendHead friend={friend} size={40} />
           </button>
-        )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <h2 className="flex min-w-0 items-center gap-2">
+              <button type="button" onClick={() => props.onOpenPlayer(name)} title={`Voir le profil de ${name}`} className="truncate font-display text-[22px] leading-none underline-offset-4 hover:underline">
+                {name}
+              </button>
+              {archived && <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">Archivée</span>}
+              {muted && <BellOff className="size-3.5 shrink-0 text-muted-foreground" aria-label="Notifications coupées" />}
+            </h2>
+            <p className={cn("truncate text-xs", friend.online ? "text-primary" : "text-muted-foreground")}>
+              {presence(friend, modeName)}
+              {friend.status && <span className="text-muted-foreground italic"> · {friend.status}</span>}
+            </p>
+          </div>
+          {join && (
             <button
               type="button"
-              aria-label="Options de la conversation"
-              className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground data-[state=open]:bg-white/[0.06] data-[state=open]:text-foreground"
+              disabled={props.playBusy}
+              onClick={() => props.onPlay(join.id)}
+              title={`Rejoindre ${name} sur ${join.name}`}
+              className="flex shrink-0 items-center gap-1 rounded-md border border-primary/35 bg-primary/10 px-2.5 py-1.5 text-xs font-bold text-primary transition-colors enabled:hover:bg-primary/20 disabled:opacity-60"
             >
-              <Ellipsis className="size-5" aria-hidden />
+              <Play className="size-3 fill-current" aria-hidden />
+              Rejoindre
             </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" aria-label="Options de la conversation">
-            <DropdownMenuItem onSelect={() => props.onOpenPlayer(name)}>
-              <UserRound aria-hidden />
-              Voir le profil
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => void changeState({ archived: !archived })}>
-              {archived ? <ArchiveRestore aria-hidden /> : <Archive aria-hidden />}
-              {archived ? "Désarchiver" : "Archiver"}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => void changeState({ muted: !muted })}>
-              {muted ? <Bell aria-hidden /> : <BellOff aria-hidden />}
-              {muted ? "Rétablir les notifications" : "Couper les notifications"}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem destructive disabled={!loaded || loaded.messages.length === 0} onSelect={clearConversation}>
-              <Eraser aria-hidden />
-              Vider la conversation
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </header>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Options de la conversation"
+                className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground data-[state=open]:bg-white/[0.06] data-[state=open]:text-foreground"
+              >
+                <Ellipsis className="size-5" aria-hidden />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" aria-label="Options de la conversation">
+              <ConversationMenuItems parts={DROPDOWN} actions={{ ...headerActions, join: undefined }} />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </header>
+      </RightClickMenu>
 
       <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-5 pt-2 pb-4">
         {error ? (
@@ -1373,6 +1491,38 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
     );
   }
   const friendless = inbox !== null && inbox.conversations.length === 0;
+
+  /** Archiver ou couper les notifications depuis la liste, sans ouvrir la conversation. */
+  const setState = (conversation: Conversation, change: { archived?: boolean; muted?: boolean }) =>
+    services
+      .setConversationState(conversation.friend.uuid, change)
+      .then(() => {
+        updateInbox((current) => ({ ...current, conversations: updateConversation(current.conversations, conversation.friend.uuid, (entry) => ({ ...entry, ...change })) }));
+        if (change.archived !== undefined) onNotice(change.archived ? `Conversation avec ${conversation.friend.name} archivée.` : `Conversation avec ${conversation.friend.name} remise dans la liste.`);
+      })
+      .catch((reason) => onNotice(String(reason)));
+
+  const markRead = (conversation: Conversation) => {
+    const last = conversation.last;
+    if (!last) return;
+    services
+      .markMessagesRead(conversation.friend.uuid, last.id)
+      .then(() => updateInbox((current) => ({ ...current, conversations: updateConversation(current.conversations, conversation.friend.uuid, (entry) => ({ ...entry, unread: 0 })) })))
+      .catch((reason) => onNotice(String(reason)));
+  };
+
+  const listActions = (conversation: Conversation): ConversationActions => {
+    const join = joinableMode(conversation.friend, modes);
+    return {
+      onOpen: () => onOpen(conversation.friend.uuid),
+      onProfile: () => onOpenPlayer(conversation.friend.name),
+      join: join && { label: `Rejoindre sur ${join.name}`, disabled: playBusy, onSelect: () => onPlay(join.id) },
+      onMarkRead: conversation.unread > 0 && conversation.last ? () => markRead(conversation) : undefined,
+      archived: conversation.archived,
+      muted: conversation.muted,
+      onState: (change) => void setState(conversation, change),
+    };
+  };
   const conversation = friend && inbox ? (inbox.conversations.find((entry) => plain(entry.friend.uuid) === plain(friend)) ?? null) : null;
   return (
     <main className="flex min-h-0 min-w-0 flex-1">
@@ -1386,6 +1536,7 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
         onAnswer={(request, action) => void answer(request, action)}
         onSendRequest={sendRequest}
         onOpenPlayer={onOpenPlayer}
+        actionsFor={listActions}
       />
       {conversation ? (
         <ThreadPane
