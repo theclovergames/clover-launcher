@@ -3,7 +3,7 @@
 Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git du dépôt repart de la
 0.4.4 : ce fichier garde la trace de tout ce qui précède.
 
-## Pas encore publié
+## 0.5.0 (20 octobre 2026)
 
 ### Nouveautés
 
@@ -37,8 +37,9 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
   accepte ou refuse celles que tu reçois. Elles arrivent aussi en jeu et sur le site, et la
   pastille des Messages les compte.
 - **Alerte des messages** : un nouveau message s'affiche dans le launcher quand il est au premier
-  plan (un clic ouvre la conversation), et arrive en 15 secondes au plus au lieu d'une minute (5
-  quand la fenêtre était cachée), avec le petit son du site (réglable dans Paramètres ›
+  plan (un clic ouvre la conversation). Il arrive en quelques secondes, même écrit depuis le site
+  à côté (15 secondes au plus hors de la page Messages, au lieu d'une minute, et 5 minutes
+  fenêtre cachée), avec le petit son du site (réglable dans Paramètres ›
   Générales). Clic droit sur une conversation, un message ou une demande d'ami pour ses actions,
   « Vider la conversation » compris.
 
