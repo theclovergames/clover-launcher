@@ -33,6 +33,8 @@ const PAGE_MAX: u32 = 50;
 const GIF_OFFSET_MAX: u32 = 4999;
 /// Demandes gardées par sens : au-delà, la liste d'amis (50) serait de toute façon pleine.
 const REQUESTS_MAX: usize = 100;
+/// Octets d'une réaction : de quoi tenir les émojis composés (familles, drapeaux régionaux).
+const REACTION_MAX: usize = 32;
 /// Plus grand entier exact en JavaScript : un identifiant au-delà serait arrondi par l'interface.
 const ID_MAX: u64 = (1 << 53) - 1;
 /// Seuls hôtes d'où un GIF s'affiche : ceux où le site résout les GIF de Giphy.
@@ -157,6 +159,17 @@ pub struct Message {
     /// Supprimé pour tous : la place reste, sans texte ni GIF.
     #[serde(default)]
     pub deleted: bool,
+    #[serde(default, deserialize_with = "reactions")]
+    pub reactions: Reactions,
+}
+
+/// Réactions d'un message : un émoji au plus pour chacun des deux amis.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Reactions {
+    #[serde(default, deserialize_with = "lenient")]
+    pub mine: Option<String>,
+    #[serde(default, deserialize_with = "lenient")]
+    pub theirs: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,6 +344,10 @@ fn requests<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Requests, D::E
     Ok(lenient::<D, Requests>(deserializer)?.unwrap_or_default())
 }
 
+fn reactions<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Reactions, D::Error> {
+    Ok(lenient::<D, Reactions>(deserializer)?.unwrap_or_default())
+}
+
 /// Texte, `null` lu comme vide.
 fn text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     Ok(match Value::deserialize(deserializer)? {
@@ -432,13 +449,22 @@ fn gif(mut gif: Gif) -> Option<Gif> {
     Some(gif)
 }
 
+/// Réaction affichable : un émoji court (le site n'accepte qu'un seul émoji), sans lettres,
+/// espaces, caractères de contrôle ni marques de direction.
+fn is_reaction(emoji: &str) -> bool {
+    (1..=REACTION_MAX).contains(&emoji.len()) && !emoji.chars().any(|c| c.is_ascii_alphabetic() || c.is_whitespace() || c.is_control() || is_bidi_control(c))
+}
+
 fn message(mut message: Message) -> Message {
     message.reply_to = message.reply_to.map(preview);
     if message.deleted {
         message.body.clear();
         message.gif = None;
+        message.reactions = Reactions::default();
         return message;
     }
+    let reaction = |emoji: Option<String>| emoji.filter(|emoji| is_reaction(emoji));
+    message.reactions = Reactions { mine: reaction(message.reactions.mine), theirs: reaction(message.reactions.theirs) };
     message.body = clean(&message.body, BODY_MAX, message.kind == Kind::Text);
     message.gif = match message.kind {
         Kind::Gif => message.gif.and_then(gif),
@@ -681,6 +707,20 @@ pub async fn edit_message(friend: String, id: u64, body: String, current: State<
     sent(&response)
 }
 
+/// Réagit à un message avec un émoji (le même une seconde fois le retire, un autre le remplace),
+/// ou retire sa réaction avec `None`.
+#[tauri::command]
+pub async fn react_message(friend: String, id: u64, emoji: Option<String>, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<Message, String> {
+    let friend = friend_id(&friend)?;
+    let id = message_id(id)?;
+    if emoji.as_deref().is_some_and(|emoji| !is_reaction(emoji)) {
+        return Err("Réaction invalide.".into());
+    }
+    let payload = serde_json::json!({ "emoji": emoji });
+    let response = request(&current, &tokens, |http, base| http.post(format!("{base}/api/launcher/messages/{friend}/{id}/reaction")).json(&payload)).await?;
+    sent(&response)
+}
+
 /// Supprime un message pour soi, ou pour tous (ses propres messages).
 #[tauri::command]
 pub async fn delete_message(friend: String, id: u64, for_all: bool, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<(), String> {
@@ -874,10 +914,10 @@ mod tests {
             serde_json::from_str::<Thread>(&format!(
                 r#"{{"schema":1,"now":1792400000000,"friend":{{"uuid":"{KANNAME}","name":"Kanname","online":false,"server":null,"lastSeen":1792300000000,"status":null,"canJoin":false}},
                 "messages":[
-                  {{"id":12,"fromMe":true,"kind":"text","body":"salut\r\n\u0007ça va ?","gif":null,"replyTo":null,"source":"launcher","at":1792399000000,"editedAt":1792399100000,"deleted":false}},
-                  {{"id":10,"fromMe":false,"kind":"gif","body":"chat","gif":{{"id":"abc123","url":"https://media2.giphy.com/media/abc123/200w.gif","width":"200","height":"150"}},"replyTo":null,"source":"game","at":1792398000000,"deleted":false}},
+                  {{"id":12,"fromMe":true,"kind":"text","body":"salut\r\n\u0007ça va ?","gif":null,"replyTo":null,"source":"launcher","at":1792399000000,"editedAt":1792399100000,"deleted":false,"reactions":{{"mine":"❤️","theirs":"lol"}}}},
+                  {{"id":10,"fromMe":false,"kind":"gif","body":"chat","gif":{{"id":"abc123","url":"https://media2.giphy.com/media/abc123/200w.gif","width":"200","height":"150"}},"replyTo":null,"source":"game","at":1792398000000,"deleted":false,"reactions":"oops"}},
                   {{"id":11,"fromMe":false,"kind":"gif","body":"piège","gif":{{"id":"x","url":"https://evil.example/x.gif","width":200,"height":200}},"replyTo":{{"id":10,"fromMe":false,"kind":"gif","preview":"chat","at":1,"deleted":false}},"source":"SITE","at":1792398500000,"deleted":false}},
-                  {{"id":13,"fromMe":false,"kind":"text","body":"secret","gif":null,"replyTo":null,"source":"plugin","at":1792399500000,"deleted":true}},
+                  {{"id":13,"fromMe":false,"kind":"text","body":"secret","gif":null,"replyTo":null,"source":"plugin","at":1792399500000,"deleted":true,"reactions":{{"mine":null,"theirs":"😂"}}}},
                   {{"id":"oops"}}
                 ],
                 "updates":[{{"id":9,"fromMe":true,"kind":"text","body":"","gif":null,"replyTo":null,"source":"site","at":1,"editedAt":null,"deleted":true}}],
@@ -896,6 +936,8 @@ mod tests {
         assert_eq!(text.body, "salut\nça va ?");
         assert_eq!(text.edited_at, Some(1792399100000));
         assert!(deleted.deleted && deleted.body.is_empty() && deleted.source == Source::Site);
+        assert_eq!((text.reactions.mine.as_deref(), text.reactions.theirs.as_deref()), (Some("❤️"), None), "du texte n'est pas une réaction");
+        assert!(gif.reactions.mine.is_none() && deleted.reactions.theirs.is_none());
         assert_eq!((thread.last_read_id, thread.seen_up_to), (11, 12));
         assert!(thread.has_more && thread.muted && thread.updates[0].deleted);
     }

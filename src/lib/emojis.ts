@@ -48,6 +48,9 @@ export const EMOJI_GROUPS: EmojiGroup[] = [
   },
 ];
 
+/** Réactions proposées en premier sur un message, comme sur le site. */
+export const QUICK_REACTIONS = ["❤️", "😂", "😮", "😢", "😡", "👍"];
+
 /** Émojis récents gardés sur le poste. */
 const RECENT_KEY = "clover.messages.recent-emojis";
 const RECENT_MAX = 24;
