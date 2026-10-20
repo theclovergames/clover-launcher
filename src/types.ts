@@ -93,7 +93,7 @@ export type ModInfo = {
   enabled: boolean;
 };
 
-export type Tab = "home" | "news" | "instances" | "discover" | "skins" | "console" | "settings" | "profile" | "messages" | "leaderboard" | "player";
+export type Tab = "home" | "news" | "instances" | "discover" | "skins" | "console" | "settings" | "profile" | "messages" | "leaderboard" | "shop" | "player";
 
 export type InstanceKind = "clover" | "vanilla" | "fabric" | "quilt" | "forge" | "neoforge";
 export type Instance = {
