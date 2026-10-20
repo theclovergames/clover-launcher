@@ -17,26 +17,28 @@ type Props = {
  * Les modes qui ont une adresse directe dans le manifeste, en cartes : illustration du mode (son nom
  * y est lettré), joueurs connectés. Un mode sans illustration montre le trèfle du launcher et son
  * nom. Derrière, la même image floutée teinte toute la carte aux couleurs du mode. Un clic lance le
- * jeu connecté à ce mode. Un mode annoncé (« Bientôt ») est grisé, sans clic.
+ * jeu connecté à ce mode. Un mode annoncé, encore en développement, est grisé, sans clic. Une
+ * seule rangée tant qu'il y a au plus six modes.
  */
 export function ModeGrid({ modes, onPlay, busy = false }: Props) {
+  const shown = modes.filter((mode) => mode.quickPlay || mode.soon);
   return (
-    <ul className="grid grid-cols-[repeat(auto-fit,minmax(56px,1fr))] gap-2">
-      {modes.filter((mode) => mode.quickPlay || mode.soon).map((mode) => {
+    <ul className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(shown.length, 6)}, minmax(0, 1fr))` }}>
+      {shown.map((mode) => {
         const soon = Boolean(mode.soon);
         const offline = !soon && mode.players === null;
         const art = modeArt(mode.id, mode.icon);
-        const status = soon ? "bientôt" : offline ? "hors ligne" : mode.players === undefined ? null : `${mode.players} joueur${mode.players === 1 ? "" : "s"}`;
+        const status = soon ? "en développement" : offline ? "hors ligne" : mode.players === undefined ? null : `${mode.players} joueur${mode.players === 1 ? "" : "s"}`;
 
         return (
-          <li key={mode.id}>
+          <li key={mode.id} className="min-w-0">
             <button
               type="button"
               disabled={busy || offline || soon}
               onClick={() => onPlay(mode.id)}
-              aria-label={soon ? `${mode.name}, bientôt` : `Jouer à ${mode.name}${status ? `, ${status}` : ""}`}
+              aria-label={soon ? `${mode.name}, en développement, pas encore joignable` : `Jouer à ${mode.name}${status ? `, ${status}` : ""}`}
               className={cn(
-                "group @container relative flex h-full w-full flex-col items-stretch gap-1 overflow-hidden rounded-lg border border-border bg-card px-1 pt-1 pb-1.5 text-left transition-colors",
+                "group @container relative flex h-full w-full flex-col items-stretch gap-1.5 overflow-hidden rounded-lg border border-border bg-card px-1 pt-1 pb-2 text-left transition-colors",
                 "enabled:hover:border-[#e9e3d4]/50 disabled:cursor-default",
                 "motion-safe:enabled:hover:[&_.mode-art]:-translate-y-0.5 motion-safe:enabled:hover:[&_.mode-art]:scale-[1.04]",
                 (offline || soon) && "opacity-60",
@@ -52,9 +54,8 @@ export function ModeGrid({ modes, onPlay, busy = false }: Props) {
                   (offline || soon) && "grayscale",
                 )}
               />
-              {/* Carrée, mais plafonnée selon la hauteur de la fenêtre (160 px au plus) : en plein écran, la
-                  carte s'élargit sans pousser le reste de l'accueil hors de la fenêtre. */}
-              <span className="relative block aspect-square max-h-[clamp(96px,14vh,160px)] w-full">
+              {/* Illustration carrée, entière ; plafonnée en hauteur pour laisser la place à « Jouer ». */}
+              <span className="relative block aspect-square max-h-[clamp(64px,15vh,150px)] w-full">
                 {art ? (
                   <img src={art} alt={mode.name} draggable={false} className={cn("mode-art size-full object-contain transition-transform duration-200", (offline || soon) && "grayscale")} />
                 ) : (
@@ -72,7 +73,10 @@ export function ModeGrid({ modes, onPlay, busy = false }: Props) {
                 </span>
               </span>
               {soon ? (
-                <span className="relative text-center text-[11px] font-semibold whitespace-nowrap text-accent">Bientôt</span>
+                <span className="relative text-center text-[11px] font-semibold whitespace-nowrap text-accent">
+                  <span className="@[7rem]:hidden">En dév.</span>
+                  <span className="hidden @[7rem]:inline">En développement</span>
+                </span>
               ) : mode.players === undefined ? null : offline ? (
                 <span className="relative flex items-center justify-center gap-1.5 text-[11px] whitespace-nowrap text-destructive">
                   <span aria-hidden className="hidden size-1.5 shrink-0 rounded-full bg-destructive @[5.5rem]:block" />

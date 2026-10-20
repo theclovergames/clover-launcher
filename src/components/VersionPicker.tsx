@@ -1,5 +1,5 @@
 import { ArrowLeftRight, Check, ChevronRight, Plus, Settings2, TriangleAlert } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { InstanceArt } from "@/components/InstanceArt";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -17,6 +17,8 @@ type Props = {
   onManage: () => void;
   /** Ouvert d'office (planche des maquettes). */
   defaultOpen?: boolean;
+  /** Dalle réduite, à côté du bouton « Jouer » compact de l'accueil. */
+  compact?: boolean;
 };
 
 /**
@@ -24,8 +26,9 @@ type Props = {
  * dessous). Seule une instance Clover rejoint le serveur ; les autres ouvrent le menu du jeu et
  * le disent. La flèche d'une ligne ouvre la page de son instance.
  */
-export function VersionPicker({ instances, selected, onSelect, onOpen, onCreate, onManage, defaultOpen }: Props) {
+export function VersionPicker({ instances, selected, onSelect, onOpen, onCreate, onManage, defaultOpen, compact = false }: Props) {
   const [open, setOpen] = useState(defaultOpen ?? false);
+  const titleId = useId();
   const current = instances.find((entry) => entry.id === selected) ?? instances[0];
   const close = (action: () => void) => () => {
     setOpen(false);
@@ -39,9 +42,9 @@ export function VersionPicker({ instances, selected, onSelect, onOpen, onCreate,
           type="button"
           aria-label={current ? `Instance : ${current.name}. Changer d'instance` : "Changer d'instance"}
           title="Changer d'instance"
-          className="play-slab h-[84px] w-[72px] shrink-0 bg-none [background:linear-gradient(180deg,#5b5346,#3e382e)] text-white data-[state=open]:brightness-90"
+          className={cn("play-slab shrink-0 bg-none [background:linear-gradient(180deg,#5b5346,#3e382e)] text-white data-[state=open]:brightness-90", compact ? "h-16 w-14" : "h-[84px] w-[72px]")}
         >
-          <ArrowLeftRight className="size-7" strokeWidth={2.5} aria-hidden />
+          <ArrowLeftRight className={compact ? "size-6" : "size-7"} strokeWidth={2.5} aria-hidden />
           {current && !forClover(current) && (
             <span className="absolute -top-2 -right-2 grid size-6 place-items-center rounded-full border-2 border-[var(--mc-outline)] bg-accent text-accent-foreground">
               <TriangleAlert className="size-3.5" strokeWidth={2.75} aria-label="Ne rejoint pas Clover Games" />
@@ -50,9 +53,9 @@ export function VersionPicker({ instances, selected, onSelect, onOpen, onCreate,
         </button>
       </PopoverTrigger>
 
-      <PopoverContent side="top" align="end" sideOffset={16} className="mc-frame w-[340px] gap-0 border-[var(--mc-outline)] bg-card p-0 text-white ring-0">
+      <PopoverContent aria-labelledby={titleId} side="top" align="end" sideOffset={16} className="mc-frame w-[340px] gap-0 border-[var(--mc-outline)] bg-card p-0 text-white ring-0">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 className="font-display text-lg leading-none">Choisir une instance</h2>
+          <h2 id={titleId} className="font-display text-lg leading-none">Choisir une instance</h2>
           <button type="button" onClick={close(onManage)} title="Gérer les instances" aria-label="Gérer les instances" className="text-muted-foreground hover:text-foreground">
             <Settings2 className="size-4" aria-hidden />
           </button>

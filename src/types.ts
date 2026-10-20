@@ -36,7 +36,7 @@ export type ModeStatus = {
   players?: number | null;
   /** Le manifeste donne une adresse qui connecte directement à ce mode. */
   quickPlay?: boolean;
-  /** Annoncé mais pas encore ouvert : carte grisée « Bientôt ». */
+  /** Annoncé mais pas encore ouvert : carte grisée « En développement ». */
   soon?: boolean;
 };
 

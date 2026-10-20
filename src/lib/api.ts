@@ -36,7 +36,7 @@ export type Catalogue = {
   presets?: Partial<Record<MachineLevel, unknown>>;
   fabric: { loader: string };
   server: { host: string };
-  /** `soon` : annoncé mais pas encore ouvert (carte « Bientôt »). */
+  /** `soon` : annoncé mais pas encore ouvert (carte « En développement »). */
   modes: { id: string; name: string; image: string | null; host?: string; soon?: boolean }[];
   mods: {
     id: string;

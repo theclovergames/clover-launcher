@@ -3,6 +3,17 @@
 Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git du dépôt repart de la
 0.4.4 : ce fichier garde la trace de tout ce qui précède.
 
+## Pas encore publié
+
+### Nouveautés
+
+- **Accueil en cartes** : « Jouer », ton personnage et les modes à gauche ; à droite ton
+  activité et les actualités, dans une colonne qui défile si la fenêtre manque de hauteur.
+  L'activité montre le temps joué jour par jour sur 7 ou 30 jours, comparé à la période
+  d'avant, avec les parties, la série en cours et la plus longue partie ; la grille de l'année
+  reste sur le Profil. Le dernier article s'affiche en grand, marqué « Nouveau » sa première
+  semaine. Les modes annoncés sont marqués « En développement ».
+
 ## 0.4.7 (13 octobre 2026)
 
 ### Nouveautés
