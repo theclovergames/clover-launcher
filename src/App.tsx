@@ -1455,6 +1455,7 @@ export default function App() {
               sessions={sessions}
               maintenance={feed.maintenance === true}
               onOpenLink={open}
+              onOpenShop={() => navigate("shop")}
               onOpenNews={() => push(route("news"))}
               onOpenActivity={() => navigate("profile")}
               onReadNews={(item) =>
@@ -1616,7 +1617,17 @@ export default function App() {
             />
           )}
 
-          {tab === "shop" && <ShopScreen onOpenLink={open} />}
+          {current.tab === "shop" && (
+            <ShopScreen
+              category={current.category}
+              product={current.product}
+              onCategory={(category) => replace({ tab: "shop", category })}
+              onOpenProduct={(product) => push({ tab: "shop", category: current.category, product })}
+              onOpenPlayer={openPlayer}
+              onOpenLink={open}
+              onNotice={setNotice}
+            />
+          )}
 
           {tab === "leaderboard" && profile && <LeaderboardScreen me={{ uuid: profile.uuid, name: profile.name }} onOpenPlayer={openPlayer} onOpenLink={open} />}
 

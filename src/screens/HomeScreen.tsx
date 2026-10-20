@@ -53,6 +53,7 @@ type Props = {
   /** Maintenance annoncée sur le site : bandeau au-dessus de l'accueil. */
   maintenance?: boolean;
   onOpenLink: (url: string) => void;
+  onOpenShop?: () => void;
   /** « Tout lire » : page Actualités. */
   onOpenNews: () => void;
   /** Page Profil : la grille de l'année et les statistiques complètes. */
@@ -89,7 +90,7 @@ function useHeroSkin() {
  * modes à gauche ; l'activité et les articles à droite, colonne qui défile si la fenêtre manque de
  * hauteur.
  */
-export function HomeScreen({ playerName, look, heroTone = "forest", onOpenConsole, play, modesBusy, onStop, onPlay, instances, selectedInstance, onSelectInstance, onOpenInstance, onCreateInstance, onManageInstances, versionOpen, server, animateSkin, modes, otherServers, onPlayServer, onRenameServer, onRenameError, news, sessions, maintenance = false, onOpenLink, onOpenNews, onOpenActivity, onReadNews }: Props) {
+export function HomeScreen({ playerName, look, heroTone = "forest", onOpenConsole, play, modesBusy, onStop, onPlay, instances, selectedInstance, onSelectInstance, onOpenInstance, onCreateInstance, onManageInstances, versionOpen, server, animateSkin, modes, otherServers, onPlayServer, onRenameServer, onRenameError, news, sessions, maintenance = false, onOpenLink, onOpenShop, onOpenNews, onOpenActivity, onReadNews }: Props) {
   const skin = useHeroSkin();
   const busy = modesBusy ?? play.kind !== "ready";
   const shade = HERO_TONES[heroTone].shade;
@@ -114,7 +115,7 @@ export function HomeScreen({ playerName, look, heroTone = "forest", onOpenConsol
               <div className="rounded-lg bg-black/45 px-3 py-1.5 backdrop-blur-sm">
                 <Status server={server} />
               </div>
-              <QuickLinks onOpenLink={onOpenLink} compact />
+              <QuickLinks onOpenLink={onOpenLink} onOpenShop={onOpenShop} compact />
             </div>
 
             <div ref={skin.stage} className="relative flex min-h-0 flex-1 items-center justify-center px-4 py-2">

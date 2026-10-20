@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Circle, Clock, Copy, Download, Flag, FolderOpen, LoaderCircle, PenLine, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowRight, Check, Circle, Clock, Coins, Copy, Download, Flag, FolderOpen, LoaderCircle, PenLine, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { ModpackVersionSelect } from "@/components/ModpackVersionSelect";
@@ -317,7 +317,8 @@ export function NameDialog(props: {
  * Ce que l'on demande de confirmer : titre, explication, et l'élément concerné (chemin, nom).
  * `install` : rien n'est supprimé, le bouton est celui d'une installation.
  */
-export type Confirmation = { title: string; description: string; detail?: string; confirm: string; onConfirm: () => void; install?: boolean };
+/** `install` ou `pay` : action voulue (installer, payer en pièces), bouton de la couleur principale. */
+export type Confirmation = { title: string; description: string; detail?: string; confirm: string; onConfirm: () => void; install?: boolean; pay?: boolean };
 
 /**
  * Confirmation d'une action qui ne se défait pas d'un clic (supprimer, retirer, installer un
@@ -345,9 +346,9 @@ export function ConfirmDialog({ ask, onClose }: { ask: Confirmation | null; onCl
               shown?.onConfirm();
               onClose();
             }}
-            className={cn(primaryButton, !shown?.install && "bg-destructive text-white")}
+            className={cn(primaryButton, !shown?.install && !shown?.pay && "bg-destructive text-white")}
           >
-            {shown?.install ? <Download className="size-4" aria-hidden /> : <Trash2 className="size-4" aria-hidden />}
+            {shown?.pay ? <Coins className="size-4" aria-hidden /> : shown?.install ? <Download className="size-4" aria-hidden /> : <Trash2 className="size-4" aria-hidden />}
             {shown?.confirm}
           </button>
         </DialogFooter>

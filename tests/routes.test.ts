@@ -3,7 +3,7 @@ import test from "node:test";
 import { back, canGoBack, type Names, openFromCrumb, type Route, trail } from "../src/lib/routes.ts";
 
 const names: Names = {
-  tab: (tab) => ({ instances: "Instances", discover: "Découvrir", home: "Accueil", messages: "Messages", profile: "Profil" })[tab as string] ?? tab,
+  tab: (tab) => ({ instances: "Instances", discover: "Découvrir", home: "Accueil", messages: "Messages", profile: "Profil", shop: "Boutique" })[tab as string] ?? tab,
   instance: (id) => (id === "x" ? "Survie 1.21" : id),
   section: (section) => (section === "shaderpacks" ? "Shaders" : section === "mods" ? "Mods" : section),
   kind: (kind) => (kind === "shader" ? "Shaders" : kind),
@@ -72,4 +72,11 @@ test("un profil ouvert depuis le Classement y ramène, sous le seul pseudo du jo
   assert.deepEqual(trail(player, names).map((crumb) => crumb.label), ["Kanname"]);
   assert.deepEqual(back(stack), [{ tab: "leaderboard" }]);
   assert.equal(canGoBack([player]), false);
+});
+
+test("fiche d'un produit : Boutique › produit, « Retour » vers sa catégorie", () => {
+  const product: Route = { tab: "shop", category: "grades", product: { id: "vip", name: "VIP" } };
+  assert.deepEqual(trail(product, names).map((crumb) => crumb.label), ["Boutique", "VIP"]);
+  assert.deepEqual(trail(product, names)[0].to, { tab: "shop", category: "grades" });
+  assert.deepEqual(back([product]), [{ tab: "shop", category: "grades" }]);
 });
