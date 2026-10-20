@@ -43,6 +43,7 @@ import { ProfileScreen } from "@/screens/ProfileScreen";
 import { MessagesScreen } from "@/screens/MessagesScreen";
 import { LeaderboardScreen } from "@/screens/LeaderboardScreen";
 import { PlayerScreen } from "@/screens/PlayerScreen";
+import { ShopScreen } from "@/screens/ShopScreen";
 import type { Cape, ConsoleSnapshot, DetectedInstance, GameExited, ImportItem, ImportResult, ImportScan, Inbox, LauncherNotification, InstanceEntry, InstanceInput, ModInfo, PersonalMod, SearchFilters, PlaySession, PlayState, Profile, Progress, SavedSkin, SkinLook, SkinModel } from "@/types";
 
 /** Paquet du Microsoft Store : le Store gère les mises à jour du launcher. */
@@ -1614,6 +1615,8 @@ export default function App() {
               onOpenLink={open}
             />
           )}
+
+          {tab === "shop" && <ShopScreen onOpenLink={open} />}
 
           {tab === "leaderboard" && profile && <LeaderboardScreen me={{ uuid: profile.uuid, name: profile.name }} onOpenPlayer={openPlayer} onOpenLink={open} />}
 
