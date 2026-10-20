@@ -1,13 +1,13 @@
 import { Globe, ShoppingBag, Vote } from "lucide-react";
 
 import { DiscordLogo } from "@/components/DiscordLogo";
-import { DISCORD_URL } from "@/lib/site";
+import { DISCORD_URL, SITE_URL } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 const LINKS = [
   { id: "vote", label: "Voter", hint: "Gratuit, récompenses en jeu", url: "https://clovergames.fr/vote", Icon: Vote },
   { id: "discord", label: "Discord", hint: "Annonces et entraide", url: DISCORD_URL, Icon: DiscordLogo },
-  { id: "store", label: "Boutique", hint: "Grades et cosmétiques", url: "https://store.clovergames.fr", Icon: ShoppingBag },
+  { id: "store", label: "Boutique", hint: "Grades et cosmétiques", url: `${SITE_URL}/shop`, Icon: ShoppingBag },
   { id: "site", label: "Site", hint: "Classements, wiki", url: "https://clovergames.fr", Icon: Globe },
 ] as const;
 
@@ -43,10 +43,11 @@ export function Status({ server }: { server: ServerStatus }) {
 }
 
 /**
- * Raccourcis vers le vote, le Discord, la boutique et le site, posés sur l'image du lobby ; tous
- * s'ouvrent dans le navigateur. Le vote, gratuit et récompensé en jeu, est en or.
+ * Raccourcis vers le vote, le Discord, la boutique et le site, posés sur l'image du lobby ; la
+ * boutique s'ouvre dans le launcher (`onOpenShop`), le reste dans le navigateur. Le vote, gratuit
+ * et récompensé en jeu, est en or.
  */
-export function QuickLinks({ onOpenLink, compact = false }: { onOpenLink: (url: string) => void; compact?: boolean }) {
+export function QuickLinks({ onOpenLink, onOpenShop, compact = false }: { onOpenLink: (url: string) => void; onOpenShop?: () => void; compact?: boolean }) {
   return (
     <nav aria-label="Clover Games sur le web">
       <ul className="flex gap-1.5">
@@ -54,7 +55,7 @@ export function QuickLinks({ onOpenLink, compact = false }: { onOpenLink: (url: 
           <li key={id}>
             <button
               type="button"
-              onClick={() => onOpenLink(url)}
+              onClick={() => (id === "store" && onOpenShop ? onOpenShop() : onOpenLink(url))}
               title={hint}
               aria-label={compact ? label : undefined}
               className={cn(

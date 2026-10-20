@@ -16,14 +16,19 @@ export type OpenMod = { list: "catalogue" | "personal"; id: string };
 export type OpenProject = { id: string; title: string; icon: string | null };
 
 export type Route =
-  | { tab: Exclude<Tab, "instances" | "discover" | "messages" | "player"> }
+  | { tab: Exclude<Tab, "instances" | "discover" | "messages" | "player" | "shop"> }
   | { tab: "instances"; instance?: string; section?: InstanceSection; mod?: OpenMod }
   /** `minecraft` : version de la nouvelle instance voulue, qui filtre les modpacks. */
   | { tab: "discover"; kind: ContentKind; target?: string; world?: string; minecraft?: string; project?: OpenProject }
   /** `friend` : UUID de l'ami dont la conversation est ouverte. */
   | { tab: "messages"; friend?: string }
   /** Profil d'un autre joueur, ouvert depuis le Classement, les Messages ou les amis. */
-  | { tab: "player"; name: string };
+  | { tab: "player"; name: string }
+  /** `category` : slug de la catégorie ouverte ; `product` : fiche ouverte, son nom pour le fil d'Ariane. */
+  | { tab: "shop"; category?: string; product?: OpenProduct };
+
+/** Produit de la boutique dont la fiche est ouverte. */
+export type OpenProduct = { id: string; name: string };
 
 export const route = (tab: Exclude<Tab, "player">): Route => (tab === "discover" ? { tab, kind: "mod" } : { tab } as Route);
 
@@ -34,6 +39,7 @@ export function parent(current: Route): Route | null {
     if (current.instance) return { tab: "instances" };
   }
   if (current.tab === "discover" && current.project) return { tab: "discover", kind: current.kind, target: current.target, world: current.world, minecraft: current.minecraft };
+  if (current.tab === "shop" && current.product) return { tab: "shop", category: current.category };
   return null;
 }
 
@@ -83,6 +89,9 @@ export function trail(current: Route, names: Names): Crumb[] {
     if (current.friend) crumbs.push({ label: names.friend(current.friend) });
   } else if (current.tab === "player") {
     crumbs.push({ label: current.name });
+  } else if (current.tab === "shop") {
+    crumbs.push({ label: names.tab("shop"), to: { tab: "shop", category: current.category } });
+    if (current.product) crumbs.push({ label: current.product.name });
   } else {
     crumbs.push({ label: names.tab(current.tab) });
   }

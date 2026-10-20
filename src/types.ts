@@ -480,3 +480,46 @@ export type LeaderboardBoard = {
 export type GifResult = { id: string; title: string; url: string; width: number; height: number };
 /** `next` : décalage de la page suivante, `null` à la fin. */
 export type GifPage = { gifs: GifResult[]; next: number | null };
+
+/** Boutique du serveur, lue sur le site. Prix en centimes d'euro. */
+export type ShopBadge = "popular" | "best-offer" | "new" | "sale";
+/** Ligne du tableau comparatif : coche ou texte. */
+export type ShopFeature = { label: string; value: boolean | string };
+export type ShopProduct = {
+  id: string;
+  slug: string | null;
+  /** Slug de la catégorie. */
+  category: string;
+  name: string;
+  description: string | null;
+  imageUrl: string | null;
+  priceCents: number;
+  /** Prix en pièces ; `null` si le produit ne se paie pas en pièces. */
+  credits: number | null;
+  /** Payable en euros (par Stripe, dans le navigateur). */
+  euro: boolean;
+  type: "one_time" | "subscription";
+  interval: "month" | "year" | null;
+  badge: ShopBadge | null;
+  section: string | null;
+  features: ShopFeature[];
+  /** Grade : un seul par joueur. */
+  grade: boolean;
+  /** Fiche complète en HTML, seulement sur la page du produit. */
+  content?: string | null;
+};
+export type ShopCategory = { slug: string; name: string; description: string | null; color: string | null; icon: string | null };
+export type ShopCatalog = {
+  credits: { enabled: boolean; perEuro: number } | null;
+  banner: { text: string; url: string | null } | null;
+  /** Objectif du mois, en euros. */
+  goal: { label: string; target: number; current: number } | null;
+  topBuyer: { name: string } | null;
+  /** Derniers achats ; `at` : date ISO. */
+  recent: { name: string; product: string; at: string }[];
+  categories: ShopCategory[];
+  products: ShopProduct[];
+};
+/** Solde de pièces (`null` : économie du jeu injoignable) et produits que le joueur ne peut pas acheter pour lui, avec la raison. */
+export type ShopAccount = { balance: number | null; blocked: Record<string, string> };
+export type CreditsPaid = { productName: string; credits: number; remaining: number | null };

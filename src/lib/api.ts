@@ -7,7 +7,7 @@ import type { Instance, InstanceEntry, InstanceInput, InstanceKind, AvailableVer
 
 import type { Settings, SteamState } from "@/screens/SettingsScreen";
 import type { RecentVote } from "@/components/VoteTicker";
-import type { ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats, ChatMessage, GifPage, Inbox, Thread, LeaderboardBoard, OtherPlayer, RequestSent } from "@/types";
+import type { ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats, ChatMessage, GifPage, Inbox, Thread, LeaderboardBoard, OtherPlayer, RequestSent, ShopAccount, ShopCatalog, ShopProduct, CreditsPaid } from "@/types";
 
 export type AccountRef = { uuid: string; name: string; skinUrl: string | null };
 
@@ -229,6 +229,13 @@ export const api = {
   playerProfile: (name: string) => invoke<OtherPlayer | null>("player_profile", { name }),
   /** Tableaux du classement du site (100 premiers de chacun). */
   leaderboard: () => invoke<LeaderboardBoard[]>("leaderboard"),
+  shopCatalog: () => invoke<ShopCatalog>("shop_catalog"),
+  /** Fiche complète d'un produit ; `null` s'il n'est plus en vente. */
+  shopProduct: (id: string) => invoke<ShopProduct | null>("shop_product", { id }),
+  shopAccount: () => invoke<ShopAccount>("shop_account"),
+  /** Adresse de la page de paiement Stripe, à ouvrir dans le navigateur ; `gift` : pseudo du joueur à qui l'offrir. */
+  shopCheckout: (product: string, gift: string | null) => invoke<string>("shop_checkout", { product, gift }),
+  shopPayCredits: (product: string, gift: string | null) => invoke<CreditsPaid>("shop_pay_credits", { product, gift }),
   /** Demande d'ami par pseudo ; `accepted` si ce joueur avait déjà demandé. */
   sendFriendRequest: (name: string) => invoke<RequestSent>("send_friend_request", { name }),
   /** Accepter ou refuser une demande reçue, annuler une demande envoyée. */

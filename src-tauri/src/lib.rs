@@ -14,6 +14,7 @@ mod notifications;
 mod player_name;
 mod profile;
 mod presence;
+mod shop;
 mod shortcut;
 mod site;
 mod skins;
@@ -1207,6 +1208,11 @@ pub fn run() {
             profile::player_stats,
             profile::player_profile,
             leaderboard::leaderboard,
+            shop::shop_catalog,
+            shop::shop_product,
+            shop::shop_account,
+            shop::shop_checkout,
+            shop::shop_pay_credits,
             notifications::mark_notifications_read,
             notifications::system_notification,
             messages::message_conversations,
