@@ -1432,6 +1432,9 @@ function DividedRow({ divider, children }: { divider: boolean; children: ReactNo
 export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox, updateInbox, modes, playBusy, onPlay, onNotice, onOpenPlayer, services = api }: Props) {
   /** UUID de la demande en cours de traitement. */
   const [requestBusy, setRequestBusy] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<Confirmation | null>(null);
+  /** Change quand une conversation est vidée depuis la liste : ouverte, elle se recharge vide. */
+  const [cleared, setCleared] = useState(0);
   useEffect(() => {
     void refreshInbox();
     const timer = window.setInterval(() => void refreshInbox(), LIST_POLL_MS);
@@ -1511,6 +1514,21 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
       .catch((reason) => onNotice(String(reason)));
   };
 
+  const clear = (conversation: Conversation) =>
+    setConfirm({
+      title: "Vider la conversation ?",
+      description: `Tous les messages disparaissent pour toi seulement : ${conversation.friend.name} garde les siens. Les prochains messages arriveront comme d'habitude.`,
+      confirm: "Vider",
+      onConfirm: () =>
+        void services
+          .setConversationState(conversation.friend.uuid, { clear: true })
+          .then(() => {
+            updateInbox((current) => ({ ...current, conversations: updateConversation(current.conversations, conversation.friend.uuid, (entry) => ({ ...entry, last: null, unread: 0 })) }));
+            setCleared((count) => count + 1);
+          })
+          .catch((reason) => onNotice(String(reason))),
+    });
+
   const listActions = (conversation: Conversation): ConversationActions => {
     const join = joinableMode(conversation.friend, modes);
     return {
@@ -1521,6 +1539,7 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
       archived: conversation.archived,
       muted: conversation.muted,
       onState: (change) => void setState(conversation, change),
+      onClear: { disabled: conversation.last === null, onSelect: () => clear(conversation) },
     };
   };
   const conversation = friend && inbox ? (inbox.conversations.find((entry) => plain(entry.friend.uuid) === plain(friend)) ?? null) : null;
@@ -1540,7 +1559,7 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
       />
       {conversation ? (
         <ThreadPane
-          key={conversation.friend.uuid}
+          key={`${conversation.friend.uuid}:${cleared}`}
           conversation={conversation}
           gifs={inbox?.gifs ?? false}
           modes={modes}
@@ -1576,6 +1595,7 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
           )}
         </section>
       )}
+      <ConfirmDialog ask={confirm} onClose={() => setConfirm(null)} />
     </main>
   );
 }

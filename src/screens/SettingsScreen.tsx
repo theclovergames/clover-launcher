@@ -24,6 +24,8 @@ export type Settings = {
   autoUpdate: boolean;
   betaChannel: boolean;
   systemNotifications: boolean;
+  /** Son des nouveaux messages et demandes d'amis. */
+  messageSound: boolean;
   // Apparence
   /** Échelle de l'interface, en pourcentage. */
   scale: 90 | 100 | 110 | 125;
@@ -301,13 +303,16 @@ function General({ settings, onChange, system, accounts, onUseAccount, onRemoveA
         )}
       </Row>
 
-      {!hidden.includes("desktopNotifications") && (
-      <Row title="Notifications" hint="Achats, niveau gagné, succès, annonces.">
-        <Toggle id="system-notifications" checked={settings.systemNotifications} onChange={(systemNotifications) => onChange({ systemNotifications })} hint="Une bulle du système apparaît quand la fenêtre est fermée ou réduite.">
-          Afficher les notifications sur le bureau
+      <Row title="Notifications" hint="Messages, demandes d'amis, achats, niveau gagné, succès, annonces.">
+        {!hidden.includes("desktopNotifications") && (
+          <Toggle id="system-notifications" checked={settings.systemNotifications} onChange={(systemNotifications) => onChange({ systemNotifications })} hint="Une bulle du système apparaît quand la fenêtre est fermée ou réduite.">
+            Afficher les notifications sur le bureau
+          </Toggle>
+        )}
+        <Toggle id="message-sound" checked={settings.messageSound} onChange={(messageSound) => onChange({ messageSound })} hint="Le même petit son que sur clovergames.fr, pour un message ou une demande d'ami.">
+          Jouer un son pour les nouveaux messages
         </Toggle>
       </Row>
-      )}
 
       <Row title="Mises à jour" hint="Le launcher, Minecraft, Fabric et les mods suivent le serveur.">
         {hidden.includes("autoUpdate") ? (

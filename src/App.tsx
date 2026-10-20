@@ -17,6 +17,7 @@ import { accent, heroTone } from "@/lib/appearance";
 import { setCrashReports } from "@/lib/crash-reports";
 import { formatLog } from "@/lib/log";
 import { freshIncoming, freshRequests, previewText, sortConversations, unreadCount } from "@/lib/messages";
+import { playMessageSound } from "@/lib/message-sound";
 import { networkPlayers, SITE_URL } from "@/lib/site";
 import { fold } from "@/lib/utils";
 import { ConsoleScreen } from "@/screens/ConsoleScreen";
@@ -503,6 +504,8 @@ export default function App() {
   const seenNotifications = useRef<Set<string> | null>(null);
   const desktopNotifications = useRef(true);
   desktopNotifications.current = settings?.systemNotifications ?? true;
+  const messageSound = useRef(true);
+  messageSound.current = settings?.messageSound ?? true;
 
   // ── Messages entre amis : liste des conversations, pastille de la colonne, bulles du système ──
   const [inbox, setInbox] = useState<Inbox | null>(null);
@@ -530,6 +533,8 @@ export default function App() {
       const page = routeRef.current;
       const shown = (uuid: string) => !away && page?.tab === "messages" && page.friend !== undefined && page.friend.replace(/-/g, "") === uuid.replace(/-/g, "");
       const unseen = fresh.filter((conversation) => !shown(conversation.friend.uuid));
+      // Le son du site, fenêtre au premier plan ou non (les bulles du système sont muettes).
+      if ((unseen.length > 0 || requests.fresh.length > 0) && messageSound.current) playMessageSound();
       if (away) {
         if (desktopNotifications.current) {
           for (const conversation of unseen) void api.systemNotification(`Nouveau message de ${conversation.friend.name}`, conversation.last ? previewText(conversation.last) : "").catch(() => {});

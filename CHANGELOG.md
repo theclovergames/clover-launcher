@@ -34,8 +34,9 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
   pastille des Messages les compte.
 - **Alerte des messages** : un nouveau message s'affiche dans le launcher quand il est au premier
   plan (un clic ouvre la conversation), et arrive en 15 secondes au plus au lieu d'une minute (5
-  quand la fenêtre était cachée). Clic droit sur une conversation, un message ou une demande
-  d'ami pour ses actions.
+  quand la fenêtre était cachée), avec le petit son du site (réglable dans Paramètres ›
+  Générales). Clic droit sur une conversation, un message ou une demande d'ami pour ses actions,
+  « Vider la conversation » compris.
 
 ### Corrections
 
