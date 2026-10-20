@@ -3,6 +3,26 @@
 Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git du dépôt repart de la
 0.4.4 : ce fichier garde la trace de tout ce qui précède.
 
+## 0.6.0 (20 octobre 2026)
+
+### Nouveautés
+
+- **Boutique** : la boutique du serveur arrive dans le launcher, la même que sur le site. Le
+  produit à la une, les catégories, un tableau pour comparer les grades, l'objectif du mois et
+  les derniers achats. La fiche d'un produit montre ses avantages et sa description complète.
+  Achète-le pour toi ou offre-le à un autre joueur :
+  - en euros, par carte : la page de paiement Stripe s'ouvre dans ton navigateur, et le
+    launcher ne voit jamais ta carte ;
+  - en pièces du jeu : le paiement se fait ici, après confirmation. Ton solde reste affiché en
+    haut de la page.
+
+  Les produits que tu possèdes déjà sont marqués, avec la raison. La tuile Boutique de l'accueil
+  ouvre cette page.
+- **Réactions aux messages** : au survol d'un message, réagis avec un des six émojis rapides ou
+  avec n'importe quel émoji du sélecteur. Les réactions sont aussi dans le menu du message et au
+  clic droit. Elles s'affichent sous la bulle, et un clic sur la tienne la retire. Ton ami les
+  voit dans le launcher et sur le site.
+
 ## 0.5.0 (20 octobre 2026)
 
 ### Nouveautés
