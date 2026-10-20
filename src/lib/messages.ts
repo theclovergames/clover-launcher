@@ -3,7 +3,7 @@
  * relevées, jours, suites de messages, « Vu », non-lus et nouveaux messages à annoncer. Testé par
  * `tests/messages.test.ts`.
  */
-import type { ChatMessage, Conversation, FriendRequest, MessagePreview } from "../types";
+import type { ChatMessage, Conversation, FriendRequest, MessagePreview, MessageReactions } from "../types";
 
 /** Longueur d'un message, en points de code comme le site. */
 export const BODY_MAX = 1000;
@@ -128,6 +128,17 @@ export function firstUnreadId(messages: ChatMessage[], lastReadId: number): numb
 /** Modifiable : mon texte, non supprimé, envoyé il y a moins de 15 minutes (heure du site). */
 export function canEdit(message: ChatMessage, now: number): boolean {
   return message.fromMe && message.kind === "text" && !message.deleted && now - message.at <= EDIT_WINDOW_MS;
+}
+
+/** Sa réaction après un clic sur `emoji` : la même la retire, une autre la remplace. */
+export const toggledReaction = (reactions: MessageReactions, emoji: string): string | null => (reactions.mine === emoji ? null : emoji);
+
+export type ReactionChip = { emoji: string; mine: boolean; theirs: boolean };
+
+/** Pastilles sous une bulle : celle de l'ami puis la sienne, réunies si c'est le même émoji. */
+export function reactionChips({ mine, theirs }: MessageReactions): ReactionChip[] {
+  if (mine && mine === theirs) return [{ emoji: mine, mine: true, theirs: true }];
+  return [...(theirs ? [{ emoji: theirs, mine: false, theirs: true }] : []), ...(mine ? [{ emoji: mine, mine: true, theirs: false }] : [])];
 }
 
 /** Ordre du site : dernier message le plus récent, puis les amis en ligne, puis le nom. */

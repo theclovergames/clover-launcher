@@ -242,6 +242,8 @@ export const api = {
   /** GIF choisi dans la recherche : le site le retrouve chez Giphy par son identifiant. */
   sendGif: (friend: string, gifId: string, replyTo?: number) => invoke<ChatMessage>("send_gif", { friend, gifId, replyTo: replyTo ?? null }),
   editMessage: (friend: string, id: number, body: string) => invoke<ChatMessage>("edit_message", { friend, id, body }),
+  /** Un émoji (le même une seconde fois le retire, un autre le remplace), `null` retire sa réaction. */
+  reactMessage: (friend: string, id: number, emoji: string | null) => invoke<ChatMessage>("react_message", { friend, id, emoji }),
   /** `forAll` : supprimé pour l'ami aussi (ses propres messages seulement). */
   deleteMessage: (friend: string, id: number, forAll: boolean) => invoke<void>("delete_message", { friend, id, forAll }),
   markMessagesRead: (friend: string, upTo: number) => invoke<void>("mark_messages_read", { friend, upTo }),

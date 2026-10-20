@@ -24,6 +24,7 @@ import {
   Reply,
   RotateCcw,
   SendHorizontal,
+  SmilePlus,
   Trash2,
   UserPlus,
   UserRound,
@@ -31,7 +32,7 @@ import {
 } from "lucide-react";
 import { type ComponentType, type FormEvent, type KeyboardEvent, type ReactNode, type UIEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { EmojiPicker } from "@/components/EmojiPicker";
+import { EmojiPanel, EmojiPicker } from "@/components/EmojiPicker";
 import { EmptyState } from "@/components/EmptyState";
 import { GifPicker } from "@/components/GifPicker";
 import { SearchField } from "@/components/SearchField";
@@ -41,6 +42,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api } from "@/lib/api";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
+import { QUICK_REACTIONS } from "@/lib/emojis";
 import { findMode, headUrl, joinableMode, presence } from "@/lib/friends";
 import {
   BODY_MAX,
@@ -55,9 +57,11 @@ import {
   lastIncomingId,
   mergeMessages,
   previewText,
+  reactionChips,
   sameRun,
   seenMessageId,
   shortWhen,
+  toggledReaction,
   toPreview,
   updateConversation,
   withLast,
@@ -85,7 +89,7 @@ type Mode = { id: string; name: string; quickPlay: boolean };
 
 export type MessagesServices = Pick<
   typeof api,
-  "messageThread" | "sendMessage" | "sendGif" | "editMessage" | "deleteMessage" | "markMessagesRead" | "setConversationState" | "reportMessage" | "searchGifs" | "sendFriendRequest" | "answerFriendRequest"
+  "messageThread" | "sendMessage" | "sendGif" | "editMessage" | "reactMessage" | "deleteMessage" | "markMessagesRead" | "setConversationState" | "reportMessage" | "searchGifs" | "sendFriendRequest" | "answerFriendRequest"
 >;
 
 type Props = {
@@ -173,7 +177,7 @@ function FriendHead({ friend, size }: { friend: ChatFriend; size: number }) {
 
 /** Entrées d'un menu, du bouton « … » (DropdownMenu) ou du clic droit (ContextMenu) : mêmes actions dans les deux. */
 type MenuParts = {
-  Item: ComponentType<{ destructive?: boolean; disabled?: boolean; onSelect?: () => void; children: ReactNode }>;
+  Item: ComponentType<{ destructive?: boolean; disabled?: boolean; onSelect?: () => void; className?: string; title?: string; "aria-label"?: string; children: ReactNode }>;
   Separator: ComponentType;
 };
 const DROPDOWN: MenuParts = { Item: DropdownMenuItem, Separator: DropdownMenuSeparator };
@@ -577,6 +581,9 @@ const entryOf = (message: ChatMessage): Entry => ({ key: `m${message.id}`, at: m
 const pendingEntry = (pending: Pending): Entry => ({ key: pending.local, at: pending.at, fromMe: true, source: "launcher", message: null, pending });
 
 type MessageActions = {
+  /** Réagir avec un émoji ; `reacted` : sa réaction actuelle. */
+  onReact?: (emoji: string) => void;
+  reacted?: string | null;
   onReply?: () => void;
   onEdit?: () => void;
   onCopy?: () => void;
@@ -586,8 +593,21 @@ type MessageActions = {
 };
 
 function MessageMenuItems({ parts: { Item, Separator }, actions }: { parts: MenuParts; actions: MessageActions }) {
+  const { onReact } = actions;
   return (
     <>
+      {onReact && (
+        <>
+          <div role="group" aria-label="Réagir" className="flex gap-0.5">
+            {QUICK_REACTIONS.map((emoji) => (
+              <Item key={emoji} aria-label={`Réagir avec ${emoji}`} title="Réagir" onSelect={() => onReact(emoji)} className={cn("size-8 justify-center p-0 text-lg", actions.reacted === emoji && "bg-primary/15")}>
+                {emoji}
+              </Item>
+            ))}
+          </div>
+          <Separator />
+        </>
+      )}
       {actions.onReply && (
         <Item onSelect={actions.onReply}>
           <Reply aria-hidden />
@@ -627,15 +647,49 @@ function MessageMenuItems({ parts: { Item, Separator }, actions }: { parts: Menu
   );
 }
 
+/** Bouton qui n'apparaît qu'au survol (ou au clavier) d'un message. */
+const HOVER_BUTTON =
+  "grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/message:opacity-100 hover:bg-white/[0.06] hover:text-foreground focus-visible:opacity-100 data-[state=open]:opacity-100";
+
+/** Réactions rapides, puis tous les émojis ; un choix ferme la fenêtre. */
+function ReactionPicker({ mine, reacted, onReact }: { mine: boolean; reacted: string | null; onReact: (emoji: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const pick = (emoji: string) => {
+    setOpen(false);
+    onReact(emoji);
+  };
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button type="button" aria-label="Réagir" title="Réagir" className={HOVER_BUTTON}>
+          <SmilePlus className="size-4" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent side="top" align={mine ? "end" : "start"} sideOffset={6} className="mc-frame w-[328px] gap-2 border-[var(--mc-outline)] bg-card p-2 ring-0">
+        <div role="group" aria-label="Réactions rapides" className="flex justify-between border-b border-border pb-1.5">
+          {QUICK_REACTIONS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              aria-pressed={reacted === emoji}
+              onClick={() => pick(emoji)}
+              className={cn("grid size-10 place-items-center rounded-lg text-2xl leading-none transition-transform hover:bg-white/[0.06] motion-safe:hover:scale-110", reacted === emoji && "bg-primary/15 ring-1 ring-primary/40 ring-inset")}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+        <EmojiPanel onPick={pick} />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function MessageMenu({ mine, actions }: { mine: boolean; actions: MessageActions }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label="Actions du message"
-          className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/message:opacity-100 hover:bg-white/[0.06] hover:text-foreground focus-visible:opacity-100 data-[state=open]:opacity-100"
-        >
+        <button type="button" aria-label="Actions du message" className={HOVER_BUTTON}>
           <Ellipsis className="size-4" aria-hidden />
         </button>
       </DropdownMenuTrigger>
@@ -692,6 +746,7 @@ function MessageRow(props: {
   const failed = pending?.state === "failed";
   const origin = ORIGIN[entry.source];
   const showMeta = runEnd || Boolean(message?.editedAt) || seen || pending !== null;
+  const chips = message && !deleted ? reactionChips(message.reactions) : [];
 
   return (
     <li id={message ? `message-${message.id}` : undefined} className={cn("group/message flex items-end gap-2", mine && "flex-row-reverse", runStart ? "mt-3" : "mt-0.5")}>
@@ -748,8 +803,30 @@ function MessageRow(props: {
               )}
             </div>
           </RightClickMenu>
+          {actions?.onReact && <ReactionPicker mine={mine} reacted={actions.reacted ?? null} onReact={actions.onReact} />}
           {actions && <MessageMenu mine={mine} actions={actions} />}
         </div>
+        {chips.length > 0 && (
+          <div role="group" aria-label="Réactions" className={cn("-mt-0.5 flex flex-wrap gap-1 px-1", mine && "justify-end")}>
+            {chips.map((chip) => (
+              <button
+                key={chip.emoji}
+                type="button"
+                disabled={!actions?.onReact}
+                aria-pressed={chip.mine}
+                onClick={() => actions?.onReact?.(chip.emoji)}
+                title={chip.mine && chip.theirs ? `Toi et ${friend.name}` : chip.mine ? "Ta réaction : clique pour la retirer" : friend.name}
+                className={cn(
+                  "flex h-6 items-center gap-1 rounded-full px-2 text-[14px] leading-none ring-1 ring-inset transition-colors disabled:cursor-default",
+                  chip.mine ? "bg-primary/15 ring-primary/40 enabled:hover:bg-primary/25" : "bg-card ring-border enabled:hover:bg-white/[0.06]",
+                )}
+              >
+                {chip.emoji}
+                {chip.mine && chip.theirs && <span className="text-[11px] font-semibold text-muted-foreground tabular-nums">2</span>}
+              </button>
+            ))}
+          </div>
+        )}
         {showMeta && (
           <p className={cn("flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-[11px] text-muted-foreground", mine && "justify-end")}>
             {pending ? (
@@ -1164,7 +1241,20 @@ function ThreadPane(props: {
     window.setTimeout(() => setHighlight((current) => (current === id ? null : current)), 1600);
   };
 
+  /** Réaction affichée tout de suite, remise comme avant si le site la refuse. */
+  const react = (message: ChatMessage, emoji: string) => {
+    const mine = toggledReaction(message.reactions, emoji);
+    const show = (target: ChatMessage) => setLoaded((previous) => previous && { ...previous, messages: mergeMessages(previous.messages, [], [target]) });
+    show({ ...message, reactions: { ...message.reactions, mine } });
+    services.reactMessage(uuid, message.id, mine).then(show, (reason) => {
+      show(message);
+      onNotice(String(reason));
+    });
+  };
+
   const actionsFor = (message: ChatMessage): MessageActions => ({
+    onReact: canWrite && !message.deleted ? (emoji) => react(message, emoji) : undefined,
+    reacted: message.reactions.mine,
     onReply: canWrite && !message.deleted ? () => startReply(message) : undefined,
     onEdit: canEdit(message, now) ? () => startEdit(message) : undefined,
     onCopy: message.deleted

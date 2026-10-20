@@ -15,9 +15,11 @@ import {
   masonry,
   mergeMessages,
   previewText,
+  reactionChips,
   sameRun,
   seenMessageId,
   sortConversations,
+  toggledReaction,
   unreadCount,
   withLast,
 } from "../src/lib/messages.ts";
@@ -26,7 +28,7 @@ import type { ChatMessage, Conversation } from "../src/types.ts";
 const at = (day: number, hour: number, minute = 0) => new Date(2026, 9, day, hour, minute).getTime();
 
 function message(id: number, fromMe: boolean, time: number, extra: Partial<ChatMessage> = {}): ChatMessage {
-  return { id, fromMe, kind: "text", body: `message ${id}`, gif: null, replyTo: null, source: "launcher", at: time, editedAt: null, deleted: false, ...extra };
+  return { id, fromMe, kind: "text", body: `message ${id}`, gif: null, replyTo: null, source: "launcher", at: time, editedAt: null, deleted: false, reactions: { mine: null, theirs: null }, ...extra };
 }
 
 function conversation(name: string, extra: Partial<Conversation> = {}, online = false): Conversation {
@@ -199,4 +201,15 @@ test("un GIF s'annonce une seule fois « GIF · », qu'il vienne du site ou d'un
   assert.equal(previewText({ ...gif, preview: "Good Game Fist Bump GIF" }), "GIF · Good Game Fist Bump GIF");
   assert.equal(previewText({ ...gif, preview: "GIF" }), "GIF");
   assert.equal(previewText({ ...gif, preview: "" }), "GIF");
+});
+
+test("réactions : la même retire, une autre remplace, deux identiques en une pastille", () => {
+  assert.equal(toggledReaction({ mine: "❤️", theirs: null }, "❤️"), null);
+  assert.equal(toggledReaction({ mine: "❤️", theirs: null }, "😂"), "😂");
+  assert.deepEqual(reactionChips({ mine: null, theirs: null }), []);
+  assert.deepEqual(reactionChips({ mine: "👍", theirs: "👍" }), [{ emoji: "👍", mine: true, theirs: true }]);
+  assert.deepEqual(
+    reactionChips({ mine: "😂", theirs: "❤️" }).map((chip) => chip.emoji),
+    ["❤️", "😂"],
+  );
 });

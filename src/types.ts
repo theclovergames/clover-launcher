@@ -416,6 +416,8 @@ export type MessageSource = "game" | "launcher" | "site";
 export type MessagePreview = { id: number; fromMe: boolean; kind: MessageKind; preview: string; at: number; deleted: boolean };
 /** GIF de Giphy, hébergé sur `media*.giphy.com` (vérifié par le cœur Rust). */
 export type MessageGif = { id: string; url: string; width: number; height: number };
+/** Réaction de chacun des deux amis (un émoji), `null` sans réaction. */
+export type MessageReactions = { mine: string | null; theirs: string | null };
 export type ChatMessage = {
   id: number;
   fromMe: boolean;
@@ -430,6 +432,7 @@ export type ChatMessage = {
   editedAt: number | null;
   /** Supprimé pour tous : la place reste, sans contenu. */
   deleted: boolean;
+  reactions: MessageReactions;
 };
 export type Conversation = { friend: ChatFriend; last: MessagePreview | null; unread: number; archived: boolean; muted: boolean; canWrite: boolean };
 /** Demande d'ami en attente ; dates en millisecondes, elle expire d'elle-même à `expiresAt`. */

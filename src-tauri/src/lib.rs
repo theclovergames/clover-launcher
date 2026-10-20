@@ -1214,6 +1214,7 @@ pub fn run() {
             messages::send_message,
             messages::send_gif,
             messages::edit_message,
+            messages::react_message,
             messages::delete_message,
             messages::mark_messages_read,
             messages::conversation_state,
