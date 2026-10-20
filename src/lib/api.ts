@@ -7,7 +7,7 @@ import type { Instance, InstanceEntry, InstanceInput, InstanceKind, AvailableVer
 
 import type { Settings, SteamState } from "@/screens/SettingsScreen";
 import type { RecentVote } from "@/components/VoteTicker";
-import type { ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats, ChatMessage, GifPage, Inbox, Thread } from "@/types";
+import type { ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats, ChatMessage, GifPage, Inbox, Thread, LeaderboardBoard, OtherPlayer, RequestSent } from "@/types";
 
 export type AccountRef = { uuid: string; name: string; skinUrl: string | null };
 
@@ -225,6 +225,14 @@ export const api = {
   nameChangeInfo: () => invoke<NameChange>("name_change_info"),
   /** Statistiques Clover Games du compte actif (`/api/launcher/profile` du site). */
   playerStats: () => invoke<PlayerStats>("player_stats"),
+  /** Profil d'un autre joueur, par son pseudo, et son lien avec le compte actif ; `null` s'il n'est jamais venu sur le serveur. */
+  playerProfile: (name: string) => invoke<OtherPlayer | null>("player_profile", { name }),
+  /** Tableaux du classement du site (100 premiers de chacun). */
+  leaderboard: () => invoke<LeaderboardBoard[]>("leaderboard"),
+  /** Demande d'ami par pseudo ; `accepted` si ce joueur avait déjà demandé. */
+  sendFriendRequest: (name: string) => invoke<RequestSent>("send_friend_request", { name }),
+  /** Accepter ou refuser une demande reçue, annuler une demande envoyée. */
+  answerFriendRequest: (player: string, action: "accept" | "decline" | "cancel") => invoke<void>("answer_friend_request", { player, action }),
   /** Conversations avec les amis du compte actif (`messages.rs`), pour la page Messages et sa pastille. */
   messageConversations: () => invoke<Inbox>("message_conversations"),
   /** Page d'une conversation : les 50 derniers messages, ceux d'avant `before` ou d'après `after` ; `since` ajoute les modifiés. */

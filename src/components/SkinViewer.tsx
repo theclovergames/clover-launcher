@@ -54,7 +54,22 @@ function recoil(t: number) {
  * au launcher et suit le curseur des yeux par moments (`SkinMoods`), et un clic sur le personnage le frappe comme en jeu. Immobile si le système
  * demande moins d'animations : le coup n'est alors qu'une teinte rouge, sans recul.
  */
-export function SkinViewer({ look, width, height, animate = true, elytra = false }: { look: SkinLook; width: number; height: number; animate?: boolean; /** Élytres à la place de la cape (même texture). */ elytra?: boolean }) {
+export function SkinViewer({
+  look,
+  width,
+  height,
+  animate = true,
+  elytra = false,
+  label = "Aperçu 3D de ton skin",
+}: {
+  look: SkinLook;
+  width: number;
+  height: number;
+  animate?: boolean;
+  /** Élytres à la place de la cape (même texture). */
+  elytra?: boolean;
+  label?: string;
+}) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const instance = useRef<Viewer | null>(null);
   /** Lu à la fin du chargement de la cape, qui peut arriver après une bascule. */
@@ -111,7 +126,7 @@ export function SkinViewer({ look, width, height, animate = true, elytra = false
   // inconnu. Le canvas est toujours rendu : React ne le retire jamais pendant qu'il est détaché.
   return (
     <div style={{ width, height }}>
-      <canvas ref={canvas} hidden={!look.texture} aria-label="Aperçu 3D de ton skin" className="block cursor-ew-resize" />
+      <canvas ref={canvas} hidden={!look.texture} aria-label={label} className="block cursor-ew-resize" />
     </div>
   );
 }

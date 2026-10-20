@@ -1,10 +1,14 @@
 /**
- * Amis du compte, communs au Profil et aux Messages : où ils sont et si on peut les rejoindre.
+ * Amis et autres joueurs, communs au Profil, aux Messages et au Classement : leur tête, où ils
+ * sont et si on peut les rejoindre.
  */
 import { fold } from "@/lib/utils";
 import type { ChatFriend } from "@/types";
 
 const relative = new Intl.RelativeTimeFormat("fr-FR", { numeric: "auto" });
+
+/** Tête d'un joueur (visage et chapeau) par minotar, à partir de son pseudo. */
+export const headUrl = (name: string, size = 48) => `https://minotar.net/helm/${encodeURIComponent(name)}/${size}.png`;
 
 /** « il y a 2 heures », « hier », « il y a 3 jours ». */
 export function ago(milliseconds: number) {

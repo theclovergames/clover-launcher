@@ -7,7 +7,7 @@ import type { Tab } from "@/types";
 
 type Props = {
   /** Absent avant la connexion : ni compte ni paramètres. La navigation vit dans `SideNav`. */
-  session?: { tab: Tab; onTab: (tab: Tab) => void };
+  session?: { tab: Tab; onTab: (tab: Exclude<Tab, "player">) => void };
   /** Menu des comptes (`AccountMenu`). */
   account?: ReactNode;
   /** Affiché à gauche du compte (derniers votes). */

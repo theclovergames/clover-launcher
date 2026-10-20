@@ -16,14 +16,16 @@ export type OpenMod = { list: "catalogue" | "personal"; id: string };
 export type OpenProject = { id: string; title: string; icon: string | null };
 
 export type Route =
-  | { tab: Exclude<Tab, "instances" | "discover" | "messages"> }
+  | { tab: Exclude<Tab, "instances" | "discover" | "messages" | "player"> }
   | { tab: "instances"; instance?: string; section?: InstanceSection; mod?: OpenMod }
   /** `minecraft` : version de la nouvelle instance voulue, qui filtre les modpacks. */
   | { tab: "discover"; kind: ContentKind; target?: string; world?: string; minecraft?: string; project?: OpenProject }
   /** `friend` : UUID de l'ami dont la conversation est ouverte. */
-  | { tab: "messages"; friend?: string };
+  | { tab: "messages"; friend?: string }
+  /** Profil d'un autre joueur, ouvert depuis le Classement, les Messages ou les amis. */
+  | { tab: "player"; name: string };
 
-export const route = (tab: Tab): Route => (tab === "discover" ? { tab, kind: "mod" } : { tab } as Route);
+export const route = (tab: Exclude<Tab, "player">): Route => (tab === "discover" ? { tab, kind: "mod" } : { tab } as Route);
 
 /** Page qui contient celle-ci (la liste au-dessus d'une fiche, l'instance au-dessus de son mod). */
 export function parent(current: Route): Route | null {
@@ -60,7 +62,8 @@ export type Crumb = { label: string; to?: Route };
 
 /**
  * Chemin de la page dans le launcher : Instances › Survie 1.21 › Shaders, Découvrir › Mods › Sodium,
- * Messages › Kanname. Une conversation n'a pas de page parente : la liste reste à côté d'elle.
+ * Messages › Kanname. Une conversation n'a pas de page parente : la liste reste à côté d'elle. Le
+ * profil d'un joueur porte son pseudo seul : « Retour » ramène là d'où il a été ouvert.
  */
 export function trail(current: Route, names: Names): Crumb[] {
   const crumbs: Crumb[] = [];
@@ -78,6 +81,8 @@ export function trail(current: Route, names: Names): Crumb[] {
   } else if (current.tab === "messages") {
     crumbs.push({ label: names.tab("messages"), to: { tab: "messages" } });
     if (current.friend) crumbs.push({ label: names.friend(current.friend) });
+  } else if (current.tab === "player") {
+    crumbs.push({ label: current.name });
   } else {
     crumbs.push({ label: names.tab(current.tab) });
   }

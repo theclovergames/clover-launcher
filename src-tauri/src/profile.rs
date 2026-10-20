@@ -1,10 +1,12 @@
-//! Statistiques Clover Games du compte actif pour la page Profil, via `/api/launcher/profile` et la
-//! session du launcher sur le site (`notifications::authorized`). Réponse réduite aux champs
-//! affichés ; un bloc absent ou mal formé reste vide sans casser les autres.
+//! Statistiques Clover Games pour la page Profil (compte actif, `/api/launcher/profile`) et la page
+//! d'un autre joueur (`/api/launcher/players/{pseudo}`), via la session du launcher sur le site
+//! (`notifications::authorized`). Réponse réduite aux champs affichés ; un bloc absent ou mal formé
+//! reste vide sans casser les autres.
 
 use serde::{Deserialize, Deserializer, Serialize};
 use tauri::State;
 
+use crate::messages::{decode_body, failure, is_contract_error, is_uuid, site_response};
 use crate::notifications::{authorized, session, SiteTokens};
 use crate::CurrentSession;
 
@@ -195,6 +197,59 @@ pub async fn player_stats(current: State<'_, CurrentSession>, tokens: State<'_, 
     Ok(numbers_only(stats))
 }
 
+/// Lien entre le compte actif et un autre joueur.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Relation {
+    #[serde(rename = "self")]
+    Myself,
+    Friend,
+    /// Demande envoyée, en attente.
+    Outgoing,
+    /// Demande reçue, en attente.
+    Incoming,
+    #[serde(other)]
+    None,
+}
+
+/// Profil public d'un joueur : ses statistiques (sans pièces ni amis, présence réservée à ses amis,
+/// filtré par le site) et le lien avec le compte actif.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtherPlayer {
+    pub uuid: String,
+    pub name: String,
+    pub relation: Relation,
+    /// Il accepte les demandes d'amis, et aucune n'est en cours.
+    #[serde(default)]
+    pub can_request: bool,
+    pub stats: PlayerStats,
+}
+
+fn other_player(mut player: OtherPlayer) -> Result<OtherPlayer, String> {
+    player.uuid = player.uuid.to_ascii_lowercase();
+    if !is_uuid(&player.uuid) || !is_player_name(&player.name) {
+        return Err("Réponse du site illisible.".into());
+    }
+    player.stats = numbers_only(player.stats);
+    Ok(player)
+}
+
+/// Profil d'un joueur par son pseudo ; `None` s'il n'est jamais venu sur le serveur.
+#[tauri::command]
+pub async fn player_profile(name: String, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<Option<OtherPlayer>, String> {
+    let name = name.trim();
+    if !is_player_name(name) {
+        return Ok(None);
+    }
+    let (status, body) = site_response(&current, &tokens, |http, base| http.get(format!("{base}/api/launcher/players/{name}"))).await?;
+    match status {
+        200..=299 => other_player(decode_body(&body)?).map(Some),
+        404 if is_contract_error(&body) => Ok(None),
+        _ => Err(failure(status, &body, "Les profils des joueurs ne sont pas encore disponibles dans le launcher.")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +301,23 @@ mod tests {
         assert!(rank(r#"{"rank":{"id":"../x","label":"X"}}"#).is_none());
         assert!(rank(r#"{"rank":{"id":"Légende","label":"X"}}"#).is_none());
         assert!(rank(r#"{"rank":"oops"}"#).is_none());
+    }
+
+    #[test]
+    fn reads_another_player() {
+        let player: OtherPlayer = serde_json::from_str(
+            r#"{"schema":1,"uuid":"0F3C2B9E-6A1D-4F7E-9B2A-1C3D5E7F9A0B","name":"Kanname","relation":"incoming","canRequest":false,
+            "stats":{"linked":false,"coins":null,"friends":null,"modes":[{"id":"skypvp","rank":4,"stats":{"kills":10,"name":"x"}}]}}"#,
+        )
+        .unwrap();
+        let player = other_player(player).unwrap();
+        assert_eq!(player.uuid, "0f3c2b9e-6a1d-4f7e-9b2a-1c3d5e7f9a0b");
+        assert_eq!(player.relation, Relation::Incoming);
+        assert!(!player.stats.modes.as_ref().unwrap()[0].stats.contains_key("name"));
+        let relation = |json: &str| serde_json::from_str::<Relation>(json).unwrap();
+        assert_eq!(relation(r#""self""#), Relation::Myself);
+        assert_eq!(relation(r#""blocked""#), Relation::None);
+        let bad: OtherPlayer = serde_json::from_str(r#"{"uuid":"x","name":"Kanname","relation":"none","stats":{}}"#).unwrap();
+        assert!(other_player(bad).is_err());
     }
 }

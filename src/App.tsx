@@ -5,7 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { NotificationBell } from "@/components/NotificationBell";
-import { SideNav, TAB_LABELS } from "@/components/SideNav";
+import { type NavTab, SideNav, TAB_LABELS } from "@/components/SideNav";
 import { AccountMenu } from "@/components/AccountMenu";
 import { TitleBar } from "@/components/TitleBar";
 import { type UpdateState, UpdateToast } from "@/components/UpdateToast";
@@ -15,8 +15,9 @@ import { ownedCapeText } from "@/lib/capes";
 import { accent, heroTone } from "@/lib/appearance";
 import { setCrashReports } from "@/lib/crash-reports";
 import { formatLog } from "@/lib/log";
-import { freshIncoming, previewText, sortConversations, unreadCount } from "@/lib/messages";
+import { freshIncoming, freshRequests, previewText, sortConversations, unreadCount } from "@/lib/messages";
 import { networkPlayers, SITE_URL } from "@/lib/site";
+import { fold } from "@/lib/utils";
 import { ConsoleScreen } from "@/screens/ConsoleScreen";
 import { CrashDialog, NameDialog } from "@/screens/Dialogs";
 import { Breadcrumb } from "@/components/Breadcrumb";
@@ -38,7 +39,9 @@ import { type Account, type Settings, SettingsScreen, type SettingsTab, type Hid
 import { type SkinStatus, SkinsScreen } from "@/screens/SkinsScreen";
 import { ProfileScreen } from "@/screens/ProfileScreen";
 import { MessagesScreen } from "@/screens/MessagesScreen";
-import type { Cape, ConsoleSnapshot, DetectedInstance, GameExited, ImportItem, ImportResult, ImportScan, Inbox, LauncherNotification, InstanceEntry, InstanceInput, ModInfo, PersonalMod, SearchFilters, PlaySession, PlayState, Profile, Progress, SavedSkin, SkinLook, SkinModel, Tab } from "@/types";
+import { LeaderboardScreen } from "@/screens/LeaderboardScreen";
+import { PlayerScreen } from "@/screens/PlayerScreen";
+import type { Cape, ConsoleSnapshot, DetectedInstance, GameExited, ImportItem, ImportResult, ImportScan, Inbox, LauncherNotification, InstanceEntry, InstanceInput, ModInfo, PersonalMod, SearchFilters, PlaySession, PlayState, Profile, Progress, SavedSkin, SkinLook, SkinModel } from "@/types";
 
 /** Paquet du Microsoft Store : le Store gère les mises à jour du launcher. */
 const STORE_HIDDEN: HiddenSetting[] = ["autoUpdate"];
@@ -159,7 +162,7 @@ export default function App() {
   tabRef.current = tab;
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   /** Menu, roue dentée : une pile neuve, sans fil d'Ariane. */
-  const navigate = useCallback((next: Tab | Route) => {
+  const navigate = useCallback((next: NavTab | Route) => {
     const target = typeof next === "string" ? route(next) : next;
     if (target.tab !== "instances") setInstanceDraft(null);
     setStack([target]);
@@ -497,6 +500,8 @@ export default function App() {
   const [inboxError, setInboxError] = useState<string | null>(null);
   /** Dernier message connu de chaque conversation : seuls les nouveaux font une bulle. `null` avant la première relève. */
   const knownMessages = useRef<Map<string, number> | null>(null);
+  /** Demandes d'amis reçues déjà vues, même règle que les messages. */
+  const knownRequests = useRef<Set<string> | null>(null);
   /** Change avec le compte : une relève partie avant le changement est ignorée. */
   const inboxGeneration = useRef(0);
   const refreshInbox = useCallback(async () => {
@@ -506,9 +511,12 @@ export default function App() {
       if (generation !== inboxGeneration.current) return;
       const { known, fresh } = freshIncoming(knownMessages.current, next.conversations);
       knownMessages.current = known;
+      const requests = freshRequests(knownRequests.current, next.requests.incoming);
+      knownRequests.current = requests.known;
       // Comme la cloche : une bulle seulement fenêtre cachée ou au second plan, si le réglage le permet.
       if ((document.hidden || !document.hasFocus()) && desktopNotifications.current) {
         for (const conversation of fresh) void api.systemNotification(`Nouveau message de ${conversation.friend.name}`, conversation.last ? previewText(conversation.last) : "").catch(() => {});
+        for (const request of requests.fresh) void api.systemNotification(`Demande d'ami de ${request.name}`, "Accepte-la dans les Messages du launcher, sur le site ou en jeu.").catch(() => {});
       }
       setInbox({ ...next, conversations: sortConversations(next.conversations) });
       setInboxError(null);
@@ -527,6 +535,7 @@ export default function App() {
     seenNotifications.current = null;
     inboxGeneration.current += 1;
     knownMessages.current = null;
+    knownRequests.current = null;
     setInbox(null);
     setInboxError(null);
     const poll = async () => {
@@ -892,6 +901,9 @@ export default function App() {
       onOpen={(mod) => push({ tab: "instances", instance: entry.id, section: "mods", mod })}
     />
   );
+
+  /** Profil d'un joueur ; le sien ouvre la page Profil du compte. */
+  const openPlayer = (name: string) => push(profile && fold(name) === fold(profile.name) ? route("profile") : { tab: "player", name });
 
   /** Ouvre Découvrir sur `kind`, pour `target` (l'instance choisie sans elle) ; `world` : monde d'un datapack. */
   const openDiscover = (kind: ContentKind, target?: string, world?: string) => push({ tab: "discover", kind, target, world });
@@ -1338,7 +1350,13 @@ export default function App() {
 
       {/* Panneaux flottants : l'accueil pose ses propres blocs, les autres écrans tiennent dans un seul. */}
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
-        <SideNav tab={tab} onTab={navigate} head={profile?.skin?.url ?? activeAccount?.skinUrl ?? null} unread={unreadCount(inbox?.conversations ?? [])} />
+        <SideNav
+          tab={tab}
+          onTab={navigate}
+          head={profile?.skin?.url ?? activeAccount?.skinUrl ?? null}
+          unread={unreadCount(inbox?.conversations ?? [])}
+          requests={inbox?.requests.incoming.length ?? 0}
+        />
         <div className={tab === "home" ? "flex min-h-0 min-w-0 flex-1 flex-col gap-2" : "tile flex min-w-0 flex-1 flex-col overflow-hidden"}>
           {tab !== "home" && canGoBack(stack) && <Breadcrumb crumbs={trail(current, names)} onBack={goBack} onOpen={openCrumb} />}
           {tab === "home" && (
@@ -1534,7 +1552,26 @@ export default function App() {
               onRename={() => setRenaming(true)}
               onOpenSkins={() => push(route("skins"))}
               onWrite={(friend) => push({ tab: "messages", friend })}
+              onOpenPlayer={openPlayer}
               onOpenLink={open}
+            />
+          )}
+
+          {tab === "leaderboard" && profile && <LeaderboardScreen me={{ uuid: profile.uuid, name: profile.name }} onOpenPlayer={openPlayer} onOpenLink={open} />}
+
+          {current.tab === "player" && profile && (
+            <PlayerScreen
+              key={current.name.toLowerCase()}
+              name={current.name}
+              modes={(catalogue?.modes ?? []).map((mode) => ({ id: mode.id, name: mode.name, icon: mode.image, quickPlay: Boolean(mode.host) }))}
+              friend={inbox?.conversations.find((conversation) => conversation.canWrite && fold(conversation.friend.name) === fold(current.name))?.friend ?? null}
+              animateSkin={settings.animatedSkin && settings.animations !== "reduced"}
+              playBusy={playFor("clover").kind !== "ready" || Boolean(launching)}
+              onPlay={(mode) => startGame("clover", () => selectInstance("clover").then(() => api.play(mode)))}
+              onWrite={(friend) => push({ tab: "messages", friend })}
+              onOpenLink={open}
+              onFriendsChanged={() => void refreshInbox()}
+              onNotice={setNotice}
             />
           )}
 
@@ -1550,6 +1587,7 @@ export default function App() {
               playBusy={playFor("clover").kind !== "ready" || Boolean(launching)}
               onPlay={(mode) => startGame("clover", () => selectInstance("clover").then(() => api.play(mode)))}
               onNotice={setNotice}
+              onOpenPlayer={openPlayer}
             />
           )}
 

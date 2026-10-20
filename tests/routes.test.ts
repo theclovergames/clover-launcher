@@ -65,3 +65,11 @@ test("une conversation ouverte depuis le Profil y ramène, la liste à côté d'
   assert.equal(canGoBack([conversation]), false);
   assert.deepEqual(openFromCrumb(stack, { tab: "messages" }), [{ tab: "profile" }, { tab: "messages" }]);
 });
+
+test("un profil ouvert depuis le Classement y ramène, sous le seul pseudo du joueur", () => {
+  const player: Route = { tab: "player", name: "Kanname" };
+  const stack: Route[] = [{ tab: "leaderboard" }, player];
+  assert.deepEqual(trail(player, names).map((crumb) => crumb.label), ["Kanname"]);
+  assert.deepEqual(back(stack), [{ tab: "leaderboard" }]);
+  assert.equal(canGoBack([player]), false);
+});

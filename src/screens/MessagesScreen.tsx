@@ -5,6 +5,7 @@ import {
   Ban,
   Bell,
   BellOff,
+  Check,
   CheckCheck,
   CircleAlert,
   CloudOff,
@@ -24,6 +25,8 @@ import {
   RotateCcw,
   SendHorizontal,
   Trash2,
+  UserPlus,
+  UserRound,
   X,
 } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type ReactNode, type UIEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -34,9 +37,10 @@ import { GifPicker } from "@/components/GifPicker";
 import { SearchField } from "@/components/SearchField";
 import { Tabs } from "@/components/Tabs";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api } from "@/lib/api";
-import { secondaryButton } from "@/lib/buttons";
-import { findMode, joinableMode, presence } from "@/lib/friends";
+import { primaryButton, secondaryButton } from "@/lib/buttons";
+import { findMode, headUrl, joinableMode, presence } from "@/lib/friends";
 import {
   BODY_MAX,
   canEdit,
@@ -59,7 +63,7 @@ import {
 } from "@/lib/messages";
 import { cn } from "@/lib/utils";
 import { type Confirmation, ConfirmDialog, ReportDialog } from "@/screens/Dialogs";
-import type { ChatFriend, ChatMessage, Conversation, GifResult, Inbox, MessagePreview, MessageSource, Thread } from "@/types";
+import type { ChatFriend, ChatMessage, Conversation, FriendRequest, GifResult, Inbox, MessagePreview, MessageSource, Thread } from "@/types";
 
 /** Conversation ouverte, fenêtre au premier plan : nouveaux messages toutes les 3 s. */
 const THREAD_POLL_MS = 3_000;
@@ -78,7 +82,7 @@ type Mode = { id: string; name: string; quickPlay: boolean };
 
 export type MessagesServices = Pick<
   typeof api,
-  "messageThread" | "sendMessage" | "sendGif" | "editMessage" | "deleteMessage" | "markMessagesRead" | "setConversationState" | "reportMessage" | "searchGifs"
+  "messageThread" | "sendMessage" | "sendGif" | "editMessage" | "deleteMessage" | "markMessagesRead" | "setConversationState" | "reportMessage" | "searchGifs" | "sendFriendRequest" | "answerFriendRequest"
 >;
 
 type Props = {
@@ -98,12 +102,13 @@ type Props = {
   playBusy: boolean;
   onPlay: (mode: string) => void;
   onNotice: (message: string) => void;
+  /** Ouvre le profil d'un joueur, par son pseudo. */
+  onOpenPlayer: (name: string) => void;
   /** Sources de données, remplacées par des exemples sur la planche. */
   services?: MessagesServices;
 };
 
 const plain = (uuid: string) => uuid.replace(/-/g, "").toLowerCase();
-const headUrl = (name: string) => `https://minotar.net/helm/${encodeURIComponent(name)}/48.png`;
 const fullDate = new Intl.DateTimeFormat("fr-FR", { dateStyle: "full", timeStyle: "short" });
 
 const ORIGIN: Record<MessageSource, { Icon: LucideIcon; label: string }> = {
@@ -193,17 +198,167 @@ function ConversationRow({ conversation, selected, modes, onOpen }: { conversati
   );
 }
 
-/** Colonne des conversations : toutes ou archivées, recherche par pseudo. */
-function ConversationList({ inbox, error, selected, modes, onOpen }: { inbox: Inbox | null; error: string | null; selected: string | null; modes: Mode[]; onOpen: (friend: string) => void }) {
+type RequestAction = "accept" | "decline" | "cancel";
+
+const REQUEST_DONE: Record<RequestAction, (name: string) => string> = {
+  accept: (name) => `${name} est maintenant ton ami.`,
+  decline: (name) => `Demande de ${name} refusée.`,
+  cancel: (name) => `Demande à ${name} annulée.`,
+};
+
+/** Bouton icône d'une demande : accepter, refuser, annuler. */
+function RequestButton({ label, tone, busy, onClick, children }: { label: string; tone: "primary" | "plain"; busy: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={cn(
+        "grid size-8 shrink-0 place-items-center rounded-md transition-colors disabled:opacity-50",
+        tone === "primary" ? "bg-primary/12 text-primary enabled:hover:bg-primary/20" : "text-muted-foreground enabled:hover:bg-white/[0.06] enabled:hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Demandes d'amis en attente, au-dessus des conversations : celles reçues à accepter ou refuser,
+ * celles envoyées à annuler. Un pseudo ouvre le profil du joueur.
+ */
+function FriendRequests({ requests, busy, onAnswer, onOpenPlayer }: { requests: Inbox["requests"]; busy: string | null; onAnswer: (request: FriendRequest, action: RequestAction) => void; onOpenPlayer: (name: string) => void }) {
+  const row = (request: FriendRequest, incoming: boolean) => (
+    <li key={request.uuid} className="flex items-center gap-3 rounded-lg px-2.5 py-2">
+      <img src={headUrl(request.name)} alt="" width={36} height={36} draggable={false} className="pixelated size-9 shrink-0 rounded-[4px]" />
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <button type="button" onClick={() => onOpenPlayer(request.name)} title={`Voir le profil de ${request.name}`} className="truncate text-left text-[13px] font-bold underline-offset-2 hover:underline">
+          {request.name}
+        </button>
+        <span className="truncate text-[11px] text-muted-foreground">{incoming ? "Veut devenir ton ami" : "Demande envoyée"}</span>
+      </span>
+      {incoming ? (
+        <>
+          <RequestButton label={`Accepter la demande de ${request.name}`} tone="primary" busy={busy === request.uuid} onClick={() => onAnswer(request, "accept")}>
+            <Check className="size-4" aria-hidden />
+          </RequestButton>
+          <RequestButton label={`Refuser la demande de ${request.name}`} tone="plain" busy={busy === request.uuid} onClick={() => onAnswer(request, "decline")}>
+            <X className="size-4" aria-hidden />
+          </RequestButton>
+        </>
+      ) : (
+        <RequestButton label={`Annuler la demande à ${request.name}`} tone="plain" busy={busy === request.uuid} onClick={() => onAnswer(request, "cancel")}>
+          <X className="size-4" aria-hidden />
+        </RequestButton>
+      )}
+    </li>
+  );
+  return (
+    <section aria-labelledby="friend-requests" className="mb-2 border-b border-border pb-2">
+      <h2 id="friend-requests" className="flex items-center gap-2 px-2.5 pt-1 pb-1 text-[11px] font-bold tracking-wide text-muted-foreground uppercase">
+        Demandes d'amis
+        {requests.incoming.length > 0 && <span className="rounded-full bg-destructive px-1.5 font-pixel text-[10px] leading-[16px] text-white normal-case">{requests.incoming.length}</span>}
+      </h2>
+      <ul className="flex flex-col gap-0.5">
+        {requests.incoming.map((request) => row(request, true))}
+        {requests.outgoing.map((request) => row(request, false))}
+      </ul>
+    </section>
+  );
+}
+
+/** « Ajouter un ami » : une demande par pseudo, à un joueur déjà venu sur le serveur. */
+function AddFriend({ onSend }: { onSend: (name: string) => Promise<boolean> }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [sending, setSending] = useState(false);
+  const valid = /^[A-Za-z0-9_]{3,16}$/.test(name.trim());
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!valid || sending) return;
+    setSending(true);
+    const sent = await onSend(name.trim());
+    setSending(false);
+    if (sent) {
+      setName("");
+      setOpen(false);
+    }
+  };
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="Ajouter un ami"
+          title="Ajouter un ami"
+          className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground data-[state=open]:bg-white/[0.06] data-[state=open]:text-foreground"
+        >
+          <UserPlus className="size-5" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" sideOffset={8} className="mc-frame w-[300px] border-[var(--mc-outline)] bg-card p-3 ring-0">
+        <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-2.5">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[13px] font-semibold">Ajouter un ami</span>
+            <input
+              autoFocus
+              value={name}
+              maxLength={16}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Pseudo Minecraft"
+              spellCheck={false}
+              className="h-10 w-full rounded-md border border-border bg-sunken px-3 text-sm text-foreground outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
+            />
+          </label>
+          <p className="text-[11px] leading-snug text-muted-foreground">Le joueur doit être déjà venu sur Clover Games. Il reçoit ta demande en jeu, sur le site et dans le launcher.</p>
+          <button type="submit" disabled={!valid || sending} className={primaryButton}>
+            {sending ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <UserPlus className="size-4" aria-hidden />}
+            Envoyer la demande
+          </button>
+        </form>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** Colonne des conversations : toutes ou archivées, recherche par pseudo, demandes d'amis en tête. */
+function ConversationList({
+  inbox,
+  error,
+  selected,
+  modes,
+  onOpen,
+  requestBusy,
+  onAnswer,
+  onSendRequest,
+  onOpenPlayer,
+}: {
+  inbox: Inbox | null;
+  error: string | null;
+  selected: string | null;
+  modes: Mode[];
+  onOpen: (friend: string) => void;
+  requestBusy: string | null;
+  onAnswer: (request: FriendRequest, action: RequestAction) => void;
+  onSendRequest: (name: string) => Promise<boolean>;
+  onOpenPlayer: (name: string) => void;
+}) {
   const [view, setView] = useState<"all" | "archived">("all");
   const [query, setQuery] = useState("");
   const conversations = inbox?.conversations ?? [];
   const shown = filterConversations(conversations, query, view === "archived");
   const archived = conversations.filter((conversation) => conversation.archived).length;
+  const requests = inbox?.requests ?? { incoming: [], outgoing: [] };
+  const showRequests = view === "all" && !query.trim() && requests.incoming.length + requests.outgoing.length > 0;
   return (
     <aside aria-label="Conversations" className="flex w-[clamp(260px,32%,340px)] shrink-0 flex-col border-r border-border">
       <div className="flex flex-col gap-3 px-4 pt-6 pb-3">
-        <h1 className="font-display text-[28px] leading-none">Messages</h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="font-display text-[28px] leading-none">Messages</h1>
+          <AddFriend onSend={onSendRequest} />
+        </div>
         <Tabs
           label="Conversations affichées"
           items={[
@@ -216,6 +371,7 @@ function ConversationList({ inbox, error, selected, modes, onOpen }: { inbox: In
         <SearchField label="Chercher un ami" placeholder="Chercher un ami" value={query} onChange={(event) => setQuery(event.target.value)} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+        {showRequests && <FriendRequests requests={requests} busy={requestBusy} onAnswer={onAnswer} onOpenPlayer={onOpenPlayer} />}
         {!inbox ? (
           <div className="flex flex-col gap-1.5 px-1">
             {[0, 1, 2, 3, 4].map((index) => (
@@ -224,7 +380,13 @@ function ConversationList({ inbox, error, selected, modes, onOpen }: { inbox: In
           </div>
         ) : shown.length === 0 ? (
           <p className="px-3 py-8 text-center text-[13px] text-muted-foreground">
-            {query.trim() ? `Aucun ami ne s'appelle « ${query.trim()} ».` : view === "archived" ? "Aucune conversation archivée." : "Toutes tes conversations sont archivées."}
+            {query.trim()
+              ? `Aucun ami ne s'appelle « ${query.trim()} ».`
+              : view === "archived"
+                ? "Aucune conversation archivée."
+                : conversations.length === 0
+                  ? "Pas encore d'amis : ajoute-en un avec le bouton en haut, depuis le Classement ou le profil d'un joueur."
+                  : "Toutes tes conversations sont archivées."}
           </p>
         ) : (
           <ul className="flex flex-col gap-0.5">
@@ -515,6 +677,7 @@ function ThreadPane(props: {
   playBusy: boolean;
   onPlay: (mode: string) => void;
   onNotice: (message: string) => void;
+  onOpenPlayer: (name: string) => void;
   updateInbox: Props["updateInbox"];
   refreshInbox: Props["refreshInbox"];
   services: MessagesServices;
@@ -891,10 +1054,14 @@ function ThreadPane(props: {
   return (
     <section aria-label={`Conversation avec ${name}`} className="relative flex min-w-0 flex-1 flex-col">
       <header className="flex h-[68px] shrink-0 items-center gap-3 border-b border-border px-5">
-        <FriendHead friend={friend} size={40} />
+        <button type="button" onClick={() => props.onOpenPlayer(name)} aria-label={`Voir le profil de ${name}`} title={`Voir le profil de ${name}`} className="shrink-0 rounded-[4px] transition-opacity hover:opacity-80">
+          <FriendHead friend={friend} size={40} />
+        </button>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <h2 className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-display text-[22px] leading-none">{name}</span>
+            <button type="button" onClick={() => props.onOpenPlayer(name)} title={`Voir le profil de ${name}`} className="truncate font-display text-[22px] leading-none underline-offset-4 hover:underline">
+              {name}
+            </button>
             {archived && <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">Archivée</span>}
             {muted && <BellOff className="size-3.5 shrink-0 text-muted-foreground" aria-label="Notifications coupées" />}
           </h2>
@@ -926,6 +1093,11 @@ function ThreadPane(props: {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" aria-label="Options de la conversation">
+            <DropdownMenuItem onSelect={() => props.onOpenPlayer(name)}>
+              <UserRound aria-hidden />
+              Voir le profil
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => void changeState({ archived: !archived })}>
               {archived ? <ArchiveRestore aria-hidden /> : <Archive aria-hidden />}
               {archived ? "Désarchiver" : "Archiver"}
@@ -1139,12 +1311,44 @@ function DividedRow({ divider, children }: { divider: boolean; children: ReactNo
  * clovergames.fr. La liste est relevée toutes les 15 s sur la page, la conversation ouverte toutes
  * les 3 s quand la fenêtre est au premier plan.
  */
-export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox, updateInbox, modes, playBusy, onPlay, onNotice, services = api }: Props) {
+export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox, updateInbox, modes, playBusy, onPlay, onNotice, onOpenPlayer, services = api }: Props) {
+  /** UUID de la demande en cours de traitement. */
+  const [requestBusy, setRequestBusy] = useState<string | null>(null);
   useEffect(() => {
     void refreshInbox();
     const timer = window.setInterval(() => void refreshInbox(), LIST_POLL_MS);
     return () => window.clearInterval(timer);
   }, [refreshInbox]);
+
+  const answer = async (request: FriendRequest, action: RequestAction) => {
+    setRequestBusy(request.uuid);
+    try {
+      await services.answerFriendRequest(request.uuid, action);
+      // La demande disparaît tout de suite ; une acceptation ajoute la conversation à la relève.
+      updateInbox((current) => ({
+        ...current,
+        requests: { incoming: current.requests.incoming.filter((other) => other.uuid !== request.uuid), outgoing: current.requests.outgoing.filter((other) => other.uuid !== request.uuid) },
+      }));
+      onNotice(REQUEST_DONE[action](request.name));
+    } catch (reason) {
+      onNotice(String(reason));
+    } finally {
+      setRequestBusy(null);
+      void refreshInbox();
+    }
+  };
+
+  const sendRequest = async (name: string) => {
+    try {
+      const sent = await services.sendFriendRequest(name);
+      onNotice(sent.result === "accepted" ? `${sent.player.name} t'avait déjà demandé : vous êtes maintenant amis.` : `Demande d'ami envoyée à ${sent.player.name}.`);
+      void refreshInbox();
+      return true;
+    } catch (reason) {
+      onNotice(String(reason));
+      return false;
+    }
+  };
 
   // Rien à afficher : messages indisponibles, ou aucun ami.
   if (!inbox && inboxError) {
@@ -1168,26 +1372,21 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
       </main>
     );
   }
-  if (inbox && inbox.conversations.length === 0) {
-    return (
-      <main className="flex min-h-0 flex-1 items-center justify-center px-10">
-        <EmptyState
-          className="w-full max-w-lg"
-          title="Pas encore d'amis à qui écrire"
-          hint={
-            <>
-              Ajoute tes amis en jeu avec <span className="font-mono text-foreground">/amis add &lt;pseudo&gt;</span>. Dès qu'ils acceptent, vous pourrez vous écrire ici, sur le site et en jeu.
-            </>
-          }
-        />
-      </main>
-    );
-  }
-
+  const friendless = inbox !== null && inbox.conversations.length === 0;
   const conversation = friend && inbox ? (inbox.conversations.find((entry) => plain(entry.friend.uuid) === plain(friend)) ?? null) : null;
   return (
     <main className="flex min-h-0 min-w-0 flex-1">
-      <ConversationList inbox={inbox} error={inboxError} selected={friend} modes={modes} onOpen={onOpen} />
+      <ConversationList
+        inbox={inbox}
+        error={inboxError}
+        selected={friend}
+        modes={modes}
+        onOpen={onOpen}
+        requestBusy={requestBusy}
+        onAnswer={(request, action) => void answer(request, action)}
+        onSendRequest={sendRequest}
+        onOpenPlayer={onOpenPlayer}
+      />
       {conversation ? (
         <ThreadPane
           key={conversation.friend.uuid}
@@ -1197,6 +1396,7 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
           playBusy={playBusy}
           onPlay={onPlay}
           onNotice={onNotice}
+          onOpenPlayer={onOpenPlayer}
           updateInbox={updateInbox}
           refreshInbox={refreshInbox}
           services={services}
@@ -1208,9 +1408,18 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
           ) : (
             <>
               <MessageCircle className="size-10 text-muted-foreground/60" strokeWidth={1.75} aria-hidden />
-              <p className="font-display text-xl leading-none">{friend ? "Conversation introuvable" : "Choisis un ami"}</p>
+              <p className="font-display text-xl leading-none">{friend ? "Conversation introuvable" : friendless ? "Pas encore d'amis à qui écrire" : "Choisis un ami"}</p>
               <p className="max-w-sm text-sm text-muted-foreground">
-                {friend ? "Cet ami n'est plus dans ta liste." : "Tes messages arrivent aussi en jeu et sur clovergames.fr : écris d'où tu veux, la conversation suit."}
+                {friend ? (
+                  "Cet ami n'est plus dans ta liste."
+                ) : friendless ? (
+                  <>
+                    Envoie une demande avec <UserPlus className="inline size-4 align-text-bottom" aria-label="Ajouter un ami" />, depuis le Classement ou le profil d'un joueur, ou en jeu avec{" "}
+                    <span className="font-mono text-foreground">/amis add &lt;pseudo&gt;</span>. Dès qu'il accepte, vous pourrez vous écrire ici, sur le site et en jeu.
+                  </>
+                ) : (
+                  "Tes messages arrivent aussi en jeu et sur clovergames.fr : écris d'où tu veux, la conversation suit."
+                )}
               </p>
             </>
           )}
