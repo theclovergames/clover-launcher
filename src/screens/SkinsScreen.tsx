@@ -1,9 +1,9 @@
 import { ArrowRight, BookmarkPlus, Check, CircleAlert, CircleCheck, Download, LoaderCircle, MoveHorizontal, Pencil, Plus, Search, Shirt, Trash2, Undo2, X } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
+import { CharacterColumn } from "@/components/CharacterColumn";
 import { CapeFront } from "@/components/SkinFront";
 import { SkinPose } from "@/components/SkinPose";
-import { SkinViewer } from "@/components/SkinViewer";
 import { Tabs } from "@/components/Tabs";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
 import { ownedCapeText } from "@/lib/capes";
@@ -361,26 +361,27 @@ export function SkinsScreen(props: Props) {
 
   return (
     <main className="flex min-h-0 flex-1">
-      <aside className="relative flex w-[clamp(280px,30vw,380px)] shrink-0 flex-col items-center justify-center gap-3 border-r border-border bg-[radial-gradient(ellipse_at_50%_45%,rgb(82_169_108/0.12),transparent_65%)] px-4">
-        <div className="flex items-center gap-2">
-          {trial && <span className="rounded-full border border-primary/40 bg-primary/15 px-2 py-0.5 text-[11px] font-bold text-primary">Essai</span>}
-          {trial?.kind !== "cape" && (
-            <span className="max-w-[260px] truncate rounded-[3px] bg-black/50 px-2.5 py-1 font-pixel text-xl leading-none text-white">{triedSkin?.name ?? playerName}</span>
-          )}
-          {trial?.kind === "cape" && <span className="rounded-[3px] bg-black/50 px-2.5 py-1 font-pixel text-xl leading-none text-white">{playerName}</span>}
-        </div>
-        <div className="relative">
-          <div aria-hidden className="absolute bottom-9 left-1/2 h-5 w-32 -translate-x-1/2 rounded-[50%] bg-black/60 blur-[7px]" />
-          <SkinViewer look={shown} width={230} height={360} animate={animateSkin} elytra={elytra} />
-          {shown.cape && <Choice label="Dos du personnage" value={elytra} options={BACK} onChange={setElytra} className="absolute bottom-0 left-1/2 -translate-x-1/2" />}
-        </div>
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <MoveHorizontal className="size-3.5" aria-hidden />
-          {animateSkin !== false ? "Fais-le tourner ou attrape-le" : "Glisse pour faire tourner"}
-        </p>
-
+      {/* Le personnage, teinté par les couleurs du skin porté ou essayé. */}
+      <CharacterColumn
+        label="Aperçu du skin"
+        name={trial?.kind === "cape" ? playerName : (triedSkin?.name ?? playerName)}
+        look={shown}
+        animate={animateSkin}
+        elytra={elytra}
+        tints={[
+          ...(look.texture ? [{ id: "worn", src: look.texture }] : []),
+          ...(triedSkin ? [{ id: "trial", src: triedSkin.texture }] : []),
+        ]}
+        tint={triedSkin ? "trial" : "worn"}
+        top={trial && <span className="rounded-lg border border-primary/40 bg-black/45 px-3 py-1.5 text-xs font-bold text-primary backdrop-blur-sm">Essai</span>}
+        overlay={shown.cape && <Choice label="Dos du personnage" value={elytra} options={BACK} onChange={setElytra} />}
+      >
         {/* Hauteur réservée : l'aperçu ne saute pas entre ton skin et un essai. */}
-        <div className="flex min-h-[144px] w-full flex-col items-center justify-start gap-2.5">
+        <div className="flex min-h-[156px] w-full flex-col items-center justify-start gap-2.5">
+          <p className="flex items-center gap-1.5 text-xs text-white/60">
+            <MoveHorizontal className="size-3.5" aria-hidden />
+            {animateSkin !== false ? "Fais-le tourner ou attrape-le" : "Glisse pour faire tourner"}
+          </p>
           {trial?.kind !== "cape" && (
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">Bras</span>
@@ -450,17 +451,17 @@ export function SkinsScreen(props: Props) {
             </button>
           )}
         </div>
-      </aside>
+      </CharacterColumn>
 
       <div className="min-w-0 flex-1 overflow-y-auto pb-10">
-        <header className="px-10 pt-8">
+        <header className="px-8 pt-7">
           <h1 className="font-display text-[30px] leading-none">Skins</h1>
           <p className="mt-2 max-w-[560px] text-sm text-muted-foreground">
             Le skin choisi s'applique à ton compte Minecraft&nbsp;: les autres joueurs le voient sur Clover Games comme sur tous les serveurs.
           </p>
         </header>
         {/* Onglets et messages restent visibles en descendant jusqu'aux capes. */}
-        <div className="sticky top-0 z-10 border-b border-border/70 bg-background px-10 pt-4 pb-3">
+        <div className="sticky top-0 z-10 border-b border-border/70 bg-background px-8 pt-4 pb-3">
           <Tabs
             label="Skins"
             value={view}
@@ -473,7 +474,7 @@ export function SkinsScreen(props: Props) {
           {status && <StatusBanner status={status} onDismiss={onDismissStatus} />}
         </div>
 
-        <div className="px-10">
+        <div className="px-8">
           {discoverOpened && (
             <div hidden={view !== "discover"} className="mt-5">
               <SkinGallery

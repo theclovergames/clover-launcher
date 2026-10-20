@@ -13,6 +13,9 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
   d'avant, avec les parties, la série en cours et la plus longue partie ; la grille de l'année
   reste sur le Profil. Le dernier article s'affiche en grand, marqué « Nouveau » sa première
   semaine. Les modes annoncés sont marqués « En développement ».
+- **Profil autour des modes** : ton personnage avec son niveau et une barre d'inventaire comme en
+  jeu, puis une tuile par mode (rang, chiffre clé) dont le détail s'ouvre dessous. Ton grade en
+  jeu s'affiche avec son badge du chat, aussi sur la carte de profil à partager.
 
 ## 0.4.7 (13 octobre 2026)
 
