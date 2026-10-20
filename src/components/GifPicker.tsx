@@ -1,6 +1,7 @@
 import { CloudOff, LoaderCircle } from "lucide-react";
 import { type UIEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import poweredByGiphy from "@/assets/brand/powered-by-giphy.png";
 import { SearchField } from "@/components/SearchField";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { masonry } from "@/lib/messages";
@@ -116,8 +117,8 @@ export function GifPicker({ search, onPick, disabled }: { search: (query: string
             </p>
           )}
         </div>
-        <p className="flex items-center justify-end gap-1 px-1 text-[10px] font-semibold tracking-wide text-muted-foreground">
-          Powered by <span className="font-extrabold text-foreground">GIPHY</span>
+        <p className="flex justify-end px-1">
+          <img src={poweredByGiphy} alt="Powered by GIPHY" draggable={false} className="h-3.5 w-auto" />
         </p>
       </PopoverContent>
     </Popover>
