@@ -15,6 +15,7 @@ import { ownedCapeText } from "@/lib/capes";
 import { accent, heroTone } from "@/lib/appearance";
 import { setCrashReports } from "@/lib/crash-reports";
 import { formatLog } from "@/lib/log";
+import { freshIncoming, previewText, sortConversations, unreadCount } from "@/lib/messages";
 import { networkPlayers, SITE_URL } from "@/lib/site";
 import { ConsoleScreen } from "@/screens/ConsoleScreen";
 import { CrashDialog, NameDialog } from "@/screens/Dialogs";
@@ -36,7 +37,8 @@ import { DEFAULT_IMPORT, OnboardingAccounts, OnboardingDone, OnboardingImport, t
 import { type Account, type Settings, SettingsScreen, type SettingsTab, type HiddenSetting, type SteamState } from "@/screens/SettingsScreen";
 import { type SkinStatus, SkinsScreen } from "@/screens/SkinsScreen";
 import { ProfileScreen } from "@/screens/ProfileScreen";
-import type { Cape, ConsoleSnapshot, DetectedInstance, GameExited, ImportItem, ImportResult, ImportScan, LauncherNotification, InstanceEntry, InstanceInput, ModInfo, PersonalMod, SearchFilters, PlaySession, PlayState, Profile, Progress, SavedSkin, SkinLook, SkinModel, Tab } from "@/types";
+import { MessagesScreen } from "@/screens/MessagesScreen";
+import type { Cape, ConsoleSnapshot, DetectedInstance, GameExited, ImportItem, ImportResult, ImportScan, Inbox, LauncherNotification, InstanceEntry, InstanceInput, ModInfo, PersonalMod, SearchFilters, PlaySession, PlayState, Profile, Progress, SavedSkin, SkinLook, SkinModel, Tab } from "@/types";
 
 /** Paquet du Microsoft Store : le Store gère les mises à jour du launcher. */
 const STORE_HIDDEN: HiddenSetting[] = ["autoUpdate"];
@@ -153,6 +155,8 @@ export default function App() {
   const [stack, setStack] = useState<Route[]>([{ tab: "home" }]);
   const current = stack[stack.length - 1];
   const tab = current.tab;
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   /** Menu, roue dentée : une pile neuve, sans fil d'Ariane. */
   const navigate = useCallback((next: Tab | Route) => {
@@ -487,13 +491,47 @@ export default function App() {
   const seenNotifications = useRef<Set<string> | null>(null);
   const desktopNotifications = useRef(true);
   desktopNotifications.current = settings?.systemNotifications ?? true;
+
+  // ── Messages entre amis : liste des conversations, pastille de la colonne, bulles du système ──
+  const [inbox, setInbox] = useState<Inbox | null>(null);
+  const [inboxError, setInboxError] = useState<string | null>(null);
+  /** Dernier message connu de chaque conversation : seuls les nouveaux font une bulle. `null` avant la première relève. */
+  const knownMessages = useRef<Map<string, number> | null>(null);
+  /** Change avec le compte : une relève partie avant le changement est ignorée. */
+  const inboxGeneration = useRef(0);
+  const refreshInbox = useCallback(async () => {
+    const generation = inboxGeneration.current;
+    try {
+      const next = await api.messageConversations();
+      if (generation !== inboxGeneration.current) return;
+      const { known, fresh } = freshIncoming(knownMessages.current, next.conversations);
+      knownMessages.current = known;
+      // Comme la cloche : une bulle seulement fenêtre cachée ou au second plan, si le réglage le permet.
+      if ((document.hidden || !document.hasFocus()) && desktopNotifications.current) {
+        for (const conversation of fresh) void api.systemNotification(`Nouveau message de ${conversation.friend.name}`, conversation.last ? previewText(conversation.last) : "").catch(() => {});
+      }
+      setInbox({ ...next, conversations: sortConversations(next.conversations) });
+      setInboxError(null);
+    } catch (reason) {
+      // Site injoignable ou messages pas encore en ligne : la liste gardée reste affichée.
+      if (generation === inboxGeneration.current) setInboxError(String(reason));
+    }
+  }, []);
+  const updateInbox = useCallback((change: (inbox: Inbox) => Inbox) => setInbox((current) => current && change(current)), []);
+
   const signedIn = phase === "app" && Boolean(profile);
   useEffect(() => {
     if (!signedIn) return;
     let cancelled = false;
     let timer = 0;
     seenNotifications.current = null;
+    inboxGeneration.current += 1;
+    knownMessages.current = null;
+    setInbox(null);
+    setInboxError(null);
     const poll = async () => {
+      // Non-lus des messages au même rythme que la cloche ; la page Messages relève elle-même sa liste.
+      if (tabRef.current !== "messages") void refreshInbox();
       try {
         const feed = await api.notifications();
         if (cancelled) return;
@@ -517,7 +555,7 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [signedIn, profile?.uuid]);
+  }, [signedIn, profile?.uuid, refreshInbox]);
 
   const openNotification = (item: LauncherNotification) => {
     if (item.url) open(item.url.startsWith("/") ? `${SITE_URL}${item.url}` : item.url);
@@ -865,6 +903,7 @@ export default function App() {
     section: sectionLabel,
     kind: (kind) => CONTENT_KINDS[kind].label,
     mod: (mod) => (mod.list === "catalogue" ? modInfosOf("clover").find((other) => other.id === mod.id)?.name : personal?.mods.find((other) => other.id === mod.id)?.name) ?? "Mod",
+    friend: (uuid) => inbox?.conversations.find((conversation) => conversation.friend.uuid.replace(/-/g, "") === uuid.replace(/-/g, "").toLowerCase())?.friend.name ?? "Conversation",
   };
 
   /** Fichiers posés pendant la création d'une instance depuis un modpack. */
@@ -1299,7 +1338,7 @@ export default function App() {
 
       {/* Panneaux flottants : l'accueil pose ses propres blocs, les autres écrans tiennent dans un seul. */}
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
-        <SideNav tab={tab} onTab={navigate} head={profile?.skin?.url ?? activeAccount?.skinUrl ?? null} />
+        <SideNav tab={tab} onTab={navigate} head={profile?.skin?.url ?? activeAccount?.skinUrl ?? null} unread={unreadCount(inbox?.conversations ?? [])} />
         <div className={tab === "home" ? "flex min-h-0 min-w-0 flex-1 flex-col gap-2" : "tile flex min-w-0 flex-1 flex-col overflow-hidden"}>
           {tab !== "home" && canGoBack(stack) && <Breadcrumb crumbs={trail(current, names)} onBack={goBack} onOpen={openCrumb} />}
           {tab === "home" && (
@@ -1494,7 +1533,23 @@ export default function App() {
               onPlay={(mode) => startGame("clover", () => selectInstance("clover").then(() => (mode ? api.play(mode) : api.playInstance("clover"))))}
               onRename={() => setRenaming(true)}
               onOpenSkins={() => push(route("skins"))}
+              onWrite={(friend) => push({ tab: "messages", friend })}
               onOpenLink={open}
+            />
+          )}
+
+          {current.tab === "messages" && profile && (
+            <MessagesScreen
+              friend={current.friend ?? null}
+              onOpen={(friend) => replace({ tab: "messages", ...(friend ? { friend } : {}) })}
+              inbox={inbox}
+              inboxError={inboxError}
+              refreshInbox={refreshInbox}
+              updateInbox={updateInbox}
+              modes={(catalogue?.modes ?? []).map((mode) => ({ id: mode.id, name: mode.name, quickPlay: Boolean(mode.host) }))}
+              playBusy={playFor("clover").kind !== "ready" || Boolean(launching)}
+              onPlay={(mode) => startGame("clover", () => selectInstance("clover").then(() => api.play(mode)))}
+              onNotice={setNotice}
             />
           )}
 

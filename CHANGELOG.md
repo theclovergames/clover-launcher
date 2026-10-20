@@ -16,6 +16,13 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
 - **Profil autour des modes** : ton personnage avec son niveau et une barre d'inventaire comme en
   jeu, puis une tuile par mode (rang, chiffre clé) dont le détail s'ouvre dessous. Ton grade en
   jeu s'affiche avec son badge du chat, aussi sur la carte de profil à partager.
+- **Messages entre amis** : une nouvelle page, avec ses non-lus en pastille dans la colonne. Tes
+  conversations à gauche (en ligne, dernier message, archivées), la conversation ouverte à
+  droite : réponses citées, « Vu », messages modifiés ou supprimés, émojis et GIF. Les messages
+  arrivent aussi en jeu et sur le site, et ceux envoyés en jeu avec `/msg` apparaissent ici. Une
+  notification du bureau annonce un nouveau message quand le launcher est en arrière-plan.
+  « Écrire » depuis la liste d'amis du Profil ouvre la conversation, « Rejoindre » connecte à
+  l'ami en jeu.
 
 ### Corrections
 

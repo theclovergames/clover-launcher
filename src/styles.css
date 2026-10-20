@@ -7,6 +7,8 @@
 
 /* Fenêtre haute (800 px et plus) : le bas de l'accueil a la place de grandir sans écraser le lobby. */
 @custom-variant tall (@media (min-height: 800px));
+/* Fenêtre basse (moins de 720 px) : la colonne de navigation se resserre pour garder Profil visible. */
+@custom-variant short (@media (max-height: 719px));
 
 /* Chiffres façon jeu (compteurs de joueurs, versions, mémoire). Sous-ensemble latin de Monocraft, OFL. */
 @font-face {

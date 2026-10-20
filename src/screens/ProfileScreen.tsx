@@ -1,4 +1,4 @@
-import { ArrowRight, ArrowUpRight, Check, CircleAlert, Clock, Coins, Copy, Flame, Medal, PenLine, Play, RotateCcw, Share2, Shirt, Star, Trophy, Users, Vote } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, CircleAlert, Clock, Coins, Copy, Flame, Medal, MessageCircle, PenLine, Play, RotateCcw, Share2, Shirt, Star, Trophy, Users, Vote } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 
 import launcherLogo from "@/assets/brand/launcher.png";
@@ -9,6 +9,7 @@ import { CapeFront } from "@/components/SkinFront";
 import { api } from "@/lib/api";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
 import { ownedCapeText, textureHash } from "@/lib/capes";
+import { ago, findMode, presence } from "@/lib/friends";
 import { locatorBarColor } from "@/lib/locator";
 import { modeArt } from "@/lib/mode-art";
 import { formatDuration } from "@/lib/play-history";
@@ -28,7 +29,6 @@ const pixel = (value: number) => (value < 10_000 ? plain.format(value) : value <
 const ratio = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const longDate = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric" });
 const shortDate = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short" });
-const relative = new Intl.RelativeTimeFormat("fr-FR", { numeric: "auto" });
 
 type Mode = { id: string; name: string; icon: string | null; quickPlay: boolean };
 
@@ -46,18 +46,12 @@ type Props = {
   onPlay: (mode?: string) => void;
   onRename: () => void;
   onOpenSkins: () => void;
+  /** Ouvre la conversation avec un ami (page Messages). */
+  onWrite?: (friend: string) => void;
   onOpenLink: (url: string) => void;
   /** Sources de données, remplacées par des exemples sur la planche. */
   services?: Pick<typeof api, "playerStats" | "nameChangeInfo" | "discoverCapes" | "savePng">;
 };
-
-/** « il y a 2 heures », « hier », « il y a 3 jours ». */
-function ago(milliseconds: number) {
-  const minutes = Math.round((Date.now() - milliseconds) / 60_000);
-  if (minutes < 60) return relative.format(-Math.max(1, minutes), "minute");
-  if (minutes < 24 * 60) return relative.format(-Math.round(minutes / 60), "hour");
-  return relative.format(-Math.round(minutes / (24 * 60)), "day");
-}
 
 const place = (rank: number) => (rank === 1 ? "1er" : `${rank}e`);
 const kd = (kills: number, deaths: number) => ratio.format(deaths ? kills / deaths : kills);
@@ -370,15 +364,12 @@ function ModePanel({ tile, playBusy, onPlay }: { tile: Tile; playBusy: boolean; 
   );
 }
 
-/** Ami : tête, pseudo, où il est ; « Rejoindre » s'il l'accepte et que son serveur a une adresse directe. */
-function FriendRow({ friend, mode, playBusy, onJoin }: { friend: Friend; mode: Mode | undefined; playBusy: boolean; onJoin: (mode: string) => void }) {
-  const where = friend.online
-    ? friend.server
-      ? `En ligne · ${mode?.name ?? friend.server}`
-      : "En ligne"
-    : friend.lastSeen
-      ? `Vu ${ago(friend.lastSeen)}`
-      : "Hors ligne";
+/**
+ * Ami : tête, pseudo, où il est ; « Rejoindre » s'il l'accepte et que son serveur a une adresse
+ * directe, « Écrire » ouvre sa conversation.
+ */
+function FriendRow({ friend, mode, playBusy, onJoin, onWrite }: { friend: Friend; mode: Mode | undefined; playBusy: boolean; onJoin: (mode: string) => void; onWrite?: () => void }) {
+  const where = presence(friend, mode?.name);
   const joinable = friend.canJoin && mode?.quickPlay === true;
   return (
     <li className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-white/[0.03]">
@@ -408,6 +399,17 @@ function FriendRow({ friend, mode, playBusy, onJoin }: { friend: Friend; mode: M
           Rejoindre
         </button>
       )}
+      {onWrite && (
+        <button
+          type="button"
+          onClick={onWrite}
+          aria-label={`Écrire à ${friend.name}`}
+          title={`Écrire à ${friend.name}`}
+          className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
+        >
+          <MessageCircle className="size-4" aria-hidden />
+        </button>
+      )}
     </li>
   );
 }
@@ -417,7 +419,7 @@ function FriendRow({ friend, mode, playBusy, onJoin }: { friend: Friend; mode: M
  * barre d'inventaire, teinté par le mode choisi ; à droite l'identité, une tuile par mode (rang,
  * chiffre clé) dont le détail s'ouvre dessous, puis les amis, le temps de jeu et la collection.
  */
-export function ProfileScreen({ profile, look, animateSkin, sessions, skinCount, modes, playBusy, onPlay, onRename, onOpenSkins, onOpenLink, services = api }: Props) {
+export function ProfileScreen({ profile, look, animateSkin, sessions, skinCount, modes, playBusy, onPlay, onRename, onOpenSkins, onWrite, onOpenLink, services = api }: Props) {
   const [stats, setStats] = useState<{ uuid: string; data: PlayerStats } | { uuid: string; error: string } | null>(null);
   const [createdAt, setCreatedAt] = useState<string | null>(null);
   const [catalogue, setCatalogue] = useState<CatalogueCape[] | null>(null);
@@ -453,7 +455,7 @@ export function ProfileScreen({ profile, look, animateSkin, sessions, skinCount,
   const error = current && "error" in current ? current.error : null;
   const loading = current === null;
   const color = locatorBarColor(uuid);
-  const modeInfo = (id: string) => modes.find((mode) => fold(mode.id) === fold(id) || fold(mode.name) === fold(id));
+  const modeInfo = (id: string) => findMode(modes, id);
   const played = data?.modes ?? [];
   const newcomer = data !== null && !data.presence && !data.level && !data.playtime && played.length === 0;
   const capes = profile.capes ?? [];
@@ -749,7 +751,14 @@ export function ProfileScreen({ profile, look, animateSkin, sessions, skinCount,
                   <>
                     <ul className="-mx-2 flex flex-col">
                       {friends!.map((friend) => (
-                        <FriendRow key={friend.uuid} friend={friend} mode={friend.server ? modeInfo(friend.server) : undefined} playBusy={playBusy} onJoin={(mode) => onPlay(mode)} />
+                        <FriendRow
+                          key={friend.uuid}
+                          friend={friend}
+                          mode={friend.server ? modeInfo(friend.server) : undefined}
+                          playBusy={playBusy}
+                          onJoin={(mode) => onPlay(mode)}
+                          onWrite={onWrite && (() => onWrite(friend.uuid))}
+                        />
                       ))}
                     </ul>
                     <p className="text-[11px] text-muted-foreground">Ajoute des amis en jeu avec /amis. Leur serveur s'affiche s'ils l'autorisent.</p>

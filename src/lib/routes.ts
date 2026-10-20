@@ -16,10 +16,12 @@ export type OpenMod = { list: "catalogue" | "personal"; id: string };
 export type OpenProject = { id: string; title: string; icon: string | null };
 
 export type Route =
-  | { tab: Exclude<Tab, "instances" | "discover"> }
+  | { tab: Exclude<Tab, "instances" | "discover" | "messages"> }
   | { tab: "instances"; instance?: string; section?: InstanceSection; mod?: OpenMod }
   /** `minecraft` : version de la nouvelle instance voulue, qui filtre les modpacks. */
-  | { tab: "discover"; kind: ContentKind; target?: string; world?: string; minecraft?: string; project?: OpenProject };
+  | { tab: "discover"; kind: ContentKind; target?: string; world?: string; minecraft?: string; project?: OpenProject }
+  /** `friend` : UUID de l'ami dont la conversation est ouverte. */
+  | { tab: "messages"; friend?: string };
 
 export const route = (tab: Tab): Route => (tab === "discover" ? { tab, kind: "mod" } : { tab } as Route);
 
@@ -49,12 +51,17 @@ export type Names = {
   section: (section: InstanceSection) => string;
   kind: (kind: ContentKind) => string;
   mod: (mod: OpenMod) => string;
+  /** Pseudo d'un ami, par son UUID. */
+  friend: (uuid: string) => string;
 };
 
 /** Maillon du fil d'Ariane : son nom, et la page qu'il ouvre (absente pour la page ouverte). */
 export type Crumb = { label: string; to?: Route };
 
-/** Chemin de la page dans le launcher : Instances › Survie 1.21 › Shaders, Découvrir › Mods › Sodium. */
+/**
+ * Chemin de la page dans le launcher : Instances › Survie 1.21 › Shaders, Découvrir › Mods › Sodium,
+ * Messages › Kanname. Une conversation n'a pas de page parente : la liste reste à côté d'elle.
+ */
 export function trail(current: Route, names: Names): Crumb[] {
   const crumbs: Crumb[] = [];
   if (current.tab === "instances") {
@@ -68,6 +75,9 @@ export function trail(current: Route, names: Names): Crumb[] {
     const list: Route = { tab: "discover", kind: current.kind, target: current.target, world: current.world, minecraft: current.minecraft };
     crumbs.push({ label: names.tab("discover"), to: list }, { label: names.kind(current.kind), to: list });
     if (current.project) crumbs.push({ label: current.project.title });
+  } else if (current.tab === "messages") {
+    crumbs.push({ label: names.tab("messages"), to: { tab: "messages" } });
+    if (current.friend) crumbs.push({ label: names.friend(current.friend) });
   } else {
     crumbs.push({ label: names.tab(current.tab) });
   }

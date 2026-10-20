@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Circle, Clock, Copy, Download, FolderOpen, LoaderCircle, PenLine, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowRight, Check, Circle, Clock, Copy, Download, Flag, FolderOpen, LoaderCircle, PenLine, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { ModpackVersionSelect } from "@/components/ModpackVersionSelect";
@@ -425,6 +425,107 @@ export function ModpackDialog({ request, versions: load, onClose }: { request: M
             Créer l'instance
           </button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Motifs proposés pour signaler un message ; « Autre » demande une précision. */
+const REPORT_REASONS = ["Insultes ou harcèlement", "Spam ou publicité", "Contenu choquant", "Arnaque ou triche", "Autre"];
+/** Longueur du motif accepté par le site, précision comprise. */
+const REPORT_MAX = 200;
+
+/**
+ * Signalement d'un message d'un ami à l'équipe : un motif, une précision facultative (obligatoire
+ * pour « Autre »). Le site garde les messages autour pour la modération.
+ */
+export function ReportDialog(props: {
+  /** Pseudo de l'auteur et extrait du message signalé ; `null` : fermé. */
+  target: { name: string; excerpt: string } | null;
+  /** Rejette avec le message du site, prêt à afficher. */
+  onSubmit: (reason: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const last = useRef(props.target);
+  if (props.target) last.current = props.target;
+  const shown = last.current;
+  const [reason, setReason] = useState(REPORT_REASONS[0]);
+  const [details, setDetails] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const open = props.target !== null;
+
+  useEffect(() => {
+    if (!open) return;
+    setReason(REPORT_REASONS[0]);
+    setDetails("");
+    setError(null);
+  }, [open]);
+
+  const precision = details.trim();
+  const full = [...(precision ? `${reason} : ${precision}` : reason)].slice(0, REPORT_MAX).join("");
+  const canSubmit = !saving && (reason !== "Autre" || precision.length > 0);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!canSubmit) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await props.onSubmit(full);
+      props.onClose();
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(value) => !value && !saving && props.onClose()}>
+      <DialogContent className={content}>
+        <form onSubmit={submit} className="grid gap-5">
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl font-normal">Signaler ce message</DialogTitle>
+            <DialogDescription className="text-[13px] leading-relaxed">
+              L'équipe de Clover Games verra ce message de {shown?.name}, avec ceux qui l'entourent. {shown?.name} ne saura pas qui l'a signalé.
+            </DialogDescription>
+          </DialogHeader>
+          {shown?.excerpt && <p className="line-clamp-3 rounded-md border border-border bg-sunken px-3 py-2 text-[13px] break-words whitespace-pre-wrap text-muted-foreground">{shown.excerpt}</p>}
+          <fieldset className="grid gap-1.5">
+            <legend className="mb-2 text-sm font-bold">Motif</legend>
+            {REPORT_REASONS.map((option) => (
+              <label key={option} className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] hover:bg-white/[0.03]">
+                <input type="radio" name="report-reason" value={option} checked={reason === option} onChange={() => setReason(option)} className="size-4 accent-[var(--primary)]" />
+                {option}
+              </label>
+            ))}
+          </fieldset>
+          <label className="grid gap-2">
+            <span className="text-sm font-bold">Précisions {reason === "Autre" ? "" : <span className="font-normal text-muted-foreground">(facultatif)</span>}</span>
+            <textarea
+              value={details}
+              onChange={(event) => setDetails(event.target.value)}
+              maxLength={150}
+              rows={2}
+              className="w-full resize-none rounded-md border border-border bg-sunken px-3 py-2 text-[13px] text-foreground outline-none select-text focus:border-primary/60"
+            />
+          </label>
+          {error && (
+            <p role="alert" className="text-[12px] text-destructive">
+              {error}
+            </p>
+          )}
+          <DialogFooter className={footer}>
+            <button type="button" onClick={props.onClose} disabled={saving} className={secondaryButton}>
+              Annuler
+            </button>
+            <button type="submit" disabled={!canSubmit} className={cn(primaryButton, "bg-destructive text-white")}>
+              {saving ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <Flag className="size-4" aria-hidden />}
+              Signaler
+            </button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

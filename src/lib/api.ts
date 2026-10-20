@@ -7,7 +7,7 @@ import type { Instance, InstanceEntry, InstanceInput, InstanceKind, AvailableVer
 
 import type { Settings, SteamState } from "@/screens/SettingsScreen";
 import type { RecentVote } from "@/components/VoteTicker";
-import type { ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats } from "@/types";
+import type { ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats, ChatMessage, GifPage, Inbox, Thread } from "@/types";
 
 export type AccountRef = { uuid: string; name: string; skinUrl: string | null };
 
@@ -225,6 +225,24 @@ export const api = {
   nameChangeInfo: () => invoke<NameChange>("name_change_info"),
   /** Statistiques Clover Games du compte actif (`/api/launcher/profile` du site). */
   playerStats: () => invoke<PlayerStats>("player_stats"),
+  /** Conversations avec les amis du compte actif (`messages.rs`), pour la page Messages et sa pastille. */
+  messageConversations: () => invoke<Inbox>("message_conversations"),
+  /** Page d'une conversation : les 50 derniers messages, ceux d'avant `before` ou d'après `after` ; `since` ajoute les modifiés. */
+  messageThread: (friend: string, page: { before?: number; after?: number; since?: number } = {}) =>
+    invoke<Thread>("message_thread", { friend, before: page.before ?? null, after: page.after ?? null, since: page.since ?? null, limit: null }),
+  sendMessage: (friend: string, body: string, replyTo?: number) => invoke<ChatMessage>("send_message", { friend, body, replyTo: replyTo ?? null }),
+  /** GIF choisi dans la recherche : le site le retrouve chez Giphy par son identifiant. */
+  sendGif: (friend: string, gifId: string, replyTo?: number) => invoke<ChatMessage>("send_gif", { friend, gifId, replyTo: replyTo ?? null }),
+  editMessage: (friend: string, id: number, body: string) => invoke<ChatMessage>("edit_message", { friend, id, body }),
+  /** `forAll` : supprimé pour l'ami aussi (ses propres messages seulement). */
+  deleteMessage: (friend: string, id: number, forAll: boolean) => invoke<void>("delete_message", { friend, id, forAll }),
+  markMessagesRead: (friend: string, upTo: number) => invoke<void>("mark_messages_read", { friend, upTo }),
+  /** Archiver, couper les notifications, ou vider la conversation (pour soi). */
+  setConversationState: (friend: string, state: { archived?: boolean; muted?: boolean; clear?: boolean }) =>
+    invoke<void>("conversation_state", { friend, archived: state.archived ?? null, muted: state.muted ?? null, clear: state.clear ?? null }),
+  reportMessage: (friend: string, id: number, reason: string) => invoke<void>("report_message", { friend, id, reason }),
+  /** GIF de Giphy par le site ; les tendances sans recherche. */
+  searchGifs: (query: string, offset = 0) => invoke<GifPage>("search_gifs", { query: query.trim() || null, offset }),
   /** Enregistre une image PNG (carte de profil) là où le joueur le choisit ; `null` s'il annule. */
   savePng: async (png: Blob, name: string) =>
     invoke<string | null>("save_png", new Uint8Array(await png.arrayBuffer()), { headers: { "x-filename": encodeURIComponent(name) } }),
