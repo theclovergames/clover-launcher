@@ -93,7 +93,7 @@ export type ModInfo = {
   enabled: boolean;
 };
 
-export type Tab = "home" | "news" | "instances" | "discover" | "skins" | "console" | "settings" | "profile";
+export type Tab = "home" | "news" | "instances" | "discover" | "skins" | "console" | "settings" | "profile" | "messages";
 
 export type InstanceKind = "clover" | "vanilla" | "fabric" | "quilt" | "forge" | "neoforge";
 export type Instance = {
@@ -404,3 +404,49 @@ export type Friend = {
   status: string | null;
   canJoin: boolean;
 };
+
+// ── Messages entre amis (`/api/launcher/messages`, filtrés par le cœur Rust) ──
+
+/** Ami d'une conversation : celui du Profil, sans favori. Un ancien ami garde sa conversation. */
+export type ChatFriend = Omit<Friend, "favorite">;
+export type MessageKind = "text" | "gif";
+/** Où le message a été écrit : en jeu (`/msg`), dans le launcher ou sur le site. */
+export type MessageSource = "game" | "launcher" | "site";
+/** Dernier message d'une conversation, ou message cité par une réponse. Dates en millisecondes. */
+export type MessagePreview = { id: number; fromMe: boolean; kind: MessageKind; preview: string; at: number; deleted: boolean };
+/** GIF de Giphy, hébergé sur `media*.giphy.com` (vérifié par le cœur Rust). */
+export type MessageGif = { id: string; url: string; width: number; height: number };
+export type ChatMessage = {
+  id: number;
+  fromMe: boolean;
+  kind: MessageKind;
+  /** Texte, ou titre d'un GIF (peut être vide). */
+  body: string;
+  /** `null` pour un texte, ou un GIF qui ne peut pas s'afficher. */
+  gif: MessageGif | null;
+  replyTo: MessagePreview | null;
+  source: MessageSource;
+  at: number;
+  editedAt: number | null;
+  /** Supprimé pour tous : la place reste, sans contenu. */
+  deleted: boolean;
+};
+export type Conversation = { friend: ChatFriend; last: MessagePreview | null; unread: number; archived: boolean; muted: boolean; canWrite: boolean };
+/** `now` : heure du site ; `gifs` : recherche de GIF disponible. */
+export type Inbox = { now: number; unread: number; gifs: boolean; conversations: Conversation[] };
+/** Une page de conversation ; `updates` : messages modifiés ou supprimés depuis la page précédente. */
+export type Thread = {
+  now: number;
+  friend: ChatFriend;
+  messages: ChatMessage[];
+  updates: ChatMessage[];
+  lastReadId: number;
+  seenUpTo: number;
+  hasMore: boolean;
+  canWrite: boolean;
+  archived: boolean;
+  muted: boolean;
+};
+export type GifResult = { id: string; title: string; url: string; width: number; height: number };
+/** `next` : décalage de la page suivante, `null` à la fin. */
+export type GifPage = { gifs: GifResult[]; next: number | null };

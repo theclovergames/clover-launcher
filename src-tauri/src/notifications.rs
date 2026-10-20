@@ -102,6 +102,16 @@ pub(crate) async fn authorized(
     session: &auth::Session,
     send: impl Fn(&reqwest::Client, &str, &str) -> reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, String> {
+    authorized_response(tokens, session, send).await?.error_for_status().map_err(failure)
+}
+
+/// Comme `authorized`, mais une erreur HTTP (hors 401) est rendue telle quelle : l'appelant lit le
+/// message d'erreur du site (`messages.rs`).
+pub(crate) async fn authorized_response(
+    tokens: &SiteTokens,
+    session: &auth::Session,
+    send: impl Fn(&reqwest::Client, &str, &str) -> reqwest::RequestBuilder,
+) -> Result<reqwest::Response, String> {
     let http = download::client();
     let base = site::base();
     for attempt in 0..2 {
@@ -116,7 +126,7 @@ pub(crate) async fn authorized(
         };
         let response = send(&http, &base, &token).timeout(TIMEOUT).send().await.map_err(failure)?;
         if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-            return response.error_for_status().map_err(failure);
+            return Ok(response);
         }
         tokens.0.lock().await.remove(&session.profile.uuid);
     }

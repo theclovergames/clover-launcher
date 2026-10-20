@@ -7,6 +7,7 @@ mod import;
 mod instances;
 mod location;
 mod machine;
+mod messages;
 mod msix;
 mod notifications;
 mod player_name;
@@ -1205,6 +1206,16 @@ pub fn run() {
             profile::player_stats,
             notifications::mark_notifications_read,
             notifications::system_notification,
+            messages::message_conversations,
+            messages::message_thread,
+            messages::send_message,
+            messages::send_gif,
+            messages::edit_message,
+            messages::delete_message,
+            messages::mark_messages_read,
+            messages::conversation_state,
+            messages::report_message,
+            messages::search_gifs,
             location::pick_game_dir,
             location::move_game_dir,
             steam::steam_status,

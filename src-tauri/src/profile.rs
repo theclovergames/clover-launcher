@@ -151,7 +151,7 @@ pub struct PlayerStats {
     pub friends: Option<Vec<Friend>>,
 }
 
-fn is_player_name(name: &str) -> bool {
+pub(crate) fn is_player_name(name: &str) -> bool {
     (3..=16).contains(&name.len()) && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
