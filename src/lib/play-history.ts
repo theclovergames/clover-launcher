@@ -90,3 +90,40 @@ export function activity(sessions: PlaySession[], now: Date, range: ActivityRang
     best,
   };
 }
+
+/**
+ * Temps joué chacun des `count` derniers jours, aujourd'hui en dernier. Une partie compte pour le
+ * jour où elle a commencé. `previous` : temps joué sur les `count` jours d'avant ; `longest` : plus
+ * longue partie de la période ; `streak` : jours d'affilée jusqu'à aujourd'hui (ou hier, la
+ * journée n'étant pas finie), même au-delà de la période.
+ */
+export function recentActivity(sessions: PlaySession[], now: Date, count: number) {
+  const today = addDays(now, 0);
+  const start = addDays(today, 1 - count);
+  const previousStart = addDays(start, -count);
+  const days = Array.from({ length: count }, (_, index) => ({ date: addDays(start, index), seconds: 0, sessions: 0 }));
+  const played = new Set<number>();
+  let previous = 0;
+  let longest = 0;
+  for (const session of sessions) {
+    const date = new Date(session.started * 1000);
+    played.add(addDays(date, 0).getTime());
+    if (date >= previousStart && date < start) previous += session.seconds;
+    const index = dayIndex(start, addDays(date, 0));
+    if (date < start || index >= count) continue;
+    days[index].seconds += session.seconds;
+    days[index].sessions += 1;
+    longest = Math.max(longest, session.seconds);
+  }
+  let streak = 0;
+  for (let day = played.has(today.getTime()) ? today : addDays(today, -1); played.has(day.getTime()); day = addDays(day, -1)) streak += 1;
+  return {
+    days,
+    total: days.reduce((sum, day) => sum + day.seconds, 0),
+    sessions: days.reduce((sum, day) => sum + day.sessions, 0),
+    daysPlayed: days.filter((day) => day.seconds > 0).length,
+    previous,
+    longest,
+    streak,
+  };
+}

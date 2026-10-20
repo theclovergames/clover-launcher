@@ -22,23 +22,25 @@ type Props = {
   version: string;
   /** Petite dalle à droite de « Jouer » : le choix de l'instance. */
   picker?: ReactNode;
+  /** Taille réduite, dans le panneau de l'accueil. */
+  compact?: boolean;
 };
 
 /**
  * Le gros bouton « Jouer », l'instance lancée écrite dessous, puis la petite dalle du choix de
  * l'instance. Sous les deux, l'avancement du lancement, ou de quoi fermer le jeu ouvert.
  */
-export function PlayButton({ state, onPlay, onOpenConsole, onStop, version, picker }: Props) {
+export function PlayButton({ state, onPlay, onOpenConsole, onStop, version, picker, compact = false }: Props) {
   const progress = state.kind === "installing" ? state.progress : undefined;
   const ratio = progress && progress.total > 0 ? progress.done / progress.total : 0;
 
   return (
-    <div className="flex flex-col items-center gap-2.5">
-      <div className="flex items-stretch gap-3">
-        <button type="button" className="play-slab h-[84px] w-[260px] overflow-hidden px-4" disabled={state.kind !== "ready" || state.busy} onClick={onPlay}>
+    <div className={`flex flex-col items-center gap-2.5${compact ? " w-full min-w-0" : ""}`}>
+      <div className={`flex items-stretch gap-3${compact ? " w-full min-w-0" : ""}`}>
+        <button type="button" className={`play-slab overflow-hidden px-4 ${compact ? "h-16 min-w-0 flex-1" : "h-[84px] w-[260px]"}`} disabled={state.kind !== "ready" || state.busy} onClick={onPlay}>
           {state.kind === "installing" && <span className="play-slab-fill" style={{ transform: `scaleX(${ratio})` }} aria-hidden />}
           <span className="relative flex max-w-full flex-col items-center gap-1.5">
-            <span className="font-display text-[38px] leading-none tracking-wide uppercase [text-shadow:0_2px_0_rgb(255_255_255/0.35)]">
+            <span className={`font-display leading-none tracking-wide uppercase [text-shadow:0_2px_0_rgb(255_255_255/0.35)] ${compact ? "text-[32px]" : "text-[38px]"}`}>
               {state.kind === "ready" && "Jouer"}
               {state.kind === "installing" && (progress ? `${Math.floor(ratio * 100)} %` : "Préparation")}
               {state.kind === "running" && "En jeu"}

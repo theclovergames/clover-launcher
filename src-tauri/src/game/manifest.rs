@@ -80,7 +80,7 @@ pub struct Mode {
     /// sur l'accueil. Le proxy reconnaît le mode à l'adresse tapée (`forced_hosts`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
-    /// Mode annoncé mais pas encore ouvert : carte grisée « Bientôt », comptée nulle part.
+    /// Mode annoncé mais pas encore ouvert : carte grisée « En développement », comptée nulle part.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub soon: bool,
 }

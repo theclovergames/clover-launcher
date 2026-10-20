@@ -1300,7 +1300,7 @@ export default function App() {
       {/* Panneaux flottants : l'accueil pose ses propres blocs, les autres écrans tiennent dans un seul. */}
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
         <SideNav tab={tab} onTab={navigate} head={profile?.skin?.url ?? activeAccount?.skinUrl ?? null} />
-        <div className={tab === "home" ? "flex min-w-0 flex-1 flex-col gap-2" : "tile flex min-w-0 flex-1 flex-col overflow-hidden"}>
+        <div className={tab === "home" ? "flex min-h-0 min-w-0 flex-1 flex-col gap-2" : "tile flex min-w-0 flex-1 flex-col overflow-hidden"}>
           {tab !== "home" && canGoBack(stack) && <Breadcrumb crumbs={trail(current, names)} onBack={goBack} onOpen={openCrumb} />}
           {tab === "home" && (
             <HomeScreen
@@ -1336,9 +1336,11 @@ export default function App() {
               onRenameError={setNotice}
               onPlayServer={(address) => { startGame("clover", () => selectInstance("clover").then(() => api.playServer(address))); }}
               news={feed.news ?? []}
+              sessions={sessions}
               maintenance={feed.maintenance === true}
               onOpenLink={open}
               onOpenNews={() => push(route("news"))}
+              onOpenActivity={() => navigate("profile")}
               onReadNews={(item) =>
                 item.slug ? setReading({ source: "clover", slug: item.slug, title: item.title, category: item.category ?? null, publishedAt: item.publishedAt, url: item.url }) : open(item.url)
               }
