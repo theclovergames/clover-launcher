@@ -183,40 +183,53 @@ pub fn rename(bytes: &[u8], address: &str, name: &str) -> Option<Vec<u8>> {
     (entries(&out)?.len() == list.len()).then_some(out)
 }
 
-/// Entrée cachée (absente du menu Multijoueur) qui accepte le pack de ressources du serveur sans
-/// question : celle que le jeu garde pour une connexion directe.
-pub fn accepted_hidden_entry(host: &str) -> Vec<u8> {
+/// Nom du serveur principal dans le menu Multijoueur.
+const SERVER_NAME: &str = "Clover Games";
+
+/// Entrée qui accepte le pack de ressources du serveur sans question. Cachée (absente du menu
+/// Multijoueur), c'est celle que le jeu garde pour une connexion directe.
+fn accepted_entry(name: &str, host: &str, hidden: bool) -> Vec<u8> {
     let mut entry = Vec::new();
-    for (key, value) in [("name", host), ("ip", host)] {
+    for (key, value) in [("name", name), ("ip", host)] {
         tag(&mut entry, STRING, key);
         string(&mut entry, value);
     }
-    for key in ["hidden", "acceptTextures"] {
+    for (key, value) in [("hidden", hidden), ("acceptTextures", true)] {
         tag(&mut entry, BYTE, key);
-        entry.push(1);
+        entry.push(u8::from(value));
     }
     entry.push(END);
     entry
 }
 
-/// Ajoute à `servers.dat` une entrée cachée qui accepte le pack de chaque hôte absent (comparaison
-/// de l'adresse, sans casse). Un fichier illisible n'est pas touché. Renvoie le nombre d'ajouts.
-pub fn accept_packs(path: &std::path::Path, hosts: &[&str]) -> std::io::Result<usize> {
+/// Prépare `servers.dat` pour le réseau (adresses comparées sans casse). Le serveur principal
+/// `server` est mis en tête du menu Multijoueur s'il n'y est pas : sans lui, la seule entrée Clover
+/// visible pouvait être celle d'un mode, et le joueur arrivait sur ce mode au lieu du Lobby. Ses
+/// entrées cachées (celle du Quick Play) sont remplacées. Chaque mode de `modes` absent reçoit une
+/// entrée cachée. Toutes acceptent le pack de ressources ; les entrées visibles déjà là ne sont pas
+/// touchées, un fichier illisible non plus. Renvoie le nombre d'entrées ajoutées.
+pub fn prepare(path: &std::path::Path, server: &str, modes: &[&str]) -> std::io::Result<usize> {
     let existing = std::fs::read(path).unwrap_or_default();
     let current = if existing.is_empty() { Vec::new() } else if let Some(current) = entries(&existing) { current } else { return Ok(0) };
-    let known: std::collections::HashSet<String> = current.iter().filter_map(|entry| address(entry)).collect();
-    let added: Vec<Vec<u8>> = hosts.iter().filter(|host| !known.contains(&host.to_ascii_lowercase())).map(|host| accepted_hidden_entry(host)).collect();
-    if added.is_empty() {
+    let main = server.to_ascii_lowercase();
+    let listed = current.iter().any(|entry| !hidden(entry) && address(entry).as_deref() == Some(main.as_str()));
+    let head = (!listed).then(|| accepted_entry(SERVER_NAME, server, false));
+    let kept: Vec<&[u8]> = current.into_iter().filter(|entry| listed || address(entry).as_deref() != Some(main.as_str())).collect();
+    let mut known: std::collections::HashSet<String> = kept.iter().filter_map(|entry| address(entry)).collect();
+    known.insert(main);
+    let added: Vec<Vec<u8>> = modes.iter().filter(|host| known.insert(host.to_ascii_lowercase())).map(|host| accepted_entry(host, host, true)).collect();
+    let count = usize::from(head.is_some()) + added.len();
+    if count == 0 {
         return Ok(0);
     }
-    let merged: Vec<&[u8]> = current.into_iter().chain(added.iter().map(Vec::as_slice)).collect();
+    let merged: Vec<&[u8]> = head.iter().map(Vec::as_slice).chain(kept).chain(added.iter().map(Vec::as_slice)).collect();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let temporary = path.with_extension("dat.tmp");
     std::fs::write(&temporary, write(&merged))?;
     std::fs::rename(temporary, path)?;
-    Ok(added.len())
+    Ok(count)
 }
 
 fn tag(out: &mut Vec<u8>, kind: u8, name: &str) {
@@ -265,29 +278,33 @@ mod tests {
     }
 
     #[test]
-    fn server_packs_are_accepted_once_in_hidden_entries() {
+    fn main_server_is_listed_first_and_modes_stay_hidden() {
         let path = std::env::temp_dir().join(format!("clover-servers-{}", rand::random::<u64>())).join("servers.dat");
-        let visible = {
-            let mut entry = Vec::new();
-            tag(&mut entry, STRING, "ip");
-            string(&mut entry, "PLAY.clovergames.fr");
-            entry.push(END);
-            entry
-        };
+        let (server, modes) = ("play.clovergames.fr", ["bedwars.play.clovergames.fr", "practice.play.clovergames.fr"]);
+        let accepts = |entry: &[u8]| Reader { bytes: entry, pos: 0 }.find(BYTE, b"acceptTextures").and_then(|mut reader| reader.byte()) == Some(1);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, write(&[&visible])).unwrap();
+        // Ce que laisse le Quick Play : le serveur principal caché, un mode resté visible.
+        let practice = accepted_entry("Serveur Minecraft", "practice.play.clovergames.fr", false);
+        std::fs::write(&path, write(&[&practice, &accepted_entry("Serveur Minecraft", server, true), &accepted_entry("Autre", "autre.net", false)])).unwrap();
 
-        assert_eq!(accept_packs(&path, &["play.clovergames.fr", "bedwars.play.clovergames.fr"]).unwrap(), 1);
-        assert_eq!(accept_packs(&path, &["play.clovergames.fr", "bedwars.play.clovergames.fr"]).unwrap(), 0);
+        assert_eq!(prepare(&path, server, &modes).unwrap(), 2);
+        assert_eq!(prepare(&path, server, &modes).unwrap(), 0);
         let bytes = std::fs::read(&path).unwrap();
         let list = entries(&bytes).unwrap();
-        assert_eq!(list.len(), 2);
-        assert!(hidden(list[1]) && !hidden(list[0]));
-        assert_eq!(address(list[1]).as_deref(), Some("bedwars.play.clovergames.fr"));
-        assert!(Reader { bytes: list[1], pos: 0 }.find(BYTE, b"acceptTextures").and_then(|mut reader| reader.byte()) == Some(1));
+        assert_eq!(list.iter().map(|entry| address(entry).unwrap()).collect::<Vec<_>>(), [server, modes[1], "autre.net", modes[0]]);
+        assert_eq!(list[0], accepted_entry(SERVER_NAME, server, false));
+        assert!(!hidden(list[0]) && accepts(list[0]));
+        assert_eq!(list[1], &practice[..]);
+        assert!(hidden(list[3]) && accepts(list[3]));
+
+        // Entrée visible du joueur : gardée telle quelle, à sa place.
+        let mine = accepted_entry("Mon serveur", "PLAY.clovergames.fr", false);
+        std::fs::write(&path, write(&[&accepted_entry("Autre", "autre.net", false), &mine])).unwrap();
+        assert_eq!(prepare(&path, server, &[]).unwrap(), 0);
+        assert_eq!(entries(&std::fs::read(&path).unwrap()).unwrap()[1], &mine[..]);
 
         std::fs::write(&path, b"pas du NBT").unwrap();
-        assert_eq!(accept_packs(&path, &["play.clovergames.fr"]).unwrap(), 0);
+        assert_eq!(prepare(&path, server, &modes).unwrap(), 0);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }

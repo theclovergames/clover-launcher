@@ -17,6 +17,11 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
   jeu, puis une tuile par mode (rang, chiffre clé) dont le détail s'ouvre dessous. Ton grade en
   jeu s'affiche avec son badge du chat, aussi sur la carte de profil à partager.
 
+### Corrections
+
+- **« Clover Games » en tête du menu Multijoueur** : le serveur principal y manquait, et un
+  joueur qui avait ajouté l'adresse d'un mode arrivait sur ce mode au lieu du Lobby.
+
 ## 0.4.7 (13 octobre 2026)
 
 ### Nouveautés

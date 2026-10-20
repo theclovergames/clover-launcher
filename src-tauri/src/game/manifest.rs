@@ -49,9 +49,9 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// Adresses des serveurs du réseau : principale et celles des modes.
-    pub fn hosts(&self) -> Vec<&str> {
-        std::iter::once(self.server.host.as_str()).chain(self.modes.iter().filter_map(|mode| mode.host.as_deref())).collect()
+    /// Adresses des modes qui en ont une.
+    pub fn mode_hosts(&self) -> Vec<&str> {
+        self.modes.iter().filter_map(|mode| mode.host.as_deref()).collect()
     }
 }
 
