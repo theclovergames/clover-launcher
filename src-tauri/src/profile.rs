@@ -20,6 +20,14 @@ pub struct Grade {
     pub color: String,
 }
 
+/// Grade en jeu : groupe LuckPerms principal, dont l'identifiant choisit le badge livré avec le launcher.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Rank {
+    pub id: String,
+    pub label: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Level {
@@ -122,6 +130,8 @@ pub struct PlayerStats {
     #[serde(default, deserialize_with = "lenient")]
     pub grade: Option<Grade>,
     #[serde(default, deserialize_with = "lenient")]
+    pub rank: Option<Rank>,
+    #[serde(default, deserialize_with = "lenient")]
     pub level: Option<Level>,
     #[serde(default, deserialize_with = "lenient")]
     pub coins: Option<i64>,
@@ -157,6 +167,15 @@ fn numbers_only(mut stats: PlayerStats) -> PlayerStats {
     if let Some(modes) = &mut stats.modes {
         for mode in modes {
             mode.stats.retain(|_, value| value.is_number() || value.is_null());
+        }
+    }
+    // L'identifiant entre dans le chemin du badge : minuscules, chiffres, `_`, `+` et `-` seulement.
+    if let Some(rank) = &mut stats.rank {
+        let valid_id = (1..=32).contains(&rank.id.len()) && rank.id.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_+-".contains(&byte));
+        if valid_id {
+            rank.label = rank.label.chars().take(32).collect();
+        } else {
+            stats.rank = None;
         }
     }
     if let Some(grade) = &stats.grade {
@@ -218,5 +237,14 @@ mod tests {
         let stats = numbers_only(stats);
         assert!(stats.level.is_none() && stats.grade.is_none());
         assert_eq!(stats.coins, Some(12));
+    }
+
+    #[test]
+    fn keeps_only_safe_rank_ids() {
+        let rank = |json: &str| numbers_only(serde_json::from_str::<PlayerStats>(json).unwrap()).rank;
+        assert_eq!(rank(r#"{"rank":{"id":"gerant","label":"Gérant"}}"#).unwrap().label, "Gérant");
+        assert!(rank(r#"{"rank":{"id":"../x","label":"X"}}"#).is_none());
+        assert!(rank(r#"{"rank":{"id":"Légende","label":"X"}}"#).is_none());
+        assert!(rank(r#"{"rank":"oops"}"#).is_none());
     }
 }

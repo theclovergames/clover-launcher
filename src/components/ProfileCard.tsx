@@ -30,6 +30,9 @@ export type CardData = {
   model: SkinModel;
   /** Cape portée, dessinée dans le dos du personnage. */
   cape: string | null;
+  /** Grade en jeu : badge du chat (livré avec le launcher), ou son libellé seul. Prime sur `grade`. */
+  rank: { label: string; badge: string | null } | null;
+  /** Grade du compte du site, quand le grade en jeu manque. */
   grade: { label: string; color: string } | null;
   level: { level: number; into: number; needed: number; rank: number | null } | null;
   /** Première venue sur le serveur (millisecondes). */
@@ -89,10 +92,11 @@ function storedTheme(): CardTheme {
 export async function drawProfileCard(data: CardData, themeId: CardTheme = "foret"): Promise<Blob> {
   const theme = THEMES[themeId];
   await Promise.all([document.fonts.load('64px "Lilita One"'), document.fonts.load('600 20px "Montserrat Variable"'), document.fonts.load('28px "Monocraft"')]);
-  const [pose, logo, favorite] = await Promise.all([
+  const [pose, logo, favorite, rankImage] = await Promise.all([
     renderLargePose(data.texture, data.model, data.cape, POSE.width * 2, POSE.height * 2).then(loadImage),
     loadImage(launcherLogo),
     data.favorite ? firstImage(data.favorite.art) : null,
+    data.rank?.badge ? loadImage(data.rank.badge).catch(() => null) : null,
   ]);
   const canvas = document.createElement("canvas");
   canvas.width = WIDTH;
@@ -173,19 +177,26 @@ export async function drawProfileCard(data: CardData, themeId: CardTheme = "fore
   context.shadowColor = "transparent";
   context.shadowOffsetY = 0;
 
-  // Grade, puis ancienneté sur la même ligne.
+  // Grade, puis ancienneté sur la même ligne : le badge du chat agrandi trois fois, pixels nets, sinon
+  // une pastille avec son libellé.
   let after = left;
-  if (data.grade) {
+  const chip = data.rank && !rankImage ? { label: data.rank.label, color: "#e9e3d4" } : data.rank ? null : data.grade;
+  if (rankImage) {
+    context.imageSmoothingEnabled = false;
+    context.drawImage(rankImage, left, 182, rankImage.width * 3, rankImage.height * 3);
+    context.imageSmoothingEnabled = true;
+    after = left + rankImage.width * 3 + 16;
+  } else if (chip) {
     context.font = '700 20px "Montserrat Variable"';
-    const width = context.measureText(data.grade.label).width + 28;
+    const width = context.measureText(chip.label).width + 28;
     roundRect(context, left, 182, width, 34, 8);
     context.fillStyle = "rgba(0, 0, 0, 0.35)";
     context.fill();
-    context.strokeStyle = data.grade.color;
+    context.strokeStyle = chip.color;
     context.lineWidth = 2;
     context.stroke();
-    context.fillStyle = data.grade.color;
-    context.fillText(data.grade.label, left + 14, 206);
+    context.fillStyle = chip.color;
+    context.fillText(chip.label, left + 14, 206);
     after = left + width + 16;
   }
   if (data.since) {

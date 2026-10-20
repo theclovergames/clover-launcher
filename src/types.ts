@@ -377,6 +377,8 @@ export type ModeStats =
 export type PlayerStats = {
   linked: boolean;
   grade: { label: string; color: string } | null;
+  /** Grade en jeu : groupe LuckPerms principal (sans accent) et son libellé. */
+  rank: { id: string; label: string } | null;
   level: { level: number; totalXp: number; into: number; needed: number; rank: number | null } | null;
   coins: number | null;
   votes: { total: number; month: number } | null;
