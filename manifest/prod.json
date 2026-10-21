@@ -34,6 +34,6 @@
     { "slug": "shulkerboxtooltip", "category": "comfort", "default": false, "description": "Aperçu du contenu des boîtes de Shulker au survol." },
     { "slug": "controlling", "category": "comfort", "default": false, "description": "Recherche dans le réglage des touches." },
     { "slug": "betterf3", "category": "comfort", "default": false, "description": "Écran de débogage (F3) plus lisible." },
-    { "slug": "cloverclient", "name": "Clover", "version": "1.0.1", "minecraft": ["26.3"], "url": "https://cdn.clovergames.fr/launcher/mods/cloverclient-1.0.1.jar" }
+    { "slug": "cloverclient", "name": "Clover", "version": "1.0.2", "minecraft": ["26.3"], "url": "https://cdn.clovergames.fr/launcher/mods/cloverclient-1.0.2.jar" }
   ]
 }
