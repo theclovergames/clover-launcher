@@ -748,16 +748,6 @@ fn modified(path: &std::path::Path) -> Option<u64> {
     Some(time.duration_since(UNIX_EPOCH).ok()?.as_secs())
 }
 
-fn size(path: &std::path::Path) -> u64 {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_dir() => std::fs::read_dir(path)
-            .map(|entries| entries.flatten().map(|entry| size(&entry.path())).sum())
-            .unwrap_or(0),
-        Ok(meta) => meta.len(),
-        Err(_) => 0,
-    }
-}
-
 /// `saves` : dossiers ayant un `level.dat` ; packs : `.zip` ou dossiers ; `screenshots` : `.png`.
 /// Sous-dossier des packs désactivés. Minecraft et Iris ne chargent que les archives et les dossiers
 /// de pack posés directement dans leur dossier : celui-ci, sans `pack.mcmeta` ni `shaders/`, est
@@ -802,7 +792,7 @@ fn content(dir: &std::path::Path, folder: &str, world: Option<&str>, enabled: bo
                 icon: packs.then(|| game::content::pack_icon(&path)).flatten(),
                 world: world.map(str::to_owned),
                 enabled,
-                size: size(&path),
+                size: crate::storage::size(&path),
                 // Dernière partie notée par le jeu : une copie du dossier ne la change pas.
                 modified: level.as_ref().and_then(|level| level.last_played).or_else(|| modified(&stamp)),
                 image: image.map(|image| image.to_string_lossy().into_owned()),
@@ -982,8 +972,7 @@ pub fn rename_server(address: String, name: String, app: AppHandle, state: State
         let Ok(bytes) = std::fs::read(&file) else { continue };
         match game::servers_dat::rename(&bytes, &address, &name) {
             Some(renamed) if renamed != bytes => {
-                let temporary = file.with_extension("dat.tmp");
-                if let Err(e) = std::fs::write(&temporary, renamed).and_then(|()| std::fs::rename(&temporary, &file)) {
+                if let Err(e) = crate::storage::write_atomically(&file, &renamed) {
                     eprintln!("[serveurs] {} non mis à jour : {e}", file.display());
                 }
             }

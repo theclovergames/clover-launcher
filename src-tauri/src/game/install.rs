@@ -233,9 +233,8 @@ pub(crate) async fn install_version(
 async fn vanilla_json(http: &reqwest::Client, paths: &Paths, id: &str) -> Result<VersionJson> {
     let path = paths.versions.join(id).join(format!("{id}.json"));
     if tokio::fs::metadata(&path).await.is_err() {
-        let manifest: VersionManifest =
-            http.get(VERSION_MANIFEST_URL).send().await?.error_for_status()?.json().await?;
-        let entry = manifest
+        let entry = version_manifest(http)
+            .await?
             .versions
             .into_iter()
             .find(|entry| entry.id == id)
@@ -262,8 +261,7 @@ pub async fn download_size(http: &reqwest::Client, paths: &Paths, minecraft: &st
     let vanilla: VersionJson = if cached.is_file() {
         read_json(&cached).await?
     } else {
-        let manifest: VersionManifest = http.get(VERSION_MANIFEST_URL).send().await?.error_for_status()?.json().await?;
-        let entry = manifest.versions.into_iter().find(|entry| entry.id == minecraft).ok_or_else(|| GameError::InvalidVersion(format!("version {minecraft} inconnue de Mojang")))?;
+        let entry = version_manifest(http).await?.versions.into_iter().find(|entry| entry.id == minecraft).ok_or_else(|| GameError::InvalidVersion(format!("version {minecraft} inconnue de Mojang")))?;
         http.get(entry.url).send().await?.error_for_status()?.json().await?
     };
     let missing = |path: PathBuf, size: Option<u64>| if path.is_file() { 0 } else { size.unwrap_or(0) };
@@ -311,11 +309,19 @@ pub(crate) fn loader_version_ids(loader: Option<Loader<'_>>, minecraft: &str, in
 async fn meta_json(http: &reqwest::Client, paths: &Paths, meta: &str, name: &str, minecraft: &str, loader: &str) -> Result<VersionJson> {
     let id = meta_id(name, minecraft, loader);
     let path = paths.versions.join(&id).join(format!("{id}.json"));
+    let download = Download { url: format!("{meta}/{minecraft}/{loader}/profile/json"), path: path.clone(), checksum: None, size: None, executable: false };
     if tokio::fs::metadata(&path).await.is_err() {
-        let url = format!("{meta}/{minecraft}/{loader}/profile/json");
-        ensure(http, &Download { url, path: path.clone(), checksum: None, size: None, executable: false }).await?;
+        ensure(http, &download).await?;
     }
-    read_json(&path).await
+    match read_json(&path).await {
+        Ok(profile) => Ok(profile),
+        // Sans empreinte à vérifier, une page d'erreur (portail Wi-Fi) a pu être gardée : retéléchargé.
+        Err(_) => {
+            tokio::fs::remove_file(&path).await?;
+            ensure(http, &download).await?;
+            read_json(&path).await
+        }
+    }
 }
 
 pub(crate) async fn maven_sha1(http: &reqwest::Client, url: &str) -> Result<String> {
@@ -338,6 +344,8 @@ fn extract_natives(archives: &[(PathBuf, Vec<String>)], dir: &Path) -> Result<()
             if entry.is_dir() || entry.name().starts_with("META-INF/") || excluded.iter().any(|prefix| entry.name().starts_with(prefix)) { continue; }
             let relative = entry.enclosed_name().ok_or_else(|| GameError::InvalidVersion("chemin de bibliothèque native invalide".into()))?;
             let target = dir.join(relative);
+            // Déjà extraite : sous Windows, une DLL chargée par un jeu ouvert ne peut pas être réécrite.
+            if std::fs::metadata(&target).is_ok_and(|metadata| metadata.len() == entry.size()) { continue; }
             if let Some(parent) = target.parent() { std::fs::create_dir_all(parent)?; }
             std::io::copy(&mut entry, &mut std::fs::File::create(target)?)?;
         }

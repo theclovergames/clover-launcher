@@ -1,7 +1,7 @@
 // Relais de l'API CurseForge pour le Clover Launcher, sur curseforge.clovergames.fr. La clé reste
 // dans les secrets du Worker (CURSEFORGE_API_KEY) : le launcher n'en embarque aucune. Seules les
 // routes qu'il appelle passent (src-tauri/src/game/curseforge.rs), avec l'identité du launcher, dans
-// la limite de LIMITER par adresse IP et de GLOBAL_LIMITER pour l'ensemble du relais. Aucune réponse
+// la limite de LIMITER par adresse IP et de Quota pour l'ensemble du relais. Aucune réponse
 // n'est mise en cache : les conditions de l'API CurseForge (§ 3.1) l'interdisent.
 
 const API = "https://api.curseforge.com";
@@ -15,6 +15,10 @@ const LAUNCHER_AGENT = /^CloverLauncher\/\d+\.\d+\.\d+/;
 const MAX_BODY = 64 * 1024;
 // Un modpack de plusieurs centaines de mods passe en un seul lot ; au-delà, c'est un abus.
 const MAX_IDS = 1000;
+// Plafond de tout le relais, pour qu'un abus réparti sur de nombreuses adresses n'épuise pas le
+// quota de la clé (unique, impossible à régénérer).
+const GLOBAL_LIMIT = 1200;
+const WINDOW_MS = 60_000;
 
 export function isAllowedRoute(method, pathname) {
   return ROUTES.some(([m, path]) => method === m && path.test(pathname));
@@ -57,8 +61,8 @@ export default {
     // Une adresse déjà bloquée ne doit pas entamer le plafond global, sinon elle seule le vide pour tous.
     const ip = await env.LIMITER.limit({ key: request.headers.get("cf-connecting-ip") ?? "" });
     if (!ip.success) return new Response("Too many requests", { status: 429 });
-    const global = await env.GLOBAL_LIMITER.limit({ key: "global" });
-    if (!global.success) return new Response("Too many requests", { status: 429 });
+    const quota = env.QUOTA.get(env.QUOTA.idFromName("global"));
+    if (!(await quota.fetch("https://quota/")).ok) return new Response("Too many requests", { status: 429 });
 
     const upstream = await fetch(API + url.pathname + url.search, {
       method: request.method,
@@ -76,3 +80,21 @@ export default {
     });
   },
 };
+
+// Compteur unique pour le monde entier : la limitation intégrée de Cloudflare (LIMITER) compte par
+// point de présence, un abus réparti sur plusieurs régions passerait sous un plafond global.
+// shortcut: compteur en mémoire, remis à zéro si l'objet est déchargé ; suffisant pour un plafond.
+export class Quota {
+  window = 0;
+  count = 0;
+
+  fetch() {
+    const window = Math.floor(Date.now() / WINDOW_MS);
+    if (window !== this.window) {
+      this.window = window;
+      this.count = 0;
+    }
+    this.count++;
+    return new Response(null, { status: this.count <= GLOBAL_LIMIT ? 204 : 429 });
+  }
+}

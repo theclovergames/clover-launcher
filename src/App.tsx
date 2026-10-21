@@ -60,8 +60,10 @@ const STORAGE_COLORS: Record<string, string> = {
 };
 
 const SERVER_POLL_MS = 60_000;
-/** Après un échec (souvent le premier ping, lancé pendant le démarrage), on réessaie plus vite. */
+/** Après un échec (souvent le premier ping, lancé pendant le démarrage), on réessaie plus vite,
+ * puis de plus en plus espacé : des milliers de launchers ne pilonnent pas un proxy qui redémarre. */
 const SERVER_RETRY_MS = 8_000;
+const SERVER_RETRY_MAX_MS = 5 * 60_000;
 /** Actualités, joueurs par mode et votes : le site les met en cache 30 s à 5 min. */
 const SITE_POLL_MS = 60_000;
 /** Les réglages sont enregistrés 300 ms après le dernier changement. */
@@ -71,7 +73,7 @@ const NOTIFICATIONS_POLL_MS = 60_000;
 const NOTIFICATIONS_HIDDEN_POLL_MS = 5 * 60_000;
 /** Messages et demandes d'amis : plus souvent que la cloche, une conversation n'attend pas. */
 const INBOX_POLL_MS = 15_000;
-const INBOX_HIDDEN_POLL_MS = 30_000;
+const INBOX_HIDDEN_POLL_MS = 2 * 60_000;
 /** Alerte d'un message dans le launcher, fenêtre au premier plan. */
 const MESSAGE_TOAST_MS = 8_000;
 /** Compte Minecraft lié à aucun compte du site : la cloche explique comment le lier. */
@@ -369,28 +371,44 @@ export default function App() {
     return () => unlisten.forEach((promise) => promise.then((stop) => stop()));
   }, [refreshStored, pullConsole]);
 
-  // ── Statut du serveur ──
+  // ── Statut du serveur : seulement fenêtre visible, relevé dès qu'elle réapparaît ──
   useEffect(() => {
     if (!catalogue) return;
     let cancelled = false;
+    let running = false;
+    let failures = 0;
     let timer: number | undefined;
     const ping = async () => {
-      const status = await api.serverStatus(catalogue.server.host).catch(() => null);
-      if (cancelled) return;
-      if (status) setServer(status);
-      timer = window.setTimeout(ping, status?.online ? SERVER_POLL_MS : SERVER_RETRY_MS);
+      window.clearTimeout(timer);
+      if (running) return;
+      if (!document.hidden) {
+        running = true;
+        const status = await api.serverStatus(catalogue.server.host).catch(() => null);
+        running = false;
+        if (cancelled) return;
+        if (status) setServer(status);
+        failures = status?.online ? 0 : failures + 1;
+      }
+      timer = window.setTimeout(ping, failures ? Math.min(SERVER_RETRY_MS * 2 ** (failures - 1), SERVER_RETRY_MAX_MS) : SERVER_POLL_MS);
     };
-    ping();
+    const onVisible = () => {
+      if (!document.hidden) void ping();
+    };
+    void ping();
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [catalogue]);
 
-  // ── Contenu du site : une partie illisible garde la version précédente ──
+  // ── Contenu du site : une partie illisible garde la version précédente. Fenêtre cachée (zone de
+  // notification), rien n'est demandé ; il est relevé dès qu'elle réapparaît. ──
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
+      if (document.hidden) return;
       const next = await api.siteFeed().catch(() => null);
       if (cancelled || !next) return;
       setFeed((previous) => ({
@@ -400,11 +418,14 @@ export default function App() {
         votes: next.votes ?? previous.votes,
       }));
     };
-    refresh();
+    const onVisible = () => void refresh();
+    void refresh();
     const timer = window.setInterval(refresh, SITE_POLL_MS);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
@@ -595,7 +616,7 @@ export default function App() {
     };
   }, [signedIn, profile?.uuid]);
 
-  // Messages et demandes d'amis, toutes les 15 s (30 s fenêtre cachée) ; la page Messages relève
+  // Messages et demandes d'amis, toutes les 15 s (2 min fenêtre cachée) ; la page Messages relève
   // elle-même sa liste. Un autre compte repart d'une liste vide.
   useEffect(() => {
     if (!signedIn) return;

@@ -5,14 +5,13 @@
 
 use std::time::Duration;
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
 use crate::game::download;
 use crate::messages::{clean, is_uuid};
 use crate::profile::is_player_name;
-use crate::site;
+use crate::site::{self, items, lenient};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 /// Bornes de ce que le site peut envoyer : au-delà, le reste est ignoré.
@@ -89,17 +88,6 @@ pub struct Board {
 struct Response {
     #[serde(default, deserialize_with = "items")]
     boards: Vec<Board>,
-}
-
-fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned>(deserializer: D) -> Result<Option<T>, D::Error> {
-    Ok(serde_json::from_value::<Option<T>>(Value::deserialize(deserializer)?).ok().flatten())
-}
-
-fn items<'de, D: Deserializer<'de>, T: DeserializeOwned>(deserializer: D) -> Result<Vec<T>, D::Error> {
-    Ok(match Value::deserialize(deserializer)? {
-        Value::Array(values) => values.into_iter().filter_map(|value| serde_json::from_value(value).ok()).collect(),
-        _ => Vec::new(),
-    })
 }
 
 fn ascending<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {

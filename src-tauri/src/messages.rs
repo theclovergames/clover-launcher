@@ -10,6 +10,7 @@ use tauri::State;
 
 use crate::notifications::{authorized_response, session, SiteTokens};
 use crate::profile::is_player_name;
+use crate::site::{items, lenient};
 use crate::CurrentSession;
 
 /// En-tête de négociation : version du contrat des messages que ce launcher comprend.
@@ -327,19 +328,6 @@ struct GiphyImage {
     height: u32,
 }
 
-/// Champ mal formé lu comme absent : une évolution du site ne casse pas toute la conversation.
-fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned>(deserializer: D) -> Result<Option<T>, D::Error> {
-    Ok(serde_json::from_value::<Option<T>>(Value::deserialize(deserializer)?).ok().flatten())
-}
-
-/// Liste dont les éléments mal formés sont écartés un à un.
-fn items<'de, D: Deserializer<'de>, T: DeserializeOwned>(deserializer: D) -> Result<Vec<T>, D::Error> {
-    Ok(match Value::deserialize(deserializer)? {
-        Value::Array(values) => values.into_iter().filter_map(|value| serde_json::from_value(value).ok()).collect(),
-        _ => Vec::new(),
-    })
-}
-
 fn requests<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Requests, D::Error> {
     Ok(lenient::<D, Requests>(deserializer)?.unwrap_or_default())
 }
@@ -546,19 +534,14 @@ fn failure_message(status: u16, body: &str) -> String {
     }
 }
 
-fn decode<T: DeserializeOwned>(body: &str) -> Result<T, String> {
+pub(crate) fn decode<T: DeserializeOwned>(body: &str) -> Result<T, String> {
     serde_json::from_str(body).map_err(|_| UNREADABLE.to_owned())
 }
 
 /// Appel authentifié au site, avec l'en-tête du contrat : corps de la réponse si elle réussit,
 /// sinon l'erreur à afficher.
 async fn request(current: &CurrentSession, tokens: &SiteTokens, send: impl Fn(&reqwest::Client, &str) -> reqwest::RequestBuilder) -> Result<String, String> {
-    let (status, body) = site_response(current, tokens, send).await?;
-    if (200..300).contains(&status) {
-        Ok(body)
-    } else {
-        Err(failure_message(status, &body))
-    }
+    site_request(current, tokens, UNAVAILABLE, send).await
 }
 
 /// Code et corps de la réponse du site, pour l'appelant qui lit lui-même un code d'erreur.
@@ -583,17 +566,13 @@ pub(crate) fn failure(status: u16, body: &str, unavailable: &str) -> String {
 
 /// Comme `request`, pour une route plus récente que les messages : une route absente dit
 /// `unavailable` plutôt que « messages pas encore disponibles ».
-async fn site_request(current: &CurrentSession, tokens: &SiteTokens, unavailable: &str, send: impl Fn(&reqwest::Client, &str) -> reqwest::RequestBuilder) -> Result<String, String> {
+pub(crate) async fn site_request(current: &CurrentSession, tokens: &SiteTokens, unavailable: &str, send: impl Fn(&reqwest::Client, &str) -> reqwest::RequestBuilder) -> Result<String, String> {
     let (status, body) = site_response(current, tokens, send).await?;
     if (200..300).contains(&status) {
         Ok(body)
     } else {
         Err(failure(status, &body, unavailable))
     }
-}
-
-pub(crate) fn decode_body<T: DeserializeOwned>(body: &str) -> Result<T, String> {
-    decode(body)
 }
 
 fn friend_id(friend: &str) -> Result<String, String> {

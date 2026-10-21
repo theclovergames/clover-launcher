@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::Value;
-use sha1::{Digest, Sha1};
 
 use super::download::{download_all, ensure, Checksum, Download};
 use super::version::{maven_path, VersionJson};
@@ -291,18 +290,15 @@ fn extract_bundled(prepared: &Prepared, paths: &Paths) -> Result<()> {
         if target.is_file() {
             continue;
         }
-        let bytes = read_entry(&mut archive, &name)?;
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&target, bytes)?;
+        // Atomique : un jar coupé en pleine écriture serait gardé, `is_file` ne vérifiant rien d'autre.
+        crate::storage::write_atomically(&target, &read_entry(&mut archive, &name)?)?;
     }
     Ok(())
 }
 
+/// En flux : les sorties des processeurs sont des jars du jeu entier.
 fn sha1_of(path: &Path) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    Some(Sha1::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect())
+    super::download::sha1(path).ok()
 }
 
 /// Classe principale déclarée par le `MANIFEST.MF` d'un processeur.

@@ -97,7 +97,7 @@ pub async fn sync(
     tokio::fs::create_dir_all(clover_dir).await?;
     let files: Vec<_> = manifest.mods_to_install(enabled).into_iter().filter_map(|m| m.file.as_ref()).collect();
     // Défense en profondeur : même signé, un nom de fichier ne doit pas sortir de son dossier.
-    if files.iter().any(|file| file.filename.contains(['/', '\\']) || file.filename.starts_with('.')) {
+    if files.iter().any(|file| personal::safe_filename(&file.filename).is_none()) {
         return Err(GameError::InvalidVersion("nom de fichier de mod invalide".into()));
     }
     let catalogue: HashSet<&str> = files.iter().map(|file| file.filename.as_str()).collect();

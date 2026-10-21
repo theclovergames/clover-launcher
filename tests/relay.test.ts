@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 // @ts-ignore — worker JavaScript sans déclarations.
-import worker, { checkBody, isAllowedRoute } from "../relay/worker.js";
+import worker, { checkBody, isAllowedRoute, Quota } from "../relay/worker.js";
 
 const AGENT = "CloverLauncher/0.4.7 (+https://clovergames.fr)";
 
@@ -35,7 +35,10 @@ function env(ipOk = true, globalOk = true) {
     CURSEFORGE_API_KEY: "k",
     calls,
     LIMITER: { limit: async () => ({ success: ipOk }) },
-    GLOBAL_LIMITER: { limit: async () => (calls.global++, { success: globalOk }) },
+    QUOTA: {
+      idFromName: () => "global",
+      get: () => ({ fetch: async () => (calls.global++, new Response(null, { status: globalOk ? 204 : 429 })) }),
+    },
   };
 }
 const call = (method: string, path: string, init: { agent?: string; body?: string } = {}, e = env()) =>
@@ -68,4 +71,12 @@ test("relais d'une requête valide", async () => {
   } finally {
     globalThis.fetch = real;
   }
+});
+
+test("plafond global sur une minute", () => {
+  const quota = new Quota();
+  for (let i = 0; i < 1200; i++) assert.equal(quota.fetch().status, 204);
+  assert.equal(quota.fetch().status, 429);
+  quota.window--;
+  assert.equal(quota.fetch().status, 204);
 });

@@ -7,7 +7,7 @@
 //! Mojang (`hasJoined`) et rend un jeton court, gardé en mémoire le temps de la session du launcher.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -17,10 +17,13 @@ use crate::{auth, game::download, site, CurrentSession};
 
 const JOIN_URL: &str = "https://sessionserver.mojang.com/session/minecraft/join";
 const TIMEOUT: Duration = Duration::from_secs(10);
+/// Après une connexion manquée, délai avant la suivante pour ce compte.
+const LOGIN_RETRY: Duration = Duration::from_secs(60);
 
-/// Jetons du site par compte (UUID avec tirets).
+/// Jetons du site par compte (UUID avec tirets). Le second verrou fait passer une seule connexion à
+/// la fois et garde, par compte, l'heure et le message du dernier échec.
 #[derive(Default)]
-pub struct SiteTokens(Mutex<HashMap<String, String>>);
+pub struct SiteTokens(Mutex<HashMap<String, String>>, Mutex<HashMap<String, (Instant, String)>>);
 
 /// Notification affichée par la cloche. Mêmes noms que `LauncherNotification` du front.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +99,35 @@ async fn login(http: &reqwest::Client, base: &str, session: &auth::Session) -> R
     Ok(token.token)
 }
 
+/// Jeton du site pour le compte : celui en mémoire, sinon une connexion, une seule à la fois. Après
+/// un échec, le même pendant `LOGIN_RETRY` : chaque rafraîchissement de l'interface referait sinon
+/// un `join` chez Mojang, qui limite alors l'adresse du joueur.
+async fn token(tokens: &SiteTokens, http: &reqwest::Client, base: &str, session: &auth::Session) -> Result<String, String> {
+    let uuid = &session.profile.uuid;
+    if let Some(token) = tokens.0.lock().await.get(uuid).cloned() {
+        return Ok(token);
+    }
+    let mut failed = tokens.1.lock().await;
+    // Connecté par un autre appel pendant l'attente du verrou.
+    if let Some(token) = tokens.0.lock().await.get(uuid).cloned() {
+        return Ok(token);
+    }
+    if let Some((_, error)) = failed.get(uuid).filter(|(at, _)| at.elapsed() < LOGIN_RETRY) {
+        return Err(error.clone());
+    }
+    match login(http, base, session).await {
+        Ok(token) => {
+            failed.remove(uuid);
+            tokens.0.lock().await.insert(uuid.clone(), token.clone());
+            Ok(token)
+        }
+        Err(error) => {
+            failed.insert(uuid.clone(), (Instant::now(), error.clone()));
+            Err(error)
+        }
+    }
+}
+
 /// Requête authentifiée ; un jeton refusé (expiré) est redemandé une fois.
 pub(crate) async fn authorized(
     tokens: &SiteTokens,
@@ -114,16 +146,8 @@ pub(crate) async fn authorized_response(
 ) -> Result<reqwest::Response, String> {
     let http = download::client();
     let base = site::base();
-    for attempt in 0..2 {
-        let cached = tokens.0.lock().await.get(&session.profile.uuid).cloned();
-        let token = match cached {
-            Some(token) if attempt == 0 => token,
-            _ => {
-                let token = login(&http, &base, session).await?;
-                tokens.0.lock().await.insert(session.profile.uuid.clone(), token.clone());
-                token
-            }
-        };
+    for _ in 0..2 {
+        let token = token(tokens, &http, &base, session).await?;
         let response = send(&http, &base, &token).timeout(TIMEOUT).send().await.map_err(failure)?;
         if response.status() != reqwest::StatusCode::UNAUTHORIZED {
             return Ok(response);

@@ -75,7 +75,8 @@ impl Hasher {
 
     fn matches(self, checksum: &Checksum) -> bool {
         match checksum {
-            Checksum::Sha1(expected) | Checksum::Sha512(expected) => self.finish() == *expected,
+            // Mojang et Modrinth écrivent en minuscules, un `.mrpack` d'ailleurs peut être en majuscules.
+            Checksum::Sha1(expected) | Checksum::Sha512(expected) => self.finish().eq_ignore_ascii_case(expected),
         }
     }
 }
@@ -83,6 +84,11 @@ impl Hasher {
 /// SHA-512 d'un fichier, en hexadécimal minuscule, calculé en flux.
 pub(crate) fn sha512(path: &Path) -> std::io::Result<String> {
     Ok(Hasher::Sha512(Sha512::new()).read_file(path)?.finish())
+}
+
+/// SHA-1 d'un fichier, en hexadécimal minuscule, calculé en flux.
+pub(crate) fn sha1(path: &Path) -> std::io::Result<String> {
+    Ok(Hasher::Sha1(Sha1::new()).read_file(path)?.finish())
 }
 
 /// `sha512` hors du fil d'exécution asynchrone.
@@ -199,7 +205,7 @@ async fn fetch(http: &reqwest::Client, download: &Download, on_bytes: &(dyn Fn(u
     Ok(())
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

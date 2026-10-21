@@ -171,29 +171,51 @@ pub async fn load(http: &reqwest::Client, cache_dir: &Path, channel: &str) -> Re
 
 async fn load_channel(http: &reqwest::Client, cache_dir: &Path, channel: &str) -> Result<Manifest> {
     let cached = read_cached(cache_dir, channel).await;
-    let fetched = match fetch(http, channel).await {
+    let mut fetched = fetch_verified(http, channel).await;
+    if matches!(fetched, Some(Err(_))) && std::env::var_os(LOCAL_OVERRIDE_ENV).is_none() {
+        // Manifeste et signature sont publiés l'un après l'autre : reçus entre les deux envois, ils
+        // ne correspondent pas. Un second essai les trouve accordés.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        fetched = fetch_verified(http, channel).await.or(fetched);
+    }
+    let (raw, fetched) = match fetched {
+        Some(Ok((bytes, signature, manifest))) => (Some((bytes, signature)), Some(Ok(manifest))),
+        Some(Err(error)) => (None, Some(Err(error))),
+        None => (None, None),
+    };
+    let (manifest, received) = choose(fetched, cached)?;
+    if let (true, Some((bytes, signature))) = (received, raw) {
+        write_cache(cache_dir, &bytes, &signature)?;
+    }
+    Ok(manifest)
+}
+
+/// Manifeste téléchargé et vérifié ; `None` si le réseau ne répond pas.
+async fn fetch_verified(http: &reqwest::Client, channel: &str) -> Option<Result<(Vec<u8>, String, Manifest)>> {
+    match fetch(http, channel).await {
         Ok((bytes, signature)) => Some(verify(&bytes, &signature, channel).map(|manifest| (bytes, signature, manifest))),
         Err(error) => {
             eprintln!("[manifest] téléchargement impossible, repli sur le cache : {error}");
             None
         }
-    };
+    }
+}
 
+/// Manifeste retenu entre celui reçu (déjà vérifié) et celui du cache ; `true` : c'est le reçu, à
+/// mettre en cache. Un manifeste reçu plus ancien que le cache est un rejeu : ignoré.
+fn choose(fetched: Option<Result<Manifest>>, cached: Option<Manifest>) -> Result<(Manifest, bool)> {
     match (fetched, cached) {
-        (Some(Ok((bytes, signature, manifest))), cached) => {
-            if let Some(cached) = cached.as_ref().filter(|cached| cached.serial > manifest.serial) {
-                eprintln!("[manifest] manifeste reçu plus ancien que le cache ({} < {}), ignoré", manifest.serial, cached.serial);
-                return Ok(cached.clone());
-            }
-            write_cache(cache_dir, &bytes, &signature).await?;
-            Ok(manifest)
+        (Some(Ok(manifest)), Some(cached)) if cached.serial > manifest.serial => {
+            eprintln!("[manifest] manifeste reçu plus ancien que le cache ({} < {}), ignoré", manifest.serial, cached.serial);
+            Ok((cached, false))
         }
+        (Some(Ok(manifest)), _) => Ok((manifest, true)),
         (Some(Err(error)), Some(cached)) => {
             eprintln!("[manifest] manifeste reçu refusé ({error}), repli sur le cache");
-            Ok(cached)
+            Ok((cached, false))
         }
         (Some(Err(error)), None) => Err(error),
-        (None, Some(cached)) => Ok(cached),
+        (None, Some(cached)) => Ok((cached, false)),
         (None, None) => Err(GameError::ManifestUnavailable),
     }
 }
@@ -274,10 +296,11 @@ async fn read_cached(dir: &Path, channel: &str) -> Option<Manifest> {
     verify(&bytes, &signature, channel).ok()
 }
 
-async fn write_cache(dir: &Path, bytes: &[u8], signature: &str) -> Result<()> {
-    tokio::fs::create_dir_all(dir).await?;
-    tokio::fs::write(dir.join("manifest.json"), bytes).await?;
-    tokio::fs::write(dir.join("manifest.json.sig"), signature).await?;
+/// Chaque fichier est écrit atomiquement ; une paire dépareillée par un plantage entre les deux est
+/// ignorée par `read_cached`.
+fn write_cache(dir: &Path, bytes: &[u8], signature: &str) -> Result<()> {
+    crate::storage::write_atomically(&dir.join("manifest.json"), bytes)?;
+    crate::storage::write_atomically(&dir.join("manifest.json.sig"), signature.as_bytes())?;
     Ok(())
 }
 
@@ -370,6 +393,21 @@ mod tests {
     #[test]
     fn embedded_public_key_is_valid() {
         public_key();
+    }
+
+    /// Anti-rejeu et repli : un manifeste plus ancien que le cache ou refusé n'est jamais retenu.
+    #[test]
+    fn chooses_between_received_and_cached_manifest() {
+        let serial = |serial: u64| -> Manifest { serde_json::from_str(&MANIFEST.replace(r#""serial": 10"#, &format!(r#""serial": {serial}"#))).unwrap() };
+        let picked = |fetched, cached| choose(fetched, cached).map(|(manifest, received)| (manifest.serial, received));
+        assert_eq!(picked(Some(Ok(serial(11))), Some(serial(10))).unwrap(), (11, true));
+        assert_eq!(picked(Some(Ok(serial(10))), Some(serial(10))).unwrap(), (10, true));
+        assert_eq!(picked(Some(Ok(serial(9))), Some(serial(10))).unwrap(), (10, false));
+        assert_eq!(picked(Some(Ok(serial(9))), None).unwrap(), (9, true));
+        assert_eq!(picked(Some(Err(GameError::ManifestSignature)), Some(serial(10))).unwrap(), (10, false));
+        assert!(matches!(picked(Some(Err(GameError::ManifestSignature)), None), Err(GameError::ManifestSignature)));
+        assert_eq!(picked(None, Some(serial(10))).unwrap(), (10, false));
+        assert!(matches!(picked(None, None), Err(GameError::ManifestUnavailable)));
     }
 
     #[test]

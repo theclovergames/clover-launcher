@@ -9,14 +9,15 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
 
 use crate::game::download;
-use crate::messages::{clean, decode_body, failure, is_contract_error, site_response};
+use crate::messages::{clean, decode, is_contract_error, site_request};
 use crate::notifications::SiteTokens;
 use crate::profile::is_player_name;
+use crate::site::{items, lenient};
 use crate::{site, CurrentSession};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -207,17 +208,6 @@ pub struct CreditsPaid {
     pub remaining: Option<u64>,
 }
 
-fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned>(deserializer: D) -> Result<Option<T>, D::Error> {
-    Ok(serde_json::from_value::<Option<T>>(Value::deserialize(deserializer)?).ok().flatten())
-}
-
-fn items<'de, D: Deserializer<'de>, T: DeserializeOwned>(deserializer: D) -> Result<Vec<T>, D::Error> {
-    Ok(match Value::deserialize(deserializer)? {
-        Value::Array(values) => values.into_iter().filter_map(|value| serde_json::from_value(value).ok()).collect(),
-        _ => Vec::new(),
-    })
-}
-
 /// Identifiant de produit : il entre dans l'adresse de sa fiche.
 fn is_id(id: &str) -> bool {
     (1..=ID_MAX).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
@@ -343,18 +333,13 @@ pub async fn shop_product(id: String) -> Result<Option<Product>, String> {
 
 /// Appel au site avec le jeton du joueur.
 async fn signed(current: &CurrentSession, tokens: &SiteTokens, send: impl Fn(&reqwest::Client, &str) -> reqwest::RequestBuilder) -> Result<String, String> {
-    let (status, body) = site_response(current, tokens, send).await?;
-    if (200..300).contains(&status) {
-        Ok(body)
-    } else {
-        Err(failure(status, &body, UNAVAILABLE))
-    }
+    site_request(current, tokens, UNAVAILABLE, send).await
 }
 
 #[tauri::command]
 pub async fn shop_account(current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<Account, String> {
     let body = signed(&current, &tokens, |http, base| http.get(format!("{base}/api/launcher/shop/me"))).await?;
-    Ok(account(decode_body(&body)?))
+    Ok(account(decode(&body)?))
 }
 
 /// Corps d'un achat ; `gift` : pseudo du joueur à qui l'offrir.
@@ -376,7 +361,7 @@ fn checkout_url(body: &str) -> Result<String, String> {
     struct Response {
         url: String,
     }
-    let url = decode_body::<Response>(body)?.url;
+    let url = decode::<Response>(body)?.url;
     https(Some(url)).filter(|url| url.starts_with(STRIPE_CHECKOUT)).ok_or_else(|| "Paiement refusé : adresse de paiement inattendue.".to_owned())
 }
 
@@ -391,7 +376,7 @@ pub async fn shop_checkout(product: String, gift: Option<String>, current: State
 pub async fn shop_pay_credits(product: String, gift: Option<String>, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<CreditsPaid, String> {
     let payload = purchase(&product, gift.as_deref())?;
     let body = signed(&current, &tokens, |http, base| http.post(format!("{base}/api/launcher/shop/credits")).json(&payload)).await?;
-    let mut paid: CreditsPaid = decode_body(&body)?;
+    let mut paid: CreditsPaid = decode(&body)?;
     paid.product_name = line(&paid.product_name, NAME_MAX).unwrap_or_default();
     Ok(paid)
 }

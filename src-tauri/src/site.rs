@@ -5,7 +5,8 @@
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 
 use crate::game::download;
 
@@ -243,6 +244,19 @@ async fn get<T: DeserializeOwned>(http: &reqwest::Client, site: &str, route: &st
 
 fn is_https(url: &str) -> bool {
     url.starts_with("https://")
+}
+
+/// Champ mal formé lu comme absent : une évolution du site ne casse pas toute la page.
+pub(crate) fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned>(deserializer: D) -> Result<Option<T>, D::Error> {
+    Ok(serde_json::from_value::<Option<T>>(Value::deserialize(deserializer)?).ok().flatten())
+}
+
+/// Liste dont les éléments mal formés sont écartés un à un.
+pub(crate) fn items<'de, D: Deserializer<'de>, T: DeserializeOwned>(deserializer: D) -> Result<Vec<T>, D::Error> {
+    Ok(match Value::deserialize(deserializer)? {
+        Value::Array(values) => values.into_iter().filter_map(|value| serde_json::from_value(value).ok()).collect(),
+        _ => Vec::new(),
+    })
 }
 
 #[cfg(test)]

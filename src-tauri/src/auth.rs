@@ -275,11 +275,20 @@ fn split_secret(value: &str) -> Vec<Vec<u8>> {
     chunks
 }
 
+/// Écrit par-dessus l'ancien secret, morceau 0 en dernier (il porte le nombre de morceaux), puis
+/// retire les morceaux en trop : une erreur du coffre en route ne fait plus perdre le refresh token
+/// précédent, qui tient d'ordinaire en un seul morceau.
 fn write_secret(account: &str, value: &str) -> Result<()> {
-    delete_secret(account)?;
-    for (index, chunk) in split_secret(value).iter().enumerate() {
+    let previous = chunk_count(account)?;
+    let chunks = split_secret(value);
+    for (index, chunk) in chunks.iter().enumerate().rev() {
         keyring_entry(&chunk_key(account, index))?.set_secret(chunk)?;
     }
+    for index in chunks.len()..previous {
+        delete_entry(&chunk_key(account, index))?;
+    }
+    // Ancien format texte, sous le nom du compte.
+    delete_entry(account)?;
     Ok(())
 }
 
@@ -310,13 +319,17 @@ fn read_secret(account: &str) -> Result<Option<String>> {
     Ok(String::from_utf8(bytes).ok())
 }
 
+/// Nombre de morceaux du secret rangé, 0 s'il n'y en a pas.
+fn chunk_count(account: &str) -> Result<usize> {
+    match keyring_entry(&chunk_key(account, 0))?.get_secret() {
+        Ok(first) => Ok(first.first().copied().map_or(1, usize::from)),
+        Err(keyring::Error::NoEntry) => Ok(0),
+        Err(e) => Err(e.into()),
+    }
+}
+
 fn delete_secret(account: &str) -> Result<()> {
-    let count = match keyring_entry(&chunk_key(account, 0))?.get_secret() {
-        Ok(first) => first.first().copied().map_or(1, usize::from),
-        Err(keyring::Error::NoEntry) => 1,
-        Err(e) => return Err(e.into()),
-    };
-    for index in 0..count {
+    for index in 0..chunk_count(account)? {
         delete_entry(&chunk_key(account, index))?;
     }
     delete_entry(account)
@@ -548,6 +561,32 @@ fn xsts_message(code: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Retour de Microsoft sur la redirection loopback : seul un `state` identique rend le code.
+    #[tokio::test]
+    async fn redirect_requires_matching_state() {
+        async fn redirect(requests: &[&str]) -> Result<String> {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let requests: Vec<String> = requests.iter().map(|target| format!("GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n")).collect();
+            let client = tokio::spawn(async move {
+                for request in requests {
+                    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+                    stream.write_all(request.as_bytes()).await.unwrap();
+                    let _ = stream.read_to_end(&mut Vec::new()).await;
+                }
+            });
+            let outcome = wait_for_code(&listener, "attendu").await;
+            client.abort();
+            outcome
+        }
+        assert_eq!(redirect(&["/?code=abc&state=attendu"]).await.unwrap(), "abc");
+        assert!(matches!(redirect(&["/?code=abc&state=autre"]).await, Err(AuthError::InvalidCallback)));
+        assert!(matches!(redirect(&["/?code=abc"]).await, Err(AuthError::InvalidCallback)));
+        assert!(matches!(redirect(&["/?error=access_denied"]).await, Err(AuthError::Cancelled)));
+        // Une requête sans code (favicon du navigateur) ne termine pas l'attente.
+        assert_eq!(redirect(&["/favicon.ico", "/?code=xyz&state=attendu"]).await.unwrap(), "xyz");
+    }
 
     #[test]
     fn hyphenates_mojang_uuid() {

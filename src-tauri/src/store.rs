@@ -167,12 +167,7 @@ impl Stored {
 
     /// Écriture atomique : un plantage pendant l'écriture ne laisse jamais un fichier tronqué.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let temporary = path.with_extension("json.tmp");
-        std::fs::write(&temporary, serde_json::to_vec_pretty(self).expect("réglages sérialisables"))?;
-        std::fs::rename(temporary, path)
+        crate::storage::write_atomically(path, &serde_json::to_vec_pretty(self).expect("réglages sérialisables"))
     }
 
     /// Ajoute ou met à jour un compte ; le premier compte ajouté devient le compte actif.

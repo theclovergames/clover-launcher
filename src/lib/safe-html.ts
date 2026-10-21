@@ -5,6 +5,8 @@
  * de style.
  */
 
+import type { MouseEvent } from "react";
+
 const TAGS = new Set(["P", "H1", "H2", "H3", "H4", "H5", "UL", "OL", "LI", "STRONG", "B", "EM", "I", "CODE", "PRE", "A", "IMG", "BR", "HR", "BLOCKQUOTE", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD"]);
 const ATTRIBUTES: Record<string, string[]> = { A: ["href"], IMG: ["src", "alt"] };
 
@@ -50,4 +52,17 @@ export function safeHtml(html: string): string {
   const root = output.createElement("div");
   clean(source.body, root, output);
   return root.innerHTML;
+}
+
+/**
+ * Clic dans un HTML filtré : les liens s'ouvrent dans le navigateur. Suivis ici, ils remplaceraient
+ * le launcher dans sa propre fenêtre, sans barre de titre pour en revenir. À poser sur `onClick` et
+ * `onAuxClick` (clic du milieu).
+ */
+export function openLink(event: MouseEvent, onOpenLink: (url: string) => void) {
+  const link = (event.target as Element).closest("a");
+  if (!link) return;
+  event.preventDefault();
+  const href = link.getAttribute("href") ?? "";
+  if (/^https?:\/\//.test(href) && event.type === "click") onOpenLink(href);
 }

@@ -3,17 +3,13 @@
 //! (`notifications::authorized`). Réponse réduite aux champs affichés ; un bloc absent ou mal formé
 //! reste vide sans casser les autres.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::messages::{decode_body, failure, is_contract_error, is_uuid, site_response};
+use crate::messages::{decode, failure, is_contract_error, is_uuid, site_response};
 use crate::notifications::{authorized, session, SiteTokens};
+use crate::site::lenient;
 use crate::CurrentSession;
-
-/// Accepte un bloc mal formé comme absent : une évolution du site ne vide pas toute la page.
-fn lenient<'de, D: Deserializer<'de>, T: Deserialize<'de>>(deserializer: D) -> Result<Option<T>, D::Error> {
-    Ok(Option::<T>::deserialize(serde_json::Value::deserialize(deserializer)?).ok().flatten())
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -244,7 +240,7 @@ pub async fn player_profile(name: String, current: State<'_, CurrentSession>, to
     }
     let (status, body) = site_response(&current, &tokens, |http, base| http.get(format!("{base}/api/launcher/players/{name}"))).await?;
     match status {
-        200..=299 => other_player(decode_body(&body)?).map(Some),
+        200..=299 => other_player(decode(&body)?).map(Some),
         404 if is_contract_error(&body) => Ok(None),
         _ => Err(failure(status, &body, "Les profils des joueurs ne sont pas encore disponibles dans le launcher.")),
     }

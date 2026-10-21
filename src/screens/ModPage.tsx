@@ -5,6 +5,7 @@ import { LoaderBadges, loaderLabel } from "@/components/LoaderBadges";
 import { ModIcon } from "@/components/ModIcon";
 import { secondaryButton } from "@/lib/buttons";
 import { minecraftRange } from "@/lib/game-versions";
+import { openLink } from "@/lib/safe-html";
 import { cn } from "@/lib/utils";
 import type { ModrinthKind, ModrinthProject } from "@/types";
 
@@ -114,8 +115,7 @@ export function ModPage({ project, name, icon, version, summary, notice, actions
             </h2>
             <div
               className={cn(prose, "select-text")}
-              // HTML nettoyé côté Rust (`modrinth::description_html`). Les liens s'ouvrent dans le
-              // navigateur : suivis ici, ils remplaceraient le launcher dans sa propre fenêtre.
+              // HTML nettoyé côté Rust (`modrinth::description_html`).
               dangerouslySetInnerHTML={{ __html: page.descriptionHtml }}
               onClick={(event) => openLink(event, onOpenLink)}
               onAuxClick={(event) => openLink(event, onOpenLink)}
@@ -128,14 +128,6 @@ export function ModPage({ project, name, icon, version, summary, notice, actions
       </div>
     </div>
   );
-}
-
-function openLink(event: React.MouseEvent, onOpenLink: (url: string) => void) {
-  const link = (event.target as Element).closest("a");
-  if (!link) return;
-  event.preventDefault();
-  const href = link.getAttribute("href") ?? "";
-  if (/^https?:\/\//.test(href) && event.type === "click") onOpenLink(href);
 }
 
 function Gallery({ images }: { images: ModrinthProject["gallery"] }) {

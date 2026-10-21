@@ -223,12 +223,7 @@ pub fn prepare(path: &std::path::Path, server: &str, modes: &[&str]) -> std::io:
         return Ok(0);
     }
     let merged: Vec<&[u8]> = head.iter().map(Vec::as_slice).chain(kept).chain(added.iter().map(Vec::as_slice)).collect();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let temporary = path.with_extension("dat.tmp");
-    std::fs::write(&temporary, write(&merged))?;
-    std::fs::rename(temporary, path)?;
+    crate::storage::write_atomically(path, &write(&merged))?;
     Ok(count)
 }
 

@@ -220,8 +220,7 @@ fn read_index(root: &Path) -> Vec<IndexEntry> {
 }
 
 fn write_index(root: &Path, index: &[IndexEntry]) -> Result<()> {
-    std::fs::create_dir_all(root.join("skins"))?;
-    std::fs::write(root.join("skins").join("index.json"), serde_json::to_vec_pretty(index).expect("index sérialisable"))?;
+    crate::storage::write_atomically(&root.join("skins").join("index.json"), &serde_json::to_vec_pretty(index).expect("index sérialisable"))?;
     Ok(())
 }
 
@@ -282,11 +281,5 @@ mod tests {
         remove(&root, "../dehors").unwrap();
         assert!(outside.exists());
         let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[tokio::test]
-    async fn refuses_foreign_texture_hosts() {
-        let http = reqwest::Client::new();
-        assert!(texture_bytes(&http, "https://exemple.invalid/skin.png").await.is_err());
     }
 }

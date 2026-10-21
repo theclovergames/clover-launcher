@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::game::servers_dat;
+use crate::storage::write_atomically;
 use crate::{game, instances, AppState};
 
 /// Dernière détection, gardée pour la session : une nouvelle recherche ne relit que les mods
@@ -456,16 +457,7 @@ fn content(game: &Path) -> Content {
 }
 
 fn jars(game: &Path) -> Vec<PathBuf> {
-    jars_in(&game.join("mods"))
-}
-
-fn jars_in(dir: &Path) -> Vec<PathBuf> {
-    let Ok(read) = fs::read_dir(dir) else { return Vec::new() };
-    read.flatten()
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("jar")))
-        .collect()
+    game::personal::jars(&game.join("mods"))
 }
 
 #[derive(Clone)]
@@ -602,7 +594,7 @@ fn import(source: &Path, target: &Path, personal: &Path, mods: &[String], choice
     }
     if choices.personal_mods {
         // Même mod Fabric sous un autre nom de fichier (autre version) : déjà dans « Mes mods ».
-        let mut present: HashSet<String> = jars_in(personal).iter().filter_map(|jar| game::personal::fabric_id(jar)).collect();
+        let mut present: HashSet<String> = game::personal::jars(personal).iter().filter_map(|jar| game::personal::fabric_id(jar)).collect();
         for name in mods {
             let (entry, destination) = (source.join("mods").join(name), personal.join(name));
             let fresh = game::personal::fabric_id(&entry).is_none_or(|id| present.insert(id));
@@ -617,7 +609,7 @@ fn import(source: &Path, target: &Path, personal: &Path, mods: &[String], choice
     let sized: Vec<_> = tasks
         .into_iter()
         .map(|(task, entry, destination)| {
-            let bytes = size(&entry);
+            let bytes = crate::storage::size(&entry);
             (task, entry, destination, bytes)
         })
         .collect();
@@ -727,12 +719,6 @@ fn copy_atomically(source: &Path, destination: &Path, copied: &mut dyn FnMut(u64
     result
 }
 
-fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let temporary = with_suffix(path, ".tmp");
-    fs::write(&temporary, bytes)?;
-    fs::rename(temporary, path)
-}
-
 /// Copie récursive sans suivre les liens. `session.lock` (verrou d'un monde ouvert, inutile
 /// ailleurs) est laissé de côté.
 /// Copie récursive, sans les verrous de monde (`session.lock`) d'un jeu ouvert.
@@ -753,14 +739,6 @@ fn copy_files(source: &Path, destination: &Path, copied: &mut dyn FnMut(u64)) ->
         }
     }
     Ok(())
-}
-
-fn size(path: &Path) -> u64 {
-    let Ok(metadata) = fs::symlink_metadata(path) else { return 0 };
-    if !metadata.is_dir() {
-        return metadata.len();
-    }
-    fs::read_dir(path).map(|read| read.flatten().map(|entry| size(&entry.path())).sum()).unwrap_or(0)
 }
 
 // ── Commandes ───────────────────────────────────────────────────────────────────

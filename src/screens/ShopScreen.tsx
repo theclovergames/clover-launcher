@@ -39,7 +39,7 @@ import { primaryButton, secondaryButton } from "@/lib/buttons";
 import { headUrl } from "@/lib/friends";
 import { shortWhen } from "@/lib/messages";
 import type { OpenProduct } from "@/lib/routes";
-import { safeHtml } from "@/lib/safe-html";
+import { openLink, safeHtml } from "@/lib/safe-html";
 import { bySection, comparison, featuredProduct, formatCoins, formatEuros, goalPercent, isGiftName, kindLabel, priceLabel } from "@/lib/shop";
 import { SITE_URL } from "@/lib/site";
 import { cn } from "@/lib/utils";
@@ -503,6 +503,8 @@ function ProductPage(props: { open: OpenProduct; catalog: ShopCatalog; account: 
             className="prose prose-sm prose-invert max-w-none select-text prose-headings:font-display prose-headings:font-normal prose-a:text-primary prose-img:rounded-md"
             // Texte de l'éditeur du site, filtré par liste blanche (`safeHtml`).
             dangerouslySetInnerHTML={{ __html: html }}
+            onClick={(event) => openLink(event, props.onOpenLink)}
+            onAuxClick={(event) => openLink(event, props.onOpenLink)}
           />
         )}
       </div>

@@ -16,6 +16,31 @@ Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git d
 - Lancer une instance personnelle ne supprime plus les mods déposés à la main dans `mods/` : ils
   passent dans ses « Mes mods ». Avec un dossier de jeu partagé, les mods d'une instance ne passent
   plus dans « Mes mods » de Clover.
+- On peut jouer hors ligne, ou quand le service Java de Mojang est en panne, avec un Java déjà
+  installé.
+- Deux instances d'une même version ancienne (1.18.2 et avant) se lancent ensemble sous Windows.
+- Le premier lancement ne refuse plus le manifeste pendant sa publication (signature pas encore
+  à jour) : le launcher réessaie deux secondes plus tard.
+- Un profil Fabric ou Quilt abîmé (page d'erreur d'un portail Wi-Fi) est retéléchargé au lieu de
+  bloquer l'instance.
+- Un raccourci de bureau se crée pour une instance au nom avec une apostrophe typographique
+  (« L’Aventure »), sans que ce nom puisse lancer une commande.
+- Un lien dans la description d'un produit de la boutique s'ouvre dans le navigateur au lieu de
+  remplacer le launcher.
+- Les skins, l'historique des parties, le manifeste en cache et les bibliothèques de Forge sont
+  écrits d'un coup : un plantage pendant l'écriture ne les abîme plus. Deux parties qui se
+  ferment ensemble sont toutes les deux comptées.
+- Renouveler la connexion Microsoft ne peut plus effacer l'ancienne avant d'avoir rangé la
+  nouvelle.
+- Un modpack `.mrpack` aux empreintes en majuscules s'installe.
+
+### Sous le capot
+
+- Fenêtre cachée dans la zone de notification, le launcher ne relève plus l'actualité ni le
+  serveur, et la messagerie toutes les 2 minutes ; tout est relevé dès que la fenêtre revient.
+  Serveur coupé, les nouveaux essais s'espacent jusqu'à 5 minutes.
+- Une seule connexion au site à la fois, et pas de nouvel essai pendant une minute après un
+  échec.
 
 ## 0.6.0 (20 octobre 2026)
 

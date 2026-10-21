@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
-import { safeHtml } from "@/lib/safe-html";
+import { openLink, safeHtml } from "@/lib/safe-html";
 import type { MinecraftNewsItem } from "@/types";
 
 /** Article à lire : un article du blog (par son slug) ou une note de version Minecraft. */
@@ -84,13 +84,8 @@ export function ArticleReader({ target, onClose, onOpenLink, services = api }: {
               {current.value?.image && <img src={current.value.image} alt="" className="aspect-[16/6] w-full border-b border-border object-cover" />}
               <article
                 className="prose prose-sm prose-invert max-w-none px-6 py-5 select-text prose-headings:font-display prose-headings:font-normal prose-a:text-primary prose-code:rounded prose-code:bg-secondary prose-code:px-1 prose-code:py-0.5 prose-code:before:content-none prose-code:after:content-none prose-img:rounded-md"
-                // Liens : dans le navigateur, jamais dans la fenêtre du launcher.
-                onClick={(event) => {
-                  const link = (event.target as HTMLElement).closest("a");
-                  if (!link) return;
-                  event.preventDefault();
-                  if (link.href.startsWith("https://")) onOpenLink(link.href);
-                }}
+                onClick={(event) => openLink(event, onOpenLink)}
+                onAuxClick={(event) => openLink(event, onOpenLink)}
                 dangerouslySetInnerHTML={{ __html: html }}
               />
             </>

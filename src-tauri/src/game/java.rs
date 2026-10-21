@@ -95,6 +95,17 @@ pub async fn download_size(http: &reqwest::Client, runtimes: &Path, component: &
     }).sum())
 }
 
+async fn runtime_manifest(http: &reqwest::Client, platform: &str, component: &str) -> Result<RuntimeManifest> {
+    let all: HashMap<String, HashMap<String, Vec<RuntimeEntry>>> =
+        http.get(RUNTIMES_URL).send().await?.error_for_status()?.json().await?;
+    let entry = all
+        .get(platform)
+        .and_then(|components| components.get(component))
+        .and_then(|entries| entries.first())
+        .ok_or_else(|| GameError::UnsupportedPlatform(format!("{platform}, {component}")))?;
+    Ok(http.get(&entry.manifest.url).send().await?.error_for_status()?.json().await?)
+}
+
 /// Installe (ou complète) le runtime et renvoie le chemin de l'exécutable Java.
 pub async fn install(
     http: &reqwest::Client,
@@ -105,17 +116,17 @@ pub async fn install(
     let platform = platform().ok_or_else(|| {
         GameError::UnsupportedPlatform(format!("{} {}", std::env::consts::OS, std::env::consts::ARCH))
     })?;
-    let all: HashMap<String, HashMap<String, Vec<RuntimeEntry>>> =
-        http.get(RUNTIMES_URL).send().await?.error_for_status()?.json().await?;
-    let entry = all
-        .get(platform)
-        .and_then(|components| components.get(component))
-        .and_then(|entries| entries.first())
-        .ok_or_else(|| GameError::UnsupportedPlatform(format!("{platform}, {component}")))?;
-    let manifest: RuntimeManifest =
-        http.get(&entry.manifest.url).send().await?.error_for_status()?.json().await?;
-
     let root = runtimes.join(component);
+    let manifest = match runtime_manifest(http, platform, component).await {
+        Ok(manifest) => manifest,
+        // Hors ligne ou launchermeta en panne : le runtime déjà installé sert tel quel.
+        Err(error) if executable(&root).is_file() => {
+            eprintln!("[java] liste des runtimes injoignable, {component} installé utilisé tel quel : {error}");
+            return Ok(executable(&root));
+        }
+        Err(error) => return Err(error),
+    };
+
     let mut downloads = Vec::new();
     let mut links = Vec::new();
     for (relative, file) in manifest.files {

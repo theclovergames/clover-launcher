@@ -48,12 +48,7 @@ fn file(app: &AppHandle) -> Option<PathBuf> {
 
 /// Écriture atomique : l'ancienne adresse reste lisible tant que la nouvelle n'est pas complète.
 fn write_location(path: &Path, location: &Location) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, serde_json::to_vec(location).expect("emplacement sérialisable"))?;
-    std::fs::rename(temporary, path)
+    crate::storage::write_atomically(path, &serde_json::to_vec(location).expect("emplacement sérialisable"))
 }
 
 /// Dossier choisi par le joueur, s'il existe encore ; sinon l'emplacement par défaut.

@@ -46,6 +46,11 @@ public final class Presence {
         try {
             // La liste des joueurs appartient au thread du jeu : copiée là-bas.
             List<UUID> players = minecraft.submit(() -> tabList(minecraft)).get(10, TimeUnit.SECONDS);
+            // Menu principal : aucune tablist à remplir, le signal ne servirait à personne.
+            if (players.isEmpty()) {
+                online = Set.of();
+                return;
+            }
             online = Site.presence(minecraft, players);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

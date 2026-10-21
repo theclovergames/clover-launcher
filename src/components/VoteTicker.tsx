@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { headUrl } from "@/lib/friends";
+
 export type RecentVote = { player: string; votedAt: string };
 
 const ROTATION_MS = 4000;
@@ -30,7 +32,7 @@ export function VoteTicker({ votes, onVote }: { votes: RecentVote[]; onVote: () 
     >
       <img
         key={`${vote.player}-head`}
-        src={`https://minotar.net/helm/${encodeURIComponent(vote.player)}/48.png`}
+        src={headUrl(vote.player)}
         alt=""
         width={24}
         height={24}
