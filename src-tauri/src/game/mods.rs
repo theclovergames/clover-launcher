@@ -15,7 +15,8 @@ use super::manifest::Manifest;
 use super::personal;
 use super::{GameError, Result};
 
-/// Instances sans catalogue Clover : remplacer uniquement les jars dans le dossier géré.
+/// Instances sans catalogue Clover : remplacer uniquement les jars dans le dossier géré, après
+/// `adopt_unknown` (sinon un jar déposé à la main serait supprimé).
 pub async fn sync_personal(mods_dir: &Path, personal: &[PathBuf]) -> Result<()> {
     tokio::fs::create_dir_all(mods_dir).await?;
     let mut entries = tokio::fs::read_dir(mods_dir).await?;
@@ -38,14 +39,17 @@ fn free_name(dir: &Path, name: &str) -> PathBuf {
     (0..).map(|n| dir.join(if n == 0 { name.to_owned() } else { format!("{stem}-{n}.{extension}") })).find(|path| !path.exists()).unwrap()
 }
 
-/// Instance Clover : transfère dans « Mes mods » les jars de `mods/` que le launcher n'y a pas
-/// posés (ajoutés à la main), avant que `sync` ne vide le dossier. Sont reconnus comme posés par
-/// le launcher : un fichier du catalogue (empreinte d'un mod du manifeste, activé ou non, quel que
-/// soit son nom) et la copie conforme d'un fichier de « Mes mods ». Un homonyme d'un mod du
-/// catalogue au contenu différent est transféré comme les autres. Renvoie les noms transférés.
-pub async fn adopt_unknown(mods_dir: &Path, personal_dir: &Path, manifest: &Manifest) -> Result<Vec<String>> {
+/// Transfère dans « Mes mods » (`personal_dir`) les jars de `mods/` que le launcher n'y a pas
+/// posés (ajoutés à la main), avant que `sync` ou `sync_personal` ne vide le dossier. Sont reconnus
+/// comme posés par le launcher : un fichier du catalogue (empreinte d'un mod du `manifest`, activé
+/// ou non, quel que soit son nom) et la copie conforme d'un fichier de « Mes mods » de cette
+/// instance ou d'une autre (`placed` : un dossier de jeu partagé reçoit les copies de chacune). Un
+/// homonyme d'un mod du catalogue au contenu différent est transféré comme les autres. Renvoie les
+/// noms transférés.
+pub async fn adopt_unknown(mods_dir: &Path, personal_dir: &Path, placed: &[PathBuf], manifest: Option<&Manifest>) -> Result<Vec<String>> {
     let Ok(mut entries) = tokio::fs::read_dir(mods_dir).await else { return Ok(Vec::new()) };
-    let files: Vec<_> = manifest.mods.iter().filter_map(|m| m.file.as_ref()).collect();
+    let files: Vec<_> = manifest.iter().flat_map(|manifest| &manifest.mods).filter_map(|m| m.file.as_ref()).collect();
+    let copies: Vec<&Path> = std::iter::once(personal_dir).chain(placed.iter().map(PathBuf::as_path).filter(|dir| *dir != personal_dir)).collect();
     let mut adopted = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -54,7 +58,14 @@ pub async fn adopt_unknown(mods_dir: &Path, personal_dir: &Path, manifest: &Mani
             continue;
         }
         let sha512 = sha512_async(&path).await?;
-        if sha512_async(&personal_dir.join(&name)).await.is_ok_and(|copy| copy == sha512) {
+        let mut copy = false;
+        for dir in &copies {
+            if sha512_async(&dir.join(&name)).await.is_ok_and(|original| original == sha512) {
+                copy = true;
+                break;
+            }
+        }
+        if copy {
             continue;
         }
         if files.iter().any(|file| file.sha512.eq_ignore_ascii_case(&sha512)) {
@@ -190,6 +201,30 @@ mod instance_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Dossier de jeu partagé par Clover et une instance Fabric : un jar déposé à la main n'est
+    /// jamais supprimé, et les copies de l'une ne passent pas dans « Mes mods » de l'autre.
+    #[tokio::test]
+    async fn shared_game_folder_keeps_hand_dropped_jars() {
+        let root = std::env::temp_dir().join(format!("clover-mod-shared-{}", rand::random::<u64>()));
+        let (active, clover, fabric) = (root.join("game/mods"), root.join("personal-mods"), root.join("instances/a/personal-mods"));
+        for dir in [&active, &clover, &fabric] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let placed = [clover.clone(), fabric.clone()];
+        std::fs::write(clover.join("de-clover.jar"), b"c").unwrap();
+        std::fs::write(fabric.join("de-fabric.jar"), b"f").unwrap();
+        std::fs::write(active.join("de-clover.jar"), b"c").unwrap();
+        std::fs::write(active.join("xaero.jar"), b"x").unwrap();
+        // Lancement de l'instance Fabric : le jar déposé passe dans ses mods, la copie de Clover non.
+        assert_eq!(adopt_unknown(&active, &fabric, &placed, None).await.unwrap(), ["xaero.jar"]);
+        sync_personal(&active, &[fabric.join("de-fabric.jar"), fabric.join("xaero.jar")]).await.unwrap();
+        assert_eq!(std::fs::read(fabric.join("xaero.jar")).unwrap(), b"x");
+        // Lancement de Clover : les copies de l'instance Fabric ne sont pas adoptées.
+        assert!(adopt_unknown(&active, &clover, &placed, None).await.unwrap().is_empty());
+        assert!(!clover.join("de-fabric.jar").exists() && !clover.join("xaero.jar").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test]
     async fn catalogue_leaves_the_game_folder() {
         let root = std::env::temp_dir().join(format!("clover-mod-hidden-{}", rand::random::<u64>()));
@@ -234,7 +269,7 @@ mod instance_tests {
                 "server": {{"host": "play.clovergames.fr"}}, "modes": [], "mods": [{mods}]}}"#
         ))
         .unwrap();
-        let mut adopted = adopt_unknown(&active, &source, &manifest).await.unwrap();
+        let mut adopted = adopt_unknown(&active, &source, &[], Some(&manifest)).await.unwrap();
         adopted.sort();
         assert_eq!(adopted, ["cloverclient.jar", "fabric-1.jar", "iris.jar", "lithium.jar", "mon-mod.jar", "sodium-1.jar"]);
         for (name, content) in [("mon-mod.jar", b"m" as &[u8]), ("fabric-1.jar", b"modifie"), ("fabric.jar", b"personal"), ("sodium.jar", b"doublon"), ("sodium-1.jar", b"S"), ("cloverclient.jar", b"C"), ("iris.jar", b"I"), ("lithium.jar", b"L")] {

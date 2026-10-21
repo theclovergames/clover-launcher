@@ -119,7 +119,7 @@ pub fn remove(root: &Path, id: &str) -> Result<()> {
 /// `texture` : `data:image/png;base64,…` ou adresse `textures.minecraft.net` (skin actuel dont on
 /// ne change que les bras). `cape` : identifiant d'une cape possédée, ou `None` pour l'enlever.
 pub async fn apply(session: &Session, texture: &str, model: &str, cape: Option<&str>) -> Result<Session> {
-    let http = reqwest::Client::new();
+    let http = crate::game::download::client();
     let bytes = texture_bytes(&http, texture).await?;
     validate(&bytes)?;
 
@@ -143,7 +143,7 @@ pub async fn apply(session: &Session, texture: &str, model: &str, cape: Option<&
 
 /// Octets PNG d'un skin (bibliothèque, Découverte ou compte), vérifiés, pour l'enregistrer ailleurs.
 pub async fn png(texture: &str) -> Result<Vec<u8>> {
-    let bytes = texture_bytes(&reqwest::Client::new(), texture).await?;
+    let bytes = texture_bytes(&crate::game::download::client(), texture).await?;
     validate(&bytes)?;
     Ok(bytes)
 }
@@ -156,7 +156,7 @@ pub fn file_name(name: &str) -> String {
 
 /// Ajoute à la bibliothèque un skin de la Découverte (laby.net) ou porté par un joueur (Mojang).
 pub async fn add_remote(root: &Path, texture: &str, name: &str, model: &str) -> Result<SkinEntry> {
-    let bytes = texture_bytes(&reqwest::Client::new(), texture).await?;
+    let bytes = texture_bytes(&crate::game::download::client(), texture).await?;
     add(root, &bytes, name, model)
 }
 

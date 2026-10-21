@@ -3,6 +3,20 @@
 Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git du dépôt repart de la
 0.4.4 : ce fichier garde la trace de tout ce qui précède.
 
+## Pas encore publié
+
+### Corrections
+
+- Un launcher resté ouvert plus d'un jour lance le jeu avec un jeton Minecraft renouvelé, au lieu
+  d'un jeton périmé (« Invalid session ») ; le site, la messagerie et la boutique restent
+  joignables.
+- Une connexion qui se fige pendant un téléchargement échoue au bout de 30 secondes au lieu de
+  bloquer « Jouer » jusqu'au redémarrage du launcher. Changer de skin ne bloque plus le reste du
+  launcher quand le réseau est lent.
+- Lancer une instance personnelle ne supprime plus les mods déposés à la main dans `mods/` : ils
+  passent dans ses « Mes mods ». Avec un dossier de jeu partagé, les mods d'une instance ne passent
+  plus dans « Mes mods » de Clover.
+
 ## 0.6.0 (20 octobre 2026)
 
 ### Nouveautés

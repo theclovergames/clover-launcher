@@ -204,6 +204,13 @@ pub fn paths(mut paths: Paths, instance: &Instance) -> game::Result<Paths> {
     Ok(paths)
 }
 
+/// Dossiers « Mes mods » de Clover et de chaque instance : leurs copies dans un `mods/` partagé
+/// ont été posées par le launcher (`game::mods::adopt_unknown`).
+pub(crate) fn personal_mods_dirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let instances = std::fs::read_dir(root.join("instances")).into_iter().flatten().flatten().map(|entry| entry.path().join("personal-mods"));
+    std::iter::once(root.join("personal-mods")).chain(instances).collect()
+}
+
 /// Lignes de commande (vides sans `cmd`) des Java des runtimes du launcher : les Minecraft
 /// lancés par Clover.
 fn managed_games(root: &std::path::Path, cmd: bool) -> Vec<Vec<std::ffi::OsString>> {
@@ -1359,16 +1366,14 @@ pub async fn play_personal(
             let _ = app.emit("install-progress", progress);
         })
         .await?;
-    let personal = match instance.kind.mod_loader() {
-        Some(loader) => game::personal::loadable(
-            &paths.personal_mods,
-            &options.disabled_personal_mods,
-            minecraft,
-            loader,
-        ),
-        None => vec![],
-    };
-    game::mods::sync_personal(&paths.mods, &personal).await?;
+    // Sans loader, `mods/` n'est pas lu : on n'y touche pas.
+    if let Some(loader) = instance.kind.mod_loader() {
+        for name in game::mods::adopt_unknown(&paths.mods, &paths.personal_mods, &personal_mods_dirs(&paths.root), None).await? {
+            eprintln!("[mods] {name} déposé dans mods/ : transféré dans « Mes mods » de {}", instance.name);
+        }
+        let personal = game::personal::loadable(&paths.personal_mods, &options.disabled_personal_mods, minecraft, loader);
+        game::mods::sync_personal(&paths.mods, &personal).await?;
+    }
     game::launch::spawn(app, &instance.id, &paths, installation, session, world.map(game::launch::QuickPlay::World).as_ref(), &options, on_join).await
 }
 

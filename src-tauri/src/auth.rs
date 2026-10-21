@@ -220,7 +220,7 @@ pub fn migrate_legacy() -> Result<Option<Session>> {
 }
 
 async fn refresh_profile(session: &Session) -> Result<Session> {
-    let response = reqwest::Client::new().get(PROFILE_URL).bearer_auth(&session.minecraft_token).send().await?;
+    let response = crate::game::download::client().get(PROFILE_URL).bearer_auth(&session.minecraft_token).send().await?;
     update_profile(session, &checked(response, "profil Minecraft").await?)
 }
 
@@ -397,7 +397,7 @@ async fn wait_for_code(listener: &TcpListener, expected_state: &str) -> Result<S
 }
 
 async fn request_tokens(form: &[(&str, &str)]) -> Result<MicrosoftTokens> {
-    let response = reqwest::Client::new().post(TOKEN_URL).form(form).send().await?;
+    let response = crate::game::download::client().post(TOKEN_URL).form(form).send().await?;
     if response.status().is_success() {
         return Ok(response.json().await?);
     }
@@ -411,7 +411,7 @@ async fn request_tokens(form: &[(&str, &str)]) -> Result<MicrosoftTokens> {
 }
 
 async fn minecraft_session(microsoft_token: &str) -> Result<Session> {
-    let http = reqwest::Client::new();
+    let http = crate::game::download::client();
 
     // Étape 1 : Xbox Live
     let xbl = http

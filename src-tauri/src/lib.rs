@@ -49,8 +49,46 @@ use tokio::sync::Mutex;
 const MINIMIZED_ARG: &str = "--minimized";
 
 /// Session du compte actif. Le jeton Minecraft reste côté Rust ; l'interface ne voit que le profil.
+/// Le second verrou fait passer un seul renouvellement du jeton à la fois et garde l'heure du
+/// dernier échec.
 #[derive(Default)]
-struct CurrentSession(Mutex<Option<auth::Session>>);
+struct CurrentSession(Mutex<Option<auth::Session>>, Mutex<Option<std::time::Instant>>);
+
+/// Délai avant de retenter un renouvellement manqué : `login_with_xbox` répond vite HTTP 429.
+const RENEW_RETRY: std::time::Duration = std::time::Duration::from_secs(300);
+
+impl CurrentSession {
+    /// Session du compte actif, jeton Minecraft renouvelé s'il arrive à expiration : un launcher
+    /// resté ouvert plus d'un jour ne lance pas le jeu avec un jeton périmé. Si le renouvellement
+    /// échoue (hors ligne), la session en mémoire sert telle quelle.
+    pub(crate) async fn fresh(&self) -> Option<auth::Session> {
+        let session = self.0.lock().await.clone()?;
+        if session.is_fresh() {
+            return Some(session);
+        }
+        let mut failed = self.1.lock().await;
+        // Renouvelée par un autre appel pendant l'attente du verrou, ou compte changé.
+        let session = self.0.lock().await.clone()?;
+        if session.is_fresh() || failed.is_some_and(|at| at.elapsed() < RENEW_RETRY) {
+            return Some(session);
+        }
+        match auth::restore(&session.profile.uuid).await {
+            Ok(Some(renewed)) => {
+                *failed = None;
+                let mut current = self.0.lock().await;
+                if current.as_ref().is_some_and(|s| s.profile.uuid == renewed.profile.uuid) {
+                    *current = Some(renewed.clone());
+                }
+                Some(renewed)
+            }
+            outcome => {
+                eprintln!("[auth] jeton non renouvelé : {}", outcome.err().map_or("le compte doit se reconnecter".to_owned(), |e| e.to_string()));
+                *failed = Some(std::time::Instant::now());
+                Some(session)
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 struct LaunchGate(Mutex<()>);
@@ -790,38 +828,43 @@ async fn apply_skin(
     state: State<'_, AppState>,
     current: State<'_, CurrentSession>,
 ) -> Result<auth::Profile, String> {
-    let mut guard = current.0.lock().await;
-    let session = guard.as_ref().ok_or("Aucun compte connecté.")?;
-    let updated = skins::apply(session, &texture, &model, cape.as_deref()).await.map_err(|e| e.to_string())?;
+    // Pas de verrou pendant l'envoi : un réseau lent ne bloque pas « Jouer » ni le site.
+    let session = current.fresh().await.ok_or("Aucun compte connecté.")?;
+    let updated = skins::apply(&session, &texture, &model, cape.as_deref()).await.map_err(|e| e.to_string())?;
     let profile = updated.profile.clone();
     state.update(|stored| stored.upsert_account(account_ref(&profile)))?;
-    *guard = Some(updated);
+    let mut guard = current.0.lock().await;
+    if guard.as_ref().is_some_and(|s| s.profile.uuid == profile.uuid) {
+        *guard = Some(updated);
+    }
     Ok(profile)
 }
 
 /// Pseudo du compte actif : changement possible maintenant, sinon date du dernier.
 #[tauri::command]
 async fn name_change_info(current: State<'_, CurrentSession>) -> Result<player_name::NameChange, String> {
-    let session = current.0.lock().await.clone().ok_or("Aucun compte connecté.")?;
+    let session = current.fresh().await.ok_or("Aucun compte connecté.")?;
     player_name::change_info(&session).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn name_availability(name: String, current: State<'_, CurrentSession>) -> Result<player_name::Availability, String> {
-    let session = current.0.lock().await.clone().ok_or("Aucun compte connecté.")?;
+    let session = current.fresh().await.ok_or("Aucun compte connecté.")?;
     player_name::availability(&session, &name).await.map_err(|e| e.to_string())
 }
 
 /// Change le pseudo du compte actif ; un jeu déjà ouvert garde l'ancien jusqu'à sa relance.
 #[tauri::command]
 async fn change_name(name: String, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>) -> Result<auth::Profile, String> {
-    let mut guard = current.0.lock().await;
-    let session = guard.as_ref().ok_or("Aucun compte connecté.")?;
-    let updated = player_name::change(session, &name).await.map_err(|e| e.to_string())?;
+    let session = current.fresh().await.ok_or("Aucun compte connecté.")?;
+    let updated = player_name::change(&session, &name).await.map_err(|e| e.to_string())?;
     let profile = updated.profile.clone();
     eprintln!("[auth] pseudo changé : {} ({})", profile.name, profile.uuid);
     state.update(|stored| stored.upsert_account(account_ref(&profile)))?;
-    *guard = Some(updated);
+    let mut guard = current.0.lock().await;
+    if guard.as_ref().is_some_and(|s| s.profile.uuid == profile.uuid) {
+        *guard = Some(updated);
+    }
     drop(guard);
     presence.set_player(Some(presence::Player { uuid: profile.uuid.clone(), name: profile.name.clone() })).await;
     Ok(profile)
@@ -841,7 +884,7 @@ async fn play(
 ) -> Result<(), game::GameError> {
     let gate = app.state::<LaunchGate>();
     let _guard = gate.0.try_lock().map_err(|_| game::GameError::AlreadyRunning)?;
-    let session = current.0.lock().await.clone().ok_or(game::GameError::NotSignedIn)?;
+    let session = current.fresh().await.ok_or(game::GameError::NotSignedIn)?;
     let stored = state.snapshot();
     let instance = instances::resolve(&stored, instance_id.as_deref())?;
     // Plusieurs instances jouent ensemble, jamais deux dans le même dossier de jeu.

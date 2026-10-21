@@ -91,9 +91,13 @@ pub(crate) async fn sha512_async(path: &Path) -> std::io::Result<String> {
     tokio::task::spawn_blocking(move || sha512(&path)).await.map_err(std::io::Error::other)?
 }
 
+/// Une connexion figée (Wi-Fi qui décroche) échoue au lieu d'attendre sans fin et de garder
+/// « Jouer » bloqué ; le délai de lecture repart à chaque morceau reçu, un gros fichier passe.
 pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(concat!("CloverLauncher/", env!("CARGO_PKG_VERSION"), " (+https://clovergames.fr)"))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(30))
         .build()
         .expect("client HTTP valide")
 }

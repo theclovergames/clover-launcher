@@ -134,7 +134,7 @@ pub(crate) async fn authorized_response(
 }
 
 pub(crate) async fn session(current: &CurrentSession) -> Result<auth::Session, String> {
-    current.0.lock().await.clone().ok_or_else(|| "Aucun compte connecté.".to_owned())
+    current.fresh().await.ok_or_else(|| "Aucun compte connecté.".to_owned())
 }
 
 #[tauri::command]
