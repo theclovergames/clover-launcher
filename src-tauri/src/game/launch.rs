@@ -1,6 +1,6 @@
 //! Construction de la ligne de commande et démarrage du jeu.
 
-use std::io::LineWriter;
+use std::io::{LineWriter, Read};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -13,11 +13,12 @@ use super::quick_play;
 use super::version::expand;
 use super::{auto_memory_mb, GameError, LaunchOptions, Paths, Result};
 use crate::auth::Session;
+use crate::presence::{Place, Presence, State};
 use crate::store::RecentServer;
 
 /// Le jeu remplace son journal Quick Play à chaque connexion : le relire assez souvent pour ne
-/// manquer aucun serveur rejoint pendant la partie.
-const QUICK_PLAY_POLL: Duration = Duration::from_secs(5);
+/// manquer aucun serveur rejoint pendant la partie. Le statut Discord suit au même rythme.
+const QUICK_PLAY_POLL: Duration = Duration::from_secs(2);
 /// Attente de la fin de la sortie une fois le jeu fermé.
 const OUTPUT_GRACE: Duration = Duration::from_secs(3);
 
@@ -148,7 +149,7 @@ pub(crate) fn build_arguments(paths: &Paths, installation: &Installation, sessio
     if let Some((width, height)) = options.resolution {
         arguments.extend(["--width".into(), width.to_string(), "--height".into(), height.to_string()]);
     }
-    if let Some(backend) = options.graphics_backend.filter(|_| has_graphics_backend(&paths.versions.join(&vanilla.id).join(format!("{}.jar", vanilla.id)))) {
+    if let Some(backend) = options.graphics_backend.filter(|_| has_graphics_backend(&client_jar(paths, &vanilla.id))) {
         arguments.extend(["--graphicsBackend".into(), backend.into()]);
     }
     // Sans la règle Quick Play solo (avant la 1.20), le jeu s'ouvrirait sur son menu sans le dire.
@@ -178,6 +179,7 @@ pub async fn spawn(
     tokio::fs::create_dir_all(&paths.logs).await?;
     // Écrit ligne par ligne : le fichier reste à jour pendant la partie.
     let output = LineWriter::new(std::fs::File::create(&paths.game_output)?);
+    let started = std::time::SystemTime::now();
     let mut child = tokio::process::Command::new(&java)
         .args(&arguments)
         .current_dir(&paths.game)
@@ -190,6 +192,18 @@ pub async fn spawn(
     if let Some(pid) = pid {
         super::window_title::start(pid, &vanilla.id);
     }
+    let window_state = has_window_state(&client_jar(paths, &vanilla.id));
+    let place = match quick_play {
+        Some(QuickPlay::Server(address)) => Place::server(address),
+        Some(QuickPlay::World(_)) => Place::World,
+        None if window_state => Place::Menu,
+        // Rien ne dira quand le jeu quitte son menu.
+        None => Place::Unknown,
+    };
+    app.state::<Presence>().set_state(State::playing_now(place)).await;
+    // Lancé vers un serveur ou un monde, le jeu passe par son menu avant d'y entrer : la
+    // destination tient jusqu'à la première partie.
+    let mut titled = quick_play.is_none();
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         unreachable!("sorties du jeu redirigées juste au-dessus");
     };
@@ -214,7 +228,16 @@ pub async fn spawn(
                     eprintln!("[game] fermeture forcée de Minecraft ({instance})");
                     let _ = child.start_kill();
                 }
-                _ = poll.tick() => quick_play::last_server(&log).into_iter().for_each(&on_join),
+                _ = poll.tick() => {
+                    let joined = quick_play::joined_since(&log, started);
+                    let in_world = pid.filter(|_| window_state).and_then(super::window_title::in_world);
+                    titled |= in_world == Some(true);
+                    let in_world = in_world.filter(|&now| now || titled);
+                    app.state::<Presence>().follow(in_world, joined.as_ref()).await;
+                    if let Some(quick_play::Joined::Server(server)) = joined {
+                        on_join(server);
+                    }
+                }
             }
         };
         // Fin de la sortie lue avant d'annoncer la fermeture : l'écran de plantage la montre. Un
@@ -222,13 +245,27 @@ pub async fn spawn(
         if !captured {
             let _ = tokio::time::timeout(OUTPUT_GRACE, capture).await;
         }
-        quick_play::last_server(&log).into_iter().for_each(&on_join);
+        if let Some(quick_play::Joined::Server(server)) = quick_play::joined_since(&log, started) {
+            on_join(server);
+        }
         eprintln!("[game] Minecraft fermé ({instance}, code {code:?})");
         game.finish(code);
         app.state::<crate::history::History>().finish(&root, &instance, code);
         let _ = app.emit("game-exited", Exited { instance, code });
     });
     Ok(())
+}
+
+fn client_jar(paths: &Paths, version: &str) -> std::path::PathBuf {
+    paths.versions.join(version).join(format!("{version}.jar"))
+}
+
+/// Le titre du jeu dit-il qu'une partie est ouverte (Minecraft 1.15 et suivantes) ? Même
+/// principe que `has_graphics_backend` : on cherche le texte de cet état dans le client.
+fn has_window_state(client_jar: &std::path::Path) -> bool {
+    let Some(mut archive) = std::fs::File::open(client_jar).ok().and_then(|file| zip::ZipArchive::new(file).ok()) else { return false };
+    let mut english = String::new();
+    archive.by_name("assets/minecraft/lang/en_us.json").is_ok_and(|mut lang| lang.read_to_string(&mut english).is_ok()) && english.contains("\"title.multiplayer.other\"")
 }
 
 /// `--graphicsBackend` n'existe qu'à partir de Minecraft 26.2 : on cherche son type dans le client
@@ -310,6 +347,25 @@ mod tests {
         let old = arguments("1.21.11");
         assert!(old.windows(4).any(|window| window == ["--width", "1280", "--height", "720"]));
         assert!(!old.contains(&"--graphicsBackend".into()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn window_state_only_where_the_client_writes_it() {
+        let root = std::env::temp_dir().join(format!("clover-state-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&root).unwrap();
+        let client = |name: &str, lang: (&str, &str)| {
+            let path = root.join(name);
+            let mut jar = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+            jar.start_file(lang.0, zip::write::SimpleFileOptions::default()).unwrap();
+            std::io::Write::write_all(&mut jar, lang.1.as_bytes()).unwrap();
+            jar.finish().unwrap();
+            path
+        };
+        assert!(has_window_state(&client("1.21.11.jar", ("assets/minecraft/lang/en_us.json", r#"{"title.multiplayer.other": "Multiplayer (3rd-party Server)"}"#))));
+        assert!(!has_window_state(&client("1.13.2.jar", ("assets/minecraft/lang/en_us.json", r#"{"title.singleplayer": "Singleplayer"}"#))));
+        assert!(!has_window_state(&client("1.8.9.jar", ("assets/minecraft/lang/en_US.lang", "menu.quit=Quit Game"))));
+        assert!(!has_window_state(&root.join("absent.jar")));
         std::fs::remove_dir_all(root).unwrap();
     }
 
