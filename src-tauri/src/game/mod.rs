@@ -1,5 +1,6 @@
 //! Installation et lancement de Minecraft pour Clover Games.
 
+pub mod client_mod;
 pub mod console;
 pub mod content;
 pub mod curseforge;

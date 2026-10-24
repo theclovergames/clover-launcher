@@ -1,5 +1,5 @@
-//! Contenu publié par le site pour l'accueil : actualités, joueurs par mode, maintenance, derniers
-//! votes (`/api/launcher/*` de clovergames.fr). Chaque partie est facultative : une route qui ne répond
+//! Contenu publié par le site pour l'accueil : actualités, joueurs par mode, maintenance
+//! (`/api/launcher/*` de clovergames.fr). Chaque partie est facultative : une route qui ne répond
 //! pas laisse la sienne vide, l'interface garde alors ce qu'elle affichait.
 
 use std::time::Duration;
@@ -55,11 +55,35 @@ pub struct MinecraftNews {
     pub items: Vec<MinecraftItem>,
 }
 
-/// Page Actualités : blog de Clover Games et annonces de Minecraft ; `None` si le site ne répond pas.
+/// Note publiée du changelog du site, quel que soit le produit concerné.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangelogItem {
+    pub slug: String,
+    pub title: String,
+    pub excerpt: String,
+    pub version: Option<String>,
+    pub category: String,
+    pub image: Option<String>,
+    pub url: String,
+    pub published_at: String,
+}
+
+/// Note complète ; les métadonnées suivent le même contrat que la liste.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChangelogArticle {
+    #[serde(flatten)]
+    pub item: ChangelogItem,
+    pub author: Option<String>,
+    pub html: String,
+}
+
+/// Page Actualités ; chaque source vaut `None` si sa route ne répond pas.
 #[derive(Debug, Serialize)]
 pub struct NewsPage {
     pub blog: Option<Vec<NewsItem>>,
     pub minecraft: Option<MinecraftNews>,
+    pub changelog: Option<Vec<ChangelogItem>>,
 }
 
 /// Note de version complète ; `html` déjà réduit par le site (filtré une seconde fois par
@@ -83,20 +107,12 @@ pub struct ModeStatus {
     pub players: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecentVote {
-    pub player: String,
-    pub voted_at: String,
-}
-
 #[derive(Debug, Serialize)]
 pub struct Feed {
     pub news: Option<Vec<NewsItem>>,
     pub modes: Option<Vec<ModeStatus>>,
     /// Maintenance annoncée par l'équipe sur le site (bandeau de l'accueil).
     pub maintenance: Option<bool>,
-    pub votes: Option<Vec<RecentVote>>,
 }
 
 #[derive(Deserialize)]
@@ -105,15 +121,16 @@ struct NewsResponse {
 }
 
 #[derive(Deserialize)]
+struct ChangelogResponse {
+    #[serde(default, deserialize_with = "items")]
+    items: Vec<ChangelogItem>,
+}
+
+#[derive(Deserialize)]
 struct StatusResponse {
     #[serde(default)]
     maintenance: bool,
     servers: Vec<ModeStatus>,
-}
-
-#[derive(Deserialize)]
-struct VotesResponse {
-    votes: Vec<RecentVote>,
 }
 
 /// Adresse du site (clovergames.fr, ou `CLOVER_SITE_URL` en développement).
@@ -124,10 +141,9 @@ pub fn base() -> String {
 pub async fn feed() -> Feed {
     let http = download::client();
     let site = base();
-    let (news, modes, votes) = tokio::join!(
+    let (news, modes) = tokio::join!(
         get::<NewsResponse>(&http, &site, "news"),
         get::<StatusResponse>(&http, &site, "status"),
-        get::<VotesResponse>(&http, &site, "votes"),
     );
     Feed {
         // Les liens s'ouvrent dans le navigateur et les images se chargent dans l'interface :
@@ -135,7 +151,6 @@ pub async fn feed() -> Feed {
         news: news.map(|response| https_news(response.items)),
         maintenance: modes.as_ref().map(|response| response.maintenance),
         modes: modes.map(|response| response.servers),
-        votes: votes.map(|response| response.votes),
     }
 }
 
@@ -144,11 +159,15 @@ fn https_news(items: Vec<NewsItem>) -> Vec<NewsItem> {
     items.into_iter().filter(|item| is_https(&item.url)).map(|item| NewsItem { image: item.image.filter(|image| is_https(image)), ..item }).collect()
 }
 
-/// Blog (30 articles) et annonces de Minecraft, lus ensemble.
+/// Blog, changelog (30 notes chacun) et annonces de Minecraft, lus ensemble.
 pub async fn news_page() -> NewsPage {
     let http = download::client();
     let site = base();
-    let (blog, minecraft) = tokio::join!(get::<NewsResponse>(&http, &site, "news?limit=30"), get::<MinecraftNews>(&http, &site, "minecraft-news"));
+    let (blog, minecraft, changelog) = tokio::join!(
+        get::<NewsResponse>(&http, &site, "news?limit=30"),
+        get::<MinecraftNews>(&http, &site, "minecraft-news"),
+        get::<ChangelogResponse>(&http, &site, "changelog?limit=30"),
+    );
     NewsPage {
         blog: blog.map(|response| https_news(response.items)),
         minecraft: minecraft.map(|mut news| {
@@ -158,12 +177,22 @@ pub async fn news_page() -> NewsPage {
             }
             news
         }),
+        changelog: changelog.map(|response| response.items.into_iter().filter_map(clean_changelog).collect()),
     }
 }
 
-/// Identifiant de note de Mojang : 64 caractères hexadécimaux.
+fn clean_changelog(mut item: ChangelogItem) -> Option<ChangelogItem> {
+    if !is_slug(&item.slug) || !is_https(&item.url) || !matches!(item.category.as_str(), "launcher" | "site" | "minecraft") {
+        return None;
+    }
+    item.image = item.image.filter(|image| is_https(image));
+    Some(item)
+}
+
+/// Identifiant de note de Mojang : 64 caractères hexadécimaux, ou slug (`26-4-snapshot-5`) depuis
+/// septembre 2026.
 fn is_identifier(id: &str) -> bool {
-    id.len() == 64 && id.bytes().all(|c| c.is_ascii_hexdigit())
+    !id.is_empty() && id.len() <= 100 && id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
 }
 
 /// Article du blog lisible dans le launcher, HTML préparé par le site.
@@ -180,7 +209,7 @@ pub struct BlogArticle {
     pub html: String,
 }
 
-/// Slug d'article du blog : minuscules, chiffres et tirets.
+/// Slug d'article ou de changelog : minuscules, chiffres et tirets.
 fn is_slug(slug: &str) -> bool {
     !slug.is_empty() && slug.len() <= 200 && slug.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
 }
@@ -206,6 +235,30 @@ pub async fn blog_article(slug: &str) -> Result<BlogArticle, String> {
     if !is_https(&article.url) {
         article.url = format!("{SITE_URL}/blog/{slug}");
     }
+    Ok(article)
+}
+
+/// Note du changelog, lue dans le launcher sans ouvrir le site.
+pub async fn changelog_article(slug: &str) -> Result<ChangelogArticle, String> {
+    if !is_slug(slug) {
+        return Err("Note de version introuvable.".into());
+    }
+    let response = download::client()
+        .get(format!("{}/api/launcher/changelog/{slug}", base()))
+        .timeout(TIMEOUT)
+        .send()
+        .await
+        .map_err(|_| "Site injoignable : réessaie dans un instant.".to_owned())?;
+    match response.status().as_u16() {
+        200 => {}
+        404 => return Err("Note de version introuvable ou retirée du changelog.".into()),
+        _ => return Err("Note de version indisponible pour le moment.".into()),
+    }
+    let mut article: ChangelogArticle = response.json().await.map_err(|_| "Réponse du site illisible.".to_owned())?;
+    if article.item.slug != slug {
+        return Err("Réponse du site illisible.".into());
+    }
+    article.item = clean_changelog(article.item).ok_or_else(|| "Réponse du site illisible.".to_owned())?;
     Ok(article)
 }
 
@@ -269,7 +322,77 @@ mod tests {
     async fn reads_the_real_site() {
         let feed = feed().await;
         println!("{feed:?}");
-        assert!(feed.news.is_some() && feed.modes.is_some() && feed.votes.is_some());
+        assert!(feed.news.is_some() && feed.modes.is_some());
+    }
+
+    /// Contrat public du site local (`CLOVER_SITE_URL=... cargo test reads_the_real_changelog -- --ignored`).
+    #[tokio::test]
+    #[ignore]
+    async fn reads_the_real_changelog() {
+        let response = get::<ChangelogResponse>(&download::client(), &base(), "changelog?limit=30")
+            .await
+            .expect("La liste du changelog doit répondre avec le contrat attendu.");
+        let count = response.items.len();
+        let notes: Vec<_> = response.items.into_iter().filter_map(clean_changelog).collect();
+        assert_eq!(notes.len(), count, "Les métadonnées publiées doivent être valides.");
+        if let Some(note) = notes.first() {
+            let article = changelog_article(&note.slug).await.expect("La note publiée doit être lisible.");
+            assert_eq!(article.item.slug, note.slug);
+            assert_eq!(article.item.category, note.category);
+            assert_eq!(article.item.version, note.version);
+            assert_eq!(article.item.title, note.title);
+        }
+    }
+
+    #[test]
+    fn reads_and_filters_changelog_items_independently() {
+        let note = serde_json::json!({
+            "slug": "launcher-0-6-1", "title": "Nouveautés du launcher", "excerpt": "Un accueil amélioré.",
+            "version": "0.6.1", "category": "launcher", "image": "http://example.com/image.png",
+            "url": "https://clovergames.fr/changelog#launcher-0-6-1", "publishedAt": "2026-10-23T12:00:00.000Z"
+        });
+        let mut bad_slug = note.clone();
+        bad_slug["slug"] = "../secret".into();
+        let mut bad_url = note.clone();
+        bad_url["url"] = "javascript:alert(1)".into();
+        let mut bad_category = note.clone();
+        bad_category["category"] = "autre".into();
+        let response: ChangelogResponse = serde_json::from_value(serde_json::json!({
+            "schema": 1, "items": [note.clone(), {"title": "Note incomplète"}, bad_slug, bad_url, bad_category]
+        })).unwrap();
+        let notes: Vec<_> = response.items.into_iter().filter_map(clean_changelog).collect();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].version.as_deref(), Some("0.6.1"));
+        assert_eq!(notes[0].image, None);
+
+        for category in ["site", "minecraft"] {
+            let mut item = note.clone();
+            item["category"] = category.into();
+            item["version"] = Value::Null;
+            assert!(clean_changelog(serde_json::from_value(item).unwrap()).is_some());
+        }
+    }
+
+    #[test]
+    fn changelog_article_keeps_a_flat_json_contract() {
+        let article: ChangelogArticle = serde_json::from_value(serde_json::json!({
+            "schema": 1, "slug": "site-2-0", "title": "Le nouveau site", "excerpt": "Une navigation revue.",
+            "version": null, "category": "site", "image": null, "author": "Kaysuto",
+            "url": "https://clovergames.fr/changelog#site-2-0", "publishedAt": "2026-10-23T12:00:00.000Z",
+            "html": "<p>Une navigation revue.</p>"
+        })).unwrap();
+        let value = serde_json::to_value(article).unwrap();
+        assert_eq!(value["slug"], "site-2-0");
+        assert_eq!(value["publishedAt"], "2026-10-23T12:00:00.000Z");
+        assert_eq!(value["author"], "Kaysuto");
+        assert!(value.get("item").is_none() && value["version"].is_null());
+    }
+
+    #[tokio::test]
+    async fn changelog_article_rejects_invalid_slugs_before_requesting_the_site() {
+        for slug in ["", "../secret", "site%2fsecret", "Site-2-0", &"a".repeat(201)] {
+            assert_eq!(changelog_article(slug).await.unwrap_err(), "Note de version introuvable.");
+        }
     }
 
     #[test]
@@ -284,6 +407,7 @@ mod tests {
         .unwrap();
         assert!(news.translated);
         assert!(is_identifier(&news.items[0].id) && !is_identifier(&news.items[1].id));
+        assert!(is_identifier("26-4-snapshot-5") && !is_identifier("26.3/x") && !is_identifier(""));
         assert!(is_slug("pvpsoup-saison-1") && !is_slug("../x") && !is_slug("A") && !is_slug(""));
         assert_eq!(news.items[0].url, None);
     }
@@ -295,6 +419,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(news.items[0].published_at, "2026-08-22T13:00:00.000Z");
+        assert_eq!(news.items[0].slug, None);
 
         let status: StatusResponse =
             serde_json::from_str(r#"{"servers":[{"id":"lobby","online":true,"players":3},{"id":"creatif","online":null,"players":null}]}"#)
@@ -302,7 +427,5 @@ mod tests {
         assert_eq!(status.servers[0].players, Some(3));
         assert_eq!(status.servers[1].online, None);
 
-        let votes: VotesResponse = serde_json::from_str(r#"{"votes":[{"player":"Kaysuto","votedAt":"2026-09-30T08:06:20.544Z"}]}"#).unwrap();
-        assert_eq!(votes.votes[0].player, "Kaysuto");
     }
 }

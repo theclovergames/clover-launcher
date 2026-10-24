@@ -4,6 +4,7 @@
  * instance et son onglet compris).
  */
 import type { ContentKind } from "@/lib/content-kinds";
+import { readerTitle, type ReaderTarget } from "./news.ts";
 import type { ContentFolder, Tab } from "@/types";
 
 /** Onglet de la page d'une instance. */
@@ -16,7 +17,7 @@ export type OpenMod = { list: "catalogue" | "personal"; id: string };
 export type OpenProject = { id: string; title: string; icon: string | null };
 
 export type Route =
-  | { tab: Exclude<Tab, "instances" | "discover" | "messages" | "player" | "shop"> }
+  | { tab: Exclude<Tab, "instances" | "discover" | "messages" | "player" | "shop" | "news"> }
   | { tab: "instances"; instance?: string; section?: InstanceSection; mod?: OpenMod }
   /** `minecraft` : version de la nouvelle instance voulue, qui filtre les modpacks. */
   | { tab: "discover"; kind: ContentKind; target?: string; world?: string; minecraft?: string; project?: OpenProject }
@@ -24,6 +25,8 @@ export type Route =
   | { tab: "messages"; friend?: string }
   /** Profil d'un autre joueur, ouvert depuis le Classement, les Messages ou les amis. */
   | { tab: "player"; name: string }
+  /** `article` : article ouvert, lu dans le launcher. */
+  | { tab: "news"; article?: ReaderTarget }
   /** `category` : slug de la catégorie ouverte ; `product` : fiche ouverte, son nom pour le fil d'Ariane. */
   | { tab: "shop"; category?: string; product?: OpenProduct };
 
@@ -40,6 +43,7 @@ export function parent(current: Route): Route | null {
   }
   if (current.tab === "discover" && current.project) return { tab: "discover", kind: current.kind, target: current.target, world: current.world, minecraft: current.minecraft };
   if (current.tab === "shop" && current.product) return { tab: "shop", category: current.category };
+  if (current.tab === "news" && current.article) return { tab: "news" };
   return null;
 }
 
@@ -92,6 +96,9 @@ export function trail(current: Route, names: Names): Crumb[] {
   } else if (current.tab === "shop") {
     crumbs.push({ label: names.tab("shop"), to: { tab: "shop", category: current.category } });
     if (current.product) crumbs.push({ label: current.product.name });
+  } else if (current.tab === "news") {
+    crumbs.push({ label: names.tab("news"), to: { tab: "news" } });
+    if (current.article) crumbs.push({ label: readerTitle(current.article) });
   } else {
     crumbs.push({ label: names.tab(current.tab) });
   }

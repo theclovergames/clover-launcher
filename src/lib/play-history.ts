@@ -54,8 +54,7 @@ const dayIndex = (from: Date, to: Date) => Math.round((to.getTime() - from.getTi
  * commencé. `previous` : temps joué sur la même durée juste avant ; `streak` : jours d'affilée
  * jusqu'à aujourd'hui (ou hier, la journée n'étant pas finie).
  */
-export function activity(sessions: PlaySession[], now: Date, range: ActivityRange) {
-  const { weeks } = ACTIVITY_RANGES[range];
+export function activity(sessions: PlaySession[], now: Date, weeks: number) {
   const today = addDays(now, 0);
   const start = addDays(today, -((today.getDay() + 6) % 7) - (weeks - 1) * 7);
   // Arrondi : un passage à l'heure d'été fait des jours de 23 ou 25 heures.

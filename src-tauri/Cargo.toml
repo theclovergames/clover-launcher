@@ -1,6 +1,6 @@
 [package]
 name = "clover-launcher"
-version = "0.6.1"
+version = "0.7.0"
 description = "Launcher officiel de Clover Games"
 authors = ["Clover Games"]
 edition = "2021"
@@ -65,3 +65,11 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# `npm run install:local` : sans LTO et incrémental, seul le launcher se recompile après une
+# modification. Les versions publiées restent en `release`.
+[profile.local]
+inherits = "release"
+codegen-units = 256
+lto = false
+incremental = true

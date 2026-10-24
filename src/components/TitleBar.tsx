@@ -1,7 +1,8 @@
-import { Copy, Minus, Settings, Square, X } from "lucide-react";
+import { Copy, Minus, Settings, Square, SquareTerminal, X } from "lucide-react";
 import type { ReactNode } from "react";
 
 import launcherLogo from "@/assets/brand/launcher.png";
+import { iconButton } from "@/lib/buttons";
 import { cn } from "@/lib/utils";
 import type { Tab } from "@/types";
 
@@ -10,10 +11,10 @@ type Props = {
   session?: { tab: Tab; onTab: (tab: Exclude<Tab, "player">) => void };
   /** Menu des comptes (`AccountMenu`). */
   account?: ReactNode;
-  /** Affiché à gauche du compte (derniers votes). */
-  activity?: ReactNode;
   /** Cloche des notifications, à gauche des paramètres. */
   notifications?: ReactNode;
+  /** Un jeu tourne : pastille verte sur le bouton de la console. */
+  playing?: boolean;
   maximized: boolean;
   onMinimize: () => void;
   onToggleMaximize: () => void;
@@ -26,9 +27,10 @@ const windowButton =
 
 /**
  * Barre de titre de la fenêtre sans cadre : zone de déplacement (double-clic pour agrandir),
- * derniers votes, compte, notifications, paramètres, boutons de fenêtre.
+ * compte, console (celle de la dernière instance lancée), notifications, paramètres, boutons de
+ * fenêtre.
  */
-export function TitleBar({ session, account, activity, notifications, maximized, onMinimize, onToggleMaximize, onClose }: Props) {
+export function TitleBar({ session, account, notifications, playing = false, maximized, onMinimize, onToggleMaximize, onClose }: Props) {
   return (
     <header data-tauri-drag-region className="flex h-13 shrink-0 items-center gap-6 pl-5">
       {/* Avec une session, le logo coiffe la navigation (`SideNav`). */}
@@ -36,12 +38,21 @@ export function TitleBar({ session, account, activity, notifications, maximized,
 
       <div data-tauri-drag-region className="h-full flex-1" />
 
-      {session && activity}
-
       {session && account}
 
       {session && (
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label={playing ? "Console, jeu en cours" : "Console"}
+            title="Console"
+            aria-current={session.tab === "console" ? "page" : undefined}
+            onClick={() => session.onTab("console")}
+            className={cn(iconButton, session.tab === "console" && "text-accent hover:text-accent")}
+          >
+            <SquareTerminal className="size-[18px]" aria-hidden />
+            {playing && <span aria-hidden className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full border-2 border-background bg-primary" />}
+          </button>
           {notifications}
           <button
             type="button"
@@ -49,10 +60,7 @@ export function TitleBar({ session, account, activity, notifications, maximized,
             title="Paramètres"
             aria-current={session.tab === "settings" ? "page" : undefined}
             onClick={() => session.onTab("settings")}
-            className={cn(
-              "grid size-9 place-items-center rounded-md transition-colors",
-              session.tab === "settings" ? "bg-secondary text-accent" : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-            )}
+            className={cn(iconButton, session.tab === "settings" && "text-accent hover:text-accent")}
           >
             <Settings className="size-[18px]" aria-hidden />
           </button>

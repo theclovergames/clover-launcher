@@ -1,4 +1,4 @@
-import { MessageCircle } from "lucide-react";
+import { Send } from "lucide-react";
 
 import { headUrl } from "@/lib/friends";
 
@@ -13,7 +13,7 @@ export function MessageToast({ name, title, text, onOpen, onDismiss }: { name: s
       <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left">
         <span className="relative shrink-0">
           <img src={headUrl(name)} alt="" width={36} height={36} draggable={false} className="pixelated size-9 rounded-[4px]" />
-          <MessageCircle aria-hidden className="absolute -right-1.5 -bottom-1.5 size-4 rounded-full bg-primary p-0.5 text-primary-foreground" />
+          <Send aria-hidden className="absolute -right-1.5 -bottom-1.5 size-4 rounded-full bg-primary p-0.5 text-primary-foreground" />
         </span>
         <span className="flex min-w-0 flex-col gap-0.5">
           <span className="truncate font-semibold">{title}</span>

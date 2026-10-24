@@ -2,6 +2,7 @@
  * Amis et autres joueurs, communs au Profil, aux Messages et au Classement : leur tête, où ils
  * sont et si on peut les rejoindre.
  */
+import { AVAILABILITIES, shownStatus } from "@/lib/availability";
 import { fold } from "@/lib/utils";
 import type { ChatFriend } from "@/types";
 
@@ -32,8 +33,9 @@ export function joinableMode<T extends { id: string; name: string; quickPlay: bo
   return friend.canJoin && mode?.quickPlay ? mode : undefined;
 }
 
-/** « En ligne · Practice », « Vu il y a 2 heures », « Hors ligne ». */
-export function presence(friend: Pick<ChatFriend, "online" | "server" | "lastSeen">, modeName?: string): string {
-  if (friend.online) return friend.server ? `En ligne · ${modeName ?? friend.server}` : "En ligne";
+/** « En ligne · Practice », « Occupé », « Vu il y a 2 heures », « Hors ligne ». */
+export function presence(friend: Pick<ChatFriend, "online" | "server" | "lastSeen" | "availability">, modeName?: string): string {
+  const shown = shownStatus(friend);
+  if (shown) return friend.server ? `${AVAILABILITIES[shown].label} · ${modeName ?? friend.server}` : AVAILABILITIES[shown].label;
   return friend.lastSeen ? `Vu ${ago(friend.lastSeen)}` : "Hors ligne";
 }

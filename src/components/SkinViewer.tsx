@@ -1,8 +1,10 @@
-import { useEffect, useRef } from "react";
+import { type ComponentProps, type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { SkinViewer as Viewer } from "skinview3d";
-import { type Intersection, MathUtils, type Mesh, type MeshStandardMaterial, Quaternion, Raycaster, Vector2, Vector3 } from "three";
+import { type Intersection, MathUtils, type Mesh, type MeshStandardMaterial, type Object3D, Plane, Quaternion, Raycaster, Vector2, Vector3 } from "three";
 
-import { cursorPosition, type Gaze, MoodAnimation } from "@/components/SkinMoods";
+import { cursorPosition, type Gaze, type HitZone, MoodAnimation } from "@/components/SkinMoods";
+import { reducedMotion } from "@/lib/appearance";
+import { attachSkinClick } from "@/lib/skin-click";
 import type { SkinLook } from "@/types";
 
 /** Durée de la teinte rouge, celle du hurtTime de Minecraft (10 ticks). */
@@ -10,8 +12,10 @@ const HURT_MS = 500;
 /** Saut de recul ; le rebond qui suit dure moitié moins, donc monte quatre fois moins haut. */
 const JUMP_MS = 280;
 const LAND_MS = JUMP_MS * 1.5;
-/** Fin du retour à la place de départ. */
-const KNOCKBACK_MS = LAND_MS + 320;
+/** Fin du retour à la place de départ, à pied : pas par pixel de skin parcouru (rad). */
+const KNOCKBACK_MS = LAND_MS + 480;
+const PUSH = 4;
+const STRIDE_PER_UNIT = 1.6;
 /** Pieds du modèle, dans le repère du joueur (origine à la taille, 16 au-dessus des pieds). */
 const FEET = new Vector3(0, -16, 0);
 
@@ -19,6 +23,8 @@ const FEET = new Vector3(0, -16, 0);
 const FLOAT_MARGIN = 140;
 /** Curseur à moins de cette distance de la tête (pixels d'écran) : il le regarde. */
 const NEAR_PX = 260;
+/** Vitre où se pose le curseur pour le regard : une tête (8 pixels de skin) devant le cou. */
+const GLASS = 8;
 /** Pesanteur de la chute, en pixels d'écran par seconde². */
 const GRAVITY = 2600;
 /** Avec des élytres, la descente plane : pesanteur réduite, vitesse plafonnée (pixels d'écran par seconde). */
@@ -44,14 +50,14 @@ function recoil(t: number) {
   const push =
     t < JUMP_MS ? 1 - (1 - t / JUMP_MS) ** 3 : t < LAND_MS ? 1 : (1 + Math.cos((Math.PI * (t - LAND_MS)) / (KNOCKBACK_MS - LAND_MS))) / 2;
   const lean = 0.17 * Math.exp(-t / 150) * Math.sin((2 * Math.PI * t) / 360);
-  return { push: 4 * push, hop, lean };
+  return { push: PUSH * push, hop, lean };
 }
 
 /**
  * Aperçu 3D du skin. On le fait seulement tourner sur lui-même en glissant de côté, sur lui comme à
- * côté : ni inclinaison, ni zoom, ni déplacement ; glisser vers le haut ou le bas l'attrape pour le
+ * côté, et il revient de face une fois relâché (sauf `recenter` à faux) : ni inclinaison, ni zoom, ni déplacement ; glisser vers le haut ou le bas l'attrape pour le
  * soulever. Il change d'humeur quand on ne touche plus
- * au launcher et suit le curseur des yeux par moments (`SkinMoods`), et un clic sur le personnage le frappe comme en jeu. Immobile si le système
+ * au launcher et suit le curseur des yeux tant qu'on s'en sert (`SkinMoods`), et un clic sur le personnage le frappe comme en jeu. Immobile si le système
  * demande moins d'animations : le coup n'est alors qu'une teinte rouge, sans recul.
  */
 export function SkinViewer({
@@ -60,6 +66,8 @@ export function SkinViewer({
   height,
   animate = true,
   elytra = false,
+  recenter = true,
+  onEmptyClick,
   label = "Aperçu 3D de ton skin",
 }: {
   look: SkinLook;
@@ -68,6 +76,10 @@ export function SkinViewer({
   animate?: boolean;
   /** Élytres à la place de la cape (même texture). */
   elytra?: boolean;
+  /** Revient de face une fois relâché ; sinon il garde l'angle donné (page Skins, pour voir le dos). */
+  recenter?: boolean;
+  /** Clic dans une zone transparente : laisse l'écran interagir avec son décor. */
+  onEmptyClick?: (event: MouseEvent) => void;
   label?: string;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -79,6 +91,8 @@ export function SkinViewer({
    * fenêtre d'une seconde plutôt qu'un drapeau, l'effet étant joué deux fois en mode strict.
    */
   const appeared = useRef<number | null>(null);
+  /** Endormi : où naissent les « zzZ », en pixels de l'aperçu. */
+  const [sleep, setSleep] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (!canvas.current || !look.texture) return;
@@ -98,22 +112,37 @@ export function SkinViewer({
     viewer.controls.enablePan = false;
     viewer.controls.minPolarAngle = Math.PI / 2;
     viewer.controls.maxPolarAngle = Math.PI / 2;
-    viewer.playerObject.rotation.y = -0.45;
-    const motion = animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = reducedMotion();
+    const motion = animate && !reduced;
+    // Animé, il part de trois quarts puis suit le curseur ; figé, il reste presque de face, un peu tourné vers la gauche.
+    viewer.playerObject.rotation.y = motion ? -0.45 : 0.3;
     appeared.current ??= performance.now();
     const moods = motion ? new MoodAnimation({ greet: performance.now() - appeared.current < 1000 }) : null;
     viewer.animation = moods;
     const state: Busy = { busy: false };
-    const detachHit = attachHit(viewer, canvas.current, motion, state, (side) => moods?.hit(side));
+    // Figé, il ne réagit pas aux coups : ni recul ni teinte rouge.
+    const detachHit = moods || onEmptyClick ? attachHit(viewer, canvas.current, state, moods, onEmptyClick) : () => {};
     const detachGrab = moods ? attachGrab(viewer, canvas.current, moods, state) : () => {};
+    // Même figé, il revient de face en douceur ; d'un coup seulement si les animations sont réduites.
+    const detachRecenter = recenter ? attachRecenter(viewer, canvas.current, !reduced) : () => {};
     moods?.follow(gazeAt(viewer, canvas.current, state));
+    // Les « zzZ » partent du haut de la tête une fois qu'elle est tombée (la pose se fond en 0,9 s).
+    let dozing = 0;
+    moods?.onSleep((asleep) => {
+      window.clearTimeout(dozing);
+      if (!asleep) return setSleep(null);
+      dozing = window.setTimeout(() => setSleep(headTop(viewer, width, height)), 1000);
+    });
     return () => {
+      window.clearTimeout(dozing);
+      setSleep(null);
       instance.current = null;
+      detachRecenter();
       detachGrab();
       detachHit();
       viewer.dispose();
     };
-  }, [look.texture, look.model, look.cape?.texture, width, height, animate]);
+  }, [look.texture, look.model, look.cape?.texture, width, height, animate, recenter, onEmptyClick]);
 
   // Bascule sans recréer l'aperçu ; `backEquipment` reste nul tant que la cape n'est pas chargée.
   useEffect(() => {
@@ -125,52 +154,149 @@ export function SkinViewer({
   // La place reste réservée quand le personnage en sort (prise en main) ou que le skin est encore
   // inconnu. Le canvas est toujours rendu : React ne le retire jamais pendant qu'il est détaché.
   return (
-    <div style={{ width, height }}>
-      <canvas ref={canvas} hidden={!look.texture} aria-label={label} className="block cursor-ew-resize" />
+    <div className="relative" style={{ width, height }}>
+      <canvas ref={canvas} hidden={!look.texture} aria-label={label} className={onEmptyClick ? "pointer-events-auto block" : "block"} />
+      {sleep && (
+        <span aria-hidden className="pointer-events-none absolute font-pixel leading-none text-white/85 [text-shadow:0_2px_0_rgb(0_0_0/0.45)]" style={{ left: sleep.x, top: sleep.y, fontSize: Math.max(12, Math.round(height * 0.035)) }}>
+          {["z", "z", "Z"].map((letter, index) => (
+            <span key={index} className="sleep-z absolute bottom-0 left-0" style={{ animationDelay: `${index * 0.8}s`, fontSize: `${1 + index * 0.3}em` }}>
+              {letter}
+            </span>
+          ))}
+        </span>
+      )}
     </div>
   );
 }
 
+/** Part vide du rendu sous les pieds ; il y en a environ 8 % au-dessus de la tête. */
+export const BELOW_FEET = 0.09;
+/** Pseudo à l'échelle du personnage, comme en jeu, lisible au plus petit palier. */
+export const nameSize = (height: number) => Math.max(16, Math.round(height * 0.042));
+/** Hauteur prise par le pseudo au-dessus du rendu : sa taille, ses 10 px de marges, moins le vide au-dessus de la tête qu'il occupe. */
+export const nameOverhang = (height: number) => nameSize(height) + 10 - Math.round(height * 0.08 - 6);
+
 /**
- * Regard : angles du cou pour que la tête vise le curseur, comme s'il était sur la vitre de l'écran
- * (point du rayon de la caméra à mi-chemin du personnage). Rien pendant un coup ou une prise, ni si
- * le curseur est hors de la fenêtre ou derrière lui.
+ * Le personnage debout, le même partout (accueil, Profil, Skins) : pseudo posé dans le vide
+ * au-dessus de la tête, à quelques pixels des cheveux, et ombre sous les pieds. `children` se pose
+ * sur le vide sous les pieds ; `style` place l'ensemble.
+ */
+export function StandingSkin({ name, height, style, children, ...viewer }: Omit<ComponentProps<typeof SkinViewer>, "width"> & { name: string; style?: CSSProperties; children?: ReactNode }) {
+  return (
+    <div className="relative flex shrink-0 flex-col items-center" style={style}>
+      {name && (
+        <p className="relative z-10 max-w-full truncate bg-black/40 px-2.5 pt-1.5 pb-1 font-pixel leading-none text-white" style={{ fontSize: nameSize(height), marginBottom: -Math.round(height * 0.08 - 6) }}>
+          {name}
+        </p>
+      )}
+      <div aria-hidden className="absolute left-1/2 h-4 w-24 -translate-x-1/2 rounded-[50%] bg-black/60 blur-[6px]" style={{ bottom: Math.round(height * BELOW_FEET) - 6 }} />
+      <SkinViewer {...viewer} width={Math.round(height * 0.78)} height={height} />
+      {children && <div className="absolute bottom-0 left-1/2 -translate-x-1/2">{children}</div>}
+    </div>
+  );
+}
+
+/** Coin haut de la tête, côté écran droit, en pixels de l'aperçu (`width` × `height`). */
+function headTop(viewer: Viewer, width: number, height: number) {
+  const point = viewer.playerObject.skin.head.localToWorld(new Vector3(4, 8, 0)).project(viewer.camera);
+  return { x: ((point.x + 1) / 2) * width, y: ((1 - point.y) / 2) * height };
+}
+
+/**
+ * Toujours de face : relâché après l'avoir fait tourner (sur lui ou à côté), le personnage revient
+ * en douceur à son angle de départ ; d'un coup si les animations sont réduites. Rend le nettoyage.
+ */
+function attachRecenter(viewer: Viewer, canvas: HTMLCanvasElement, motion: boolean) {
+  const { camera, controls } = viewer;
+  const azimuth = () => Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
+  const origin = azimuth();
+  const rotate = (angle: number) => {
+    camera.position.sub(controls.target).applyAxisAngle(UP, angle).add(controls.target);
+    controls.update();
+  };
+  let held = false;
+  let frame = 0;
+  let last = 0;
+  const step = (now: number) => {
+    const dt = Math.min(0.05, Math.max(0, now - last) / 1000);
+    last = now;
+    // Par le plus court chemin, même après plusieurs tours.
+    const off = Math.atan2(Math.sin(azimuth() - origin), Math.cos(azimuth() - origin));
+    if (!motion || Math.abs(off) < 0.002) {
+      rotate(-off);
+      frame = 0;
+      return;
+    }
+    rotate(-off * (1 - Math.exp(-7 * dt)));
+    frame = requestAnimationFrame(step);
+  };
+  const hold = () => {
+    held = true;
+    cancelAnimationFrame(frame);
+    frame = 0;
+  };
+  const release = () => {
+    if (!held) return;
+    held = false;
+    last = performance.now();
+    frame = requestAnimationFrame(step);
+  };
+  canvas.addEventListener("pointerdown", hold, { capture: true });
+  window.addEventListener("pointerup", release);
+  window.addEventListener("pointercancel", release);
+  return () => {
+    cancelAnimationFrame(frame);
+    canvas.removeEventListener("pointerdown", hold, { capture: true });
+    window.removeEventListener("pointerup", release);
+    window.removeEventListener("pointercancel", release);
+  };
+}
+
+/**
+ * Regard : angles pour que la tête vise le curseur, posé sur une vitre face à la caméra à `GLASS`
+ * devant le cou ; aux bords de la fenêtre, il regarde presque de profil. Le lacet se compte depuis le
+ * corps au repos : `SkinMoods` le fait pivoter quand le cou ne suffit plus. Rien pendant un coup ou une
+ * prise, ni si le curseur est hors de la fenêtre ou la caméra passée derrière lui.
  */
 function gazeAt(viewer: Viewer, canvas: HTMLCanvasElement, state: Busy): Gaze {
+  const { camera, playerWrapper } = viewer;
   const { skin } = viewer.playerObject;
   const raycaster = new Raycaster();
   const ndc = new Vector2();
   const neck = new Vector3();
   const projected = new Vector3();
+  const toward = new Vector3();
   const target = new Vector3();
+  const glass = new Plane();
+  // Le cou est sur l'axe du pivot : la rotation du corps s'ajoute telle quelle.
+  const yawOf = (local: Vector3) => Math.atan2(local.x, local.z) + playerWrapper.rotation.y;
   return () => {
     const cursor = cursorPosition();
     if (!cursor || state.busy || !canvas.isConnected) return null;
     const rect = canvas.getBoundingClientRect();
     if (rect.width === 0) return null;
+    if (Math.abs(yawOf(skin.worldToLocal(target.copy(camera.position)))) > 1.7) return null;
     skin.head.getWorldPosition(neck);
-    projected.copy(neck).project(viewer.camera);
+    projected.copy(neck).project(camera);
     const near = Math.hypot(cursor.x - (rect.left + ((projected.x + 1) / 2) * rect.width), cursor.y - (rect.top + ((1 - projected.y) / 2) * rect.height)) < NEAR_PX;
     ndc.set(((cursor.x - rect.left) / rect.width) * 2 - 1, 1 - ((cursor.y - rect.top) / rect.height) * 2);
-    raycaster.setFromCamera(ndc, viewer.camera);
-    raycaster.ray.at(viewer.camera.position.distanceTo(neck) * 0.55, target);
+    raycaster.setFromCamera(ndc, camera);
+    camera.getWorldDirection(toward).negate();
+    glass.setFromNormalAndCoplanarPoint(toward, target.copy(neck).addScaledVector(toward, GLASS));
+    if (!raycaster.ray.intersectPlane(glass, target)) return null;
     skin.worldToLocal(target);
-    // Depuis les yeux, 4 pixels au-dessus du cou ; l'inclinaison est accentuée, moins visible que la rotation.
-    const across = Math.hypot(target.x, target.z);
-    const yaw = Math.atan2(target.x, target.z);
-    if (Math.abs(yaw) > 1.7) return null;
-    return { yaw: MathUtils.clamp(yaw, -1, 1), pitch: MathUtils.clamp(1.4 * Math.atan2(skin.head.position.y + 4 - target.y, across), -0.75, 0.75), near };
+    // Depuis les yeux, 4 pixels au-dessus du cou.
+    return { yaw: yawOf(target), pitch: MathUtils.clamp(Math.atan2(skin.head.position.y + 4 - target.y, Math.hypot(target.x, target.z)), -1.1, 1.1), near };
   };
 }
 
 /**
  * Coup façon Minecraft : un clic (pas un glisser, qui fait tourner) sur le personnage le teinte en
- * rouge et, avec `knockback`, le projette loin de la caméra, et de côté selon où le clic tombe (`onHit` fait
- * réagir le personnage) : saut,
- * rebond à l'atterrissage, puis retour en place. Comme en jeu, un coup pendant le précédent ne compte
- * pas. Rend le nettoyage.
+ * rouge et le projette loin de la caméra, et de côté selon où le clic tombe ; `moods`
+ * le fait réagir selon la partie touchée (tête, torse, bras, jambe) : saut, rebond à l'atterrissage, puis
+ * retour à sa place à pied. Comme en jeu, un coup pendant le précédent ne compte pas. Rend le nettoyage.
  */
-function attachHit(viewer: Viewer, canvas: HTMLCanvasElement, knockback: boolean, state: Busy, onHit: (side: number) => void) {
+function attachHit(viewer: Viewer, canvas: HTMLCanvasElement, state: Busy, moods: MoodAnimation | null, onEmptyClick?: (event: MouseEvent) => void) {
   const player = viewer.playerObject;
   const materials = new Set<MeshStandardMaterial>();
   player.traverse((object) => {
@@ -183,7 +309,6 @@ function attachHit(viewer: Viewer, canvas: HTMLCanvasElement, knockback: boolean
     }
   };
 
-  const duration = knockback ? KNOCKBACK_MS : HURT_MS;
   const dir = new Vector3();
   const side = new Vector3();
   const axis = new Vector3();
@@ -199,29 +324,31 @@ function attachHit(viewer: Viewer, canvas: HTMLCanvasElement, knockback: boolean
     // Penché depuis les pieds, pas depuis l'origine du modèle.
     shift.copy(FEET).applyQuaternion(tilt).sub(FEET);
     player.position.copy(dir).multiplyScalar(push).sub(shift).setY(hop - shift.y);
+    if (t >= LAND_MS) moods?.walk((PUSH - push) * STRIDE_PER_UNIT);
   };
   const step = (now: number) => {
     const t = now - start;
     tint(t < HURT_MS);
-    if (t >= duration) {
+    if (t >= KNOCKBACK_MS) {
+      moods?.walk(null);
       player.position.set(0, 0, 0);
       player.quaternion.copy(base);
       frame = 0;
       state.busy = false;
       return;
     }
-    if (knockback) pose(t);
+    pose(t);
     frame = requestAnimationFrame(step);
   };
-  const strike = (point: Vector3) => {
-    if (frame || state.busy) return;
+  const strike = (point: Vector3, zone: HitZone) => {
+    if (frame || state.busy || !moods) return;
     state.busy = true;
     dir.copy(viewer.camera.position).setY(0).normalize().negate();
     // Droite de l'écran au sol ; un coup sur le flanc droit pousse vers la gauche.
     side.set(-dir.z, 0, dir.x);
     const across = MathUtils.clamp(point.dot(side) / 6, -1, 1);
     dir.addScaledVector(side, -0.8 * across).normalize();
-    onHit(across);
+    moods.hit(across, zone);
     axis.set(dir.z, 0, -dir.x);
     base.copy(player.quaternion);
     start = performance.now();
@@ -229,25 +356,33 @@ function attachHit(viewer: Viewer, canvas: HTMLCanvasElement, knockback: boolean
     frame = requestAnimationFrame(step);
   };
 
+  const { head, body, leftArm, rightArm, leftLeg, rightLeg } = player.skin;
+  const parts = new Map<Object3D, HitZone>([
+    [head, "head"],
+    [body, "body"],
+    [leftArm, "leftArm"],
+    [rightArm, "rightArm"],
+    [leftLeg, "leftLeg"],
+    [rightLeg, "rightLeg"],
+  ]);
   const raycaster = new Raycaster();
   const pointer = new Vector2();
-  const down = new Vector2();
-  const onPointerDown = (event: PointerEvent) => down.set(event.clientX, event.clientY);
   const onClick = (event: MouseEvent) => {
-    if (down.distanceTo(pointer.set(event.clientX, event.clientY)) > 4) return;
     const rect = canvas.getBoundingClientRect();
     pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, 1 - ((event.clientY - rect.top) / rect.height) * 2);
     raycaster.setFromCamera(pointer, viewer.camera);
     // Le corps seul : cape, élytres et oreilles existent même masquées.
     const [hit] = raycaster.intersectObject(player.skin);
-    if (hit) strike(hit.point);
+    if (!hit) return onEmptyClick?.(event);
+    // La pièce du modèle qui porte la face touchée (calque compris).
+    let part: Object3D | null = hit.object;
+    while (part && !parts.has(part)) part = part.parent;
+    strike(hit.point, (part && parts.get(part)) ?? "body");
   };
-  canvas.addEventListener("pointerdown", onPointerDown);
-  canvas.addEventListener("click", onClick);
+  const detachClick = attachSkinClick(canvas, onClick);
   return () => {
     cancelAnimationFrame(frame);
-    canvas.removeEventListener("pointerdown", onPointerDown);
-    canvas.removeEventListener("click", onClick);
+    detachClick();
   };
 }
 
@@ -504,7 +639,6 @@ function attachGrab(viewer: Viewer, canvas: HTMLCanvasElement, moods: MoodAnimat
       if (Math.abs(dx) > Math.abs(dy)) {
         pressed.turning = true;
         canvas.style.cursor = "";
-        document.documentElement.style.cursor = "ew-resize";
         rotateView(dx);
         pressed.x = event.clientX;
         return;

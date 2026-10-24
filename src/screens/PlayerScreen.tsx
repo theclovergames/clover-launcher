@@ -1,4 +1,4 @@
-import { ArrowUpRight, Check, CircleAlert, Clock, LoaderCircle, MessageCircle, Play, RotateCcw, UserPlus, UserRoundX, X } from "lucide-react";
+import { ArrowUpRight, Check, CircleAlert, Clock, LoaderCircle, Play, RotateCcw, Send, UserMinus, UserPlus, UserRoundX, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { CharacterColumn } from "@/components/CharacterColumn";
@@ -9,6 +9,7 @@ import { primaryButton, secondaryButton } from "@/lib/buttons";
 import { ago, findMode, joinableMode } from "@/lib/friends";
 import { rankBadge } from "@/lib/ranks";
 import { SITE_URL } from "@/lib/site";
+import { type Confirmation, ConfirmDialog } from "@/screens/Dialogs";
 import type { ChatFriend, OtherPlayer, PlayerLook, Relation, SkinLook } from "@/types";
 
 type Props = {
@@ -26,7 +27,7 @@ type Props = {
   /** Une demande a changé : la liste des conversations et la pastille se relisent. */
   onFriendsChanged: () => void;
   onNotice: (message: string) => void;
-  services?: Pick<typeof api, "playerProfile" | "playerLook" | "sendFriendRequest" | "answerFriendRequest">;
+  services?: Pick<typeof api, "playerProfile" | "playerLook" | "sendFriendRequest" | "answerFriendRequest" | "removeFriend">;
 };
 
 /** Skin par défaut de Mojang (Steve ou Alex selon l'UUID), quand le compte n'en porte pas d'autre. */
@@ -49,7 +50,7 @@ const ACTION_DONE: Record<"accept" | "decline" | "cancel", string> = {
 
 /**
  * Boutons d'amitié selon le lien avec le joueur : l'ajouter, voir sa demande en attente (et
- * l'annuler), accepter ou refuser la sienne, ou lui écrire une fois amis.
+ * l'annuler), accepter ou refuser la sienne, ou lui écrire et le retirer une fois amis.
  */
 function FriendActions(props: {
   player: OtherPlayer;
@@ -59,15 +60,22 @@ function FriendActions(props: {
   onRequest: () => void;
   onAnswer: (action: "accept" | "decline" | "cancel") => void;
   onWrite: () => void;
+  onRemove: () => void;
 }) {
   const { player, relation, busy } = props;
   const spinner = busy && <LoaderCircle className="size-4 animate-spin" aria-hidden />;
   if (relation === "friend") {
     return (
-      <button type="button" onClick={props.onWrite} className={primaryButton}>
-        <MessageCircle className="size-4" aria-hidden />
-        Écrire à {player.name}
-      </button>
+      <>
+        <button type="button" onClick={props.onWrite} className={primaryButton}>
+          <Send className="size-4" aria-hidden />
+          Écrire à {player.name}
+        </button>
+        <button type="button" disabled={busy} onClick={props.onRemove} className={secondaryButton}>
+          {spinner || <UserMinus className="size-4" aria-hidden />}
+          Retirer des amis
+        </button>
+      </>
     );
   }
   if (relation === "incoming") {
@@ -125,6 +133,7 @@ export function PlayerScreen({ name, modes, friend, animateSkin, playBusy, onPla
   const [look, setLook] = useState<{ name: string; look: PlayerLook | null } | null>(null);
   const [link, setLink] = useState<{ relation: Relation; canRequest: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [asking, setAsking] = useState<Confirmation | null>(null);
 
   const load = useCallback(() => {
     setState(null);
@@ -201,6 +210,31 @@ export function PlayerScreen({ name, modes, friend, animateSkin, playBusy, onPla
     }
   };
 
+  const remove = async () => {
+    if (!player) return;
+    setBusy(true);
+    try {
+      await services.removeFriend(player.uuid);
+      setLink({ relation: "none", canRequest: true });
+      onNotice(`${player.name} ne fait plus partie de tes amis.`);
+      onFriendsChanged();
+    } catch (reason) {
+      onNotice(String(reason));
+    } finally {
+      // Ses réglages décident s'il accepte une nouvelle demande : le lien réel est relu.
+      refreshLink();
+      setBusy(false);
+    }
+  };
+
+  const askRemove = (target: OtherPlayer) =>
+    setAsking({
+      title: `Retirer ${target.name} de tes amis ?`,
+      description: "Vous ne pourrez plus vous écrire. Votre conversation reste lisible, et tu pourras lui renvoyer une demande plus tard.",
+      confirm: "Retirer",
+      onConfirm: () => void remove(),
+    });
+
   if (current && "player" in current && current.player === null) {
     return (
       <main className="flex min-h-0 flex-1 items-center justify-center px-10">
@@ -273,7 +307,7 @@ export function PlayerScreen({ name, modes, friend, animateSkin, playBusy, onPla
               <Skeleton className="h-9 w-40" />
             ) : (
               player && (
-                <FriendActions player={player} relation={relation} canRequest={canRequest} busy={busy} onRequest={() => void request()} onAnswer={(action) => void answer(action)} onWrite={() => onWrite(player.uuid)} />
+                <FriendActions player={player} relation={relation} canRequest={canRequest} busy={busy} onRequest={() => void request()} onAnswer={(action) => void answer(action)} onWrite={() => onWrite(player.uuid)} onRemove={() => askRemove(player)} />
               )
             )}
             {join && (
@@ -330,6 +364,7 @@ export function PlayerScreen({ name, modes, friend, animateSkin, playBusy, onPla
           </div>
         )}
       </div>
+      <ConfirmDialog ask={asking} onClose={() => setAsking(null)} />
     </main>
   );
 }

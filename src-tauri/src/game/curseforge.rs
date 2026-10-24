@@ -649,7 +649,7 @@ mod tests {
         let (manifest, entries) = read(&archive).unwrap().unwrap();
         let (minecraft, loader, _) = manifest.versions().unwrap();
         let (game, mods) = (dir.join("game"), dir.join("mods"));
-        super::super::content::copy_overrides(&archive, &[&manifest.overrides], &game, &mods).unwrap();
+        super::super::content::copy_overrides(&archive, &[&manifest.overrides], &game, &mods, true).unwrap();
         let missing = install(&super::super::download::client(), &manifest, &entries, &minecraft, loader, &game, &mods, &|_, _| {}).await.unwrap();
         // Par le relais, seuls les fichiers du manifeste comptent : `modlist.html` est ignoré.
         assert!(missing.is_empty(), "{:?}", missing.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>());

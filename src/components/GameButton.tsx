@@ -46,7 +46,7 @@ export function GameButton({
         disabled={state.closing === "asked"}
         title="Ferme Minecraft comme par la croix de sa fenêtre : le monde ouvert est sauvegardé."
         aria-label={`Fermer ${name}`}
-        className={cn(secondaryButton, className)}
+        className={cn(secondaryButton, "text-error hover:text-[#ffb3b0]", className)}
       >
         <Square className="size-3.5 fill-current" aria-hidden />
         {state.closing ? "Fermeture…" : "Fermer"}

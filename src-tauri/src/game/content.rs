@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::SystemTime;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::download::{download_all, Checksum, Download};
 use super::modrinth::{self, Kind};
@@ -221,9 +221,8 @@ fn allowed(url: &str) -> bool {
     url::Url::parse(url).is_ok_and(|url| url.scheme() == "https" && url.host_str().is_some_and(|host| ALLOWED_HOSTS.contains(&host)))
 }
 
-/// Pose les fichiers du modpack dans `game` et `mods` : téléchargements de l'index (sauf ceux
-/// réservés au serveur), puis fichiers inclus (`overrides`, puis `client-overrides` qui l'emporte).
-pub async fn install_modpack(http: &reqwest::Client, archive: &Path, index: &Index, game: &Path, mods: &Path, on_progress: &(dyn Fn(usize, usize) + Sync)) -> Result<()> {
+/// Téléchargements de l'index (sauf ceux réservés au serveur), à leur place dans `game` et `mods`.
+fn pack_downloads(index: &Index, game: &Path, mods: &Path) -> Result<Vec<Download>> {
     let mut downloads = Vec::new();
     for file in index.files.iter().filter(|file| file.env.as_ref().is_none_or(|env| env.client != "unsupported")) {
         let path = relative(&file.path).ok_or_else(|| GameError::InvalidVersion(format!("chemin refusé « {} »", file.path)))?;
@@ -235,13 +234,19 @@ pub async fn install_modpack(http: &reqwest::Client, archive: &Path, index: &Ind
         };
         downloads.push(Download { url: url.clone(), path: target(&path, game, mods), checksum: Some(checksum), size: Some(file.file_size), executable: false });
     }
-    download_all(http, downloads, on_progress).await?;
-    copy_overrides(archive, &["overrides", "client-overrides"], game, mods)
+    Ok(downloads)
+}
+
+/// Pose les fichiers du modpack dans `game` et `mods` : téléchargements de l'index, puis fichiers
+/// inclus (`overrides`, puis `client-overrides` qui l'emporte).
+pub async fn install_modpack(http: &reqwest::Client, archive: &Path, index: &Index, game: &Path, mods: &Path, on_progress: &(dyn Fn(usize, usize) + Sync)) -> Result<()> {
+    download_all(http, pack_downloads(index, game, mods)?, on_progress).await?;
+    copy_overrides(archive, &["overrides", "client-overrides"], game, mods, true)
 }
 
 /// Copie les fichiers inclus dans l'archive, dossier par dossier de `folders` (le dernier l'emporte),
-/// dans `game` et `mods` ; jamais hors de l'instance.
-pub fn copy_overrides(archive: &Path, folders: &[&str], game: &Path, mods: &Path) -> Result<()> {
+/// dans `game` et `mods` ; jamais hors de l'instance. Sans `replace`, un fichier déjà là est gardé.
+pub fn copy_overrides(archive: &Path, folders: &[&str], game: &Path, mods: &Path, replace: bool) -> Result<()> {
     let mut zip = zip::ZipArchive::new(std::fs::File::open(archive)?).map_err(|e| GameError::Corrupted(e.to_string()))?;
     for folder in folders {
         let prefix = format!("{folder}/");
@@ -256,6 +261,9 @@ pub fn copy_overrides(archive: &Path, folders: &[&str], game: &Path, mods: &Path
                 return Err(GameError::InvalidVersion(format!("fichier trop lourd « {name} »")));
             }
             let destination = target(&path, game, mods);
+            if !replace && destination.exists() {
+                continue;
+            }
             if let Some(parent) = destination.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -265,9 +273,164 @@ pub fn copy_overrides(archive: &Path, folders: &[&str], game: &Path, mods: &Path
     Ok(())
 }
 
+// ── Mise à jour d'un modpack ────────────────────────────────────────────────────
+
+/// Versions Modrinth des mods qu'une version de modpack inclut (Modrinth les liste d'après son index).
+fn embedded(version: &modrinth::Version) -> HashSet<&str> {
+    version.dependencies.iter().filter_map(|dependency| dependency.version_id.as_deref()).collect()
+}
+
+/// Mod de l'instance reconnu sur Modrinth.
+struct Present {
+    file: String,
+    version: String,
+    project: String,
+}
+
+async fn present_mods(http: &reqwest::Client, mods: &Path) -> Result<Vec<Present>> {
+    let files: Vec<(String, String)> = super::personal::jars(mods)
+        .iter()
+        .filter_map(|path| Some((path.file_name()?.to_string_lossy().into_owned(), super::personal::sha512(path).ok()?)))
+        .collect();
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+    let identified = modrinth::identify(http, files.iter().map(|(_, hash)| hash.clone()).collect()).await?;
+    Ok(files
+        .into_iter()
+        .filter_map(|(file, hash)| {
+            let version = identified.get(&hash)?;
+            Some(Present { file, version: version.id.clone(), project: version.project_id.clone() })
+        })
+        .collect())
+}
+
+/// Dans `versions` (de la plus récente à la plus ancienne), la version installée : celle qui a le
+/// plus de mods de l'instance, au moins la moitié (le pack compte aussi ses packs de ressources et
+/// shaders, absents de « Mes mods ») ; puis la version à installer, plus récente, stable si
+/// l'installée l'est. Erreur si l'instance ne ressemble à aucune version du pack.
+fn pick(versions: &[modrinth::Version], present: &HashSet<&str>) -> Result<(usize, Option<usize>)> {
+    let shared = |version: &modrinth::Version| embedded(version).intersection(present).count();
+    // À égalité, la plus récente : parcourue en dernier, elle l'emporte.
+    let installed = (0..versions.len())
+        .rev()
+        .filter(|&index| shared(&versions[index]) > 0 && shared(&versions[index]) * 2 >= present.len())
+        .max_by_key(|&index| shared(&versions[index]))
+        .ok_or_else(|| GameError::InvalidVersion("les mods de cette instance ne correspondent à aucune version de ce modpack".into()))?;
+    let stable = versions[installed].version_type == "release";
+    let next = (0..installed).find(|&index| !stable || versions[index].version_type == "release");
+    // Tous les mods de la version proposée déjà là : rien à faire.
+    Ok((installed, next.filter(|&index| !embedded(&versions[index]).is_subset(present))))
+}
+
+/// Versions du modpack `project` faites pour `minecraft` et `loader`, de la plus récente à la plus ancienne.
+async fn pack_versions(http: &reqwest::Client, project: &str, minecraft: &str, loader: ModLoader) -> Result<Vec<modrinth::Version>> {
+    let name = loader.modrinth_loaders()[0];
+    Ok(modrinth::modpack_versions(http, project)
+        .await?
+        .into_iter()
+        .filter(|version| version.game_versions.iter().any(|game| game == minecraft) && version.loaders.iter().any(|known| known == name))
+        .collect())
+}
+
+/// Mise à jour proposée pour l'instance d'un modpack. Mêmes noms que le type `ModpackUpdate` du front.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackUpdate {
+    /// Numéro de la version installée.
+    installed: String,
+    /// Version proposée : identifiant Modrinth et numéro.
+    id: String,
+    number: String,
+}
+
+/// Version plus récente du modpack `project` pour la même version de Minecraft et le même loader,
+/// d'après les mods de l'instance (`mods`) ; `None` si elle est à jour.
+pub async fn modpack_update(http: &reqwest::Client, project: &str, minecraft: &str, loader: ModLoader, mods: &Path) -> Result<Option<PackUpdate>> {
+    let present = present_mods(http, mods).await?;
+    let versions = pack_versions(http, project, minecraft, loader).await?;
+    let (installed, next) = pick(&versions, &present.iter().map(|entry| entry.version.as_str()).collect())?;
+    Ok(next.map(|next| PackUpdate { installed: versions[installed].version_number.clone(), id: versions[next].id.clone(), number: versions[next].version_number.clone() }))
+}
+
+/// Ce qu'une mise à jour a changé dans « Mes mods » de l'instance, et le loader demandé.
+#[derive(Debug, Default)]
+pub struct PackUpdated {
+    /// Fichiers remplacés par la version nouvelle du même mod (ancien, nouveau).
+    pub renamed: Vec<(String, String)>,
+    /// Fichiers supprimés (remplacés ou retirés du pack).
+    pub removed: Vec<String>,
+    /// Version du loader que demande la version installée.
+    pub loader: String,
+}
+
+/// Installe la version `version` du modpack dans l'instance : ses fichiers téléchargés (ceux déjà
+/// là sont gardés), les mods de l'ancienne version qu'elle remplace ou retire supprimés, et ses
+/// fichiers inclus seulement s'ils manquent : les réglages du joueur et ses propres mods restent.
+#[allow(clippy::too_many_arguments)]
+pub async fn update_modpack(http: &reqwest::Client, project: &str, version: &str, (minecraft, loader): (&str, ModLoader), game: &Path, mods: &Path, staging: &Path, on_progress: &(dyn Fn(usize, usize) + Sync)) -> Result<PackUpdated> {
+    let present = present_mods(http, mods).await?;
+    let versions = pack_versions(http, project, minecraft, loader).await?;
+    let (installed, _) = pick(&versions, &present.iter().map(|entry| entry.version.as_str()).collect())?;
+    let old = embedded(&versions[installed]);
+    let (archive, index) = fetch_modpack(http, project, Some(version), staging).await?;
+    let result = async {
+        let (pack_minecraft, pack_loader, loader_version) = index.versions()?;
+        if pack_minecraft != minecraft || pack_loader != loader {
+            return Err(GameError::InvalidVersion(format!("cette version du modpack demande Minecraft {pack_minecraft} : crée une nouvelle instance pour en changer")));
+        }
+        let downloads = pack_downloads(&index, game, mods)?;
+        // Nouveau fichier de chaque mod, par projet : un ancien fichier désactivé le reste.
+        let new_mods: HashMap<String, String> = downloads
+            .iter()
+            .filter(|download| download.path.parent() == Some(mods))
+            .filter_map(|download| Some((modrinth::cdn_project(&download.url)?.to_owned(), download.path.file_name()?.to_string_lossy().into_owned())))
+            .collect();
+        let kept: HashSet<String> = downloads.iter().filter(|download| download.path.parent() == Some(mods)).filter_map(|download| Some(download.path.file_name()?.to_string_lossy().into_owned())).collect();
+        download_all(http, downloads, on_progress).await?;
+        copy_overrides(&archive, &["overrides", "client-overrides"], game, mods, false)?;
+        let mut updated = PackUpdated { loader: loader_version, ..PackUpdated::default() };
+        for entry in present.iter().filter(|entry| !kept.contains(&entry.file)) {
+            let replacement = new_mods.get(entry.project.as_str());
+            // Un mod ajouté par le joueur, absent de l'ancienne version, n'est jamais touché.
+            if replacement.is_none() && !old.contains(entry.version.as_str()) {
+                continue;
+            }
+            std::fs::remove_file(mods.join(&entry.file))?;
+            if let Some(new) = replacement {
+                updated.renamed.push((entry.file.clone(), new.clone()));
+            }
+            updated.removed.push(entry.file.clone());
+        }
+        Ok(updated)
+    }
+    .await;
+    let _ = std::fs::remove_file(&archive);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_installed_pack_version_is_read_from_the_mods() {
+        let version = |id: &str, kind: &str, mods: &[&str]| -> modrinth::Version {
+            let dependencies: Vec<_> = mods.iter().map(|m| serde_json::json!({ "version_id": m, "dependency_type": "embedded" })).collect();
+            serde_json::from_value(serde_json::json!({ "id": id, "project_id": "p", "version_number": id, "version_type": kind, "files": [], "dependencies": dependencies })).unwrap()
+        };
+        // De la plus récente à la plus ancienne, comme Modrinth.
+        let versions = [version("4", "beta", &["a4", "b4"]), version("3", "release", &["a3", "b3"]), version("2", "beta", &["a2", "b2"]), version("1", "release", &["a1", "b1", "pack1", "pack2", "shader"])];
+        let present = |ids: &[&'static str]| ids.iter().copied().collect::<HashSet<&str>>();
+        // Une stable installée ne passe qu'à une stable ; une bêta, à la plus récente.
+        assert_eq!(pick(&versions, &present(&["a1", "b1", "mien"])).unwrap(), (3, Some(1)));
+        assert_eq!(pick(&versions, &present(&["a2", "b2"])).unwrap(), (2, Some(0)));
+        // La moitié des mods de l'instance suffit, même si le pack compte aussi des packs de
+        // ressources ; à jour, rien n'est proposé.
+        assert_eq!(pick(&versions, &present(&["a1"])).unwrap(), (3, Some(1)));
+        assert_eq!(pick(&versions, &present(&["a3", "b3"])).unwrap(), (1, None));
+        assert!(pick(&versions, &present(&["autre"])).is_err());
+    }
 
     #[test]
     fn pack_paths_stay_inside_the_instance() {
@@ -316,3 +479,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+

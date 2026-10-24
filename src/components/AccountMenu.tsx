@@ -1,14 +1,22 @@
 import { ChevronDown, PenLine, UserPlus, X } from "lucide-react";
 import { useState } from "react";
 
+import coinsIcon from "@/assets/icons/coins.png";
+import { linkTone, SITE_LINKS } from "@/components/HomeExtras";
 import { PlayerHead } from "@/components/PlayerHead";
+import { pixel } from "@/components/PlayerStats";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { secondaryButton } from "@/lib/buttons";
+import { formatCoins } from "@/lib/shop";
+import { cn } from "@/lib/utils";
 import type { Account } from "@/screens/SettingsScreen";
 import type { Profile } from "@/types";
 
 type Props = {
   /** Compte actif, affiché sur le bouton. */
   profile: Profile;
+  /** Solde du compte actif ; `null` pendant la lecture ou si l'économie est indisponible. */
+  coins: number | null;
   skin: string | null;
   accounts: Account[];
   onUse: (uuid: string) => void;
@@ -16,6 +24,8 @@ type Props = {
   onAdd: () => void;
   /** Change le pseudo Minecraft du compte actif. */
   onRename: () => void;
+  /** Vote, Discord et site, dans le navigateur. */
+  onOpenLink: (url: string) => void;
   /** Ouvert d'office (planche des maquettes). */
   defaultOpen?: boolean;
 };
@@ -31,15 +41,15 @@ export function RemoveAccountButton({ name, onClick }: { name: string; onClick: 
       onClick={onClick}
       aria-label={`Retirer ${name}`}
       title="Retirer ce compte"
-      className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-destructive"
+      className={cn(secondaryButton, "size-8 shrink-0 px-0 text-muted-foreground [--mc-radius:5px] hover:text-destructive")}
     >
       <X className="size-4" aria-hidden />
     </button>
   );
 }
 
-/** Bascule entre comptes en un clic depuis la barre de titre. */
-export function AccountMenu({ profile, skin, accounts, onUse, onRemove, onAdd, onRename, defaultOpen }: Props) {
+/** Bascule entre comptes en un clic depuis la barre de titre, et mène au vote, au Discord et au site. */
+export function AccountMenu({ profile, coins, skin, accounts, onUse, onRemove, onAdd, onRename, onOpenLink, defaultOpen }: Props) {
   const [open, setOpen] = useState(defaultOpen ?? false);
   const run = (action: () => void) => () => {
     setOpen(false);
@@ -52,10 +62,17 @@ export function AccountMenu({ profile, skin, accounts, onUse, onRemove, onAdd, o
         <button
           type="button"
           title="Comptes"
-          className="flex items-center gap-2 rounded-md py-1.5 pr-2 pl-1.5 text-[13px] font-semibold transition-colors hover:bg-secondary data-[state=open]:bg-secondary"
+          className={cn(secondaryButton, "h-11 py-1 pr-2.5 pl-1.5 data-[state=open]:text-accent")}
         >
           <PlayerHead skin={skin} size={24} />
-          {profile.name}
+          <span className="flex flex-col items-start gap-0.5 text-left leading-none">
+            <span>{profile.name}</span>
+            <span className="flex items-center gap-1" title={coins === null ? "Solde de pièces indisponible" : formatCoins(coins)}>
+              <img src={coinsIcon} alt="" width={16} height={16} className="pixelated shrink-0" />
+              <span className="mc-text-shadow font-pixel text-[11px] leading-none text-accent" aria-hidden>{coins === null ? "—" : pixel(coins)}</span>
+              <span className="sr-only">{coins === null ? "Solde de pièces indisponible" : formatCoins(coins)}</span>
+            </span>
+          </span>
           <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
         </button>
       </PopoverTrigger>
@@ -68,7 +85,7 @@ export function AccountMenu({ profile, skin, accounts, onUse, onRemove, onAdd, o
           event.preventDefault();
           (event.currentTarget as HTMLElement).focus();
         }}
-        className="mc-frame w-[260px] gap-0 border-[var(--mc-outline)] bg-card p-0 ring-0 outline-none"
+        className="mc-frame w-[290px] gap-0 border-[var(--mc-outline)] bg-card p-0 ring-0 outline-none"
       >
         <ul className="flex flex-col p-1.5">
           {accounts.map((account) => (
@@ -100,6 +117,15 @@ export function AccountMenu({ profile, skin, accounts, onUse, onRemove, onAdd, o
             Ajouter un compte
           </button>
         </div>
+
+        <nav aria-label="Clover Games" className="flex flex-col border-t border-border p-1.5">
+          {SITE_LINKS.map(({ id, label, hint, url, Icon }) => (
+            <button key={id} type="button" title={hint} onClick={run(() => onOpenLink(url))} className={item}>
+              <Icon className={cn("size-4", linkTone(id))} aria-hidden />
+              {label}
+            </button>
+          ))}
+        </nav>
       </PopoverContent>
     </Popover>
   );

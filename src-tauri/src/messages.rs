@@ -1,5 +1,5 @@
-//! Messages et demandes d'amis du compte actif, par le site (`/api/launcher/messages` et
-//! `/api/launcher/friends/requests`, contrat commun au plugin, au site et au launcher). Le jeton du
+//! Messages et amis du compte actif, par le site (`/api/launcher/messages` et
+//! `/api/launcher/friends/…`, contrat commun au plugin, au site et au launcher). Le jeton du
 //! site reste ici, comme pour la cloche : l'interface ne reçoit que des conversations déjà filtrées
 //! (pseudos valides, textes bornés, GIF hébergés par Giphy seulement) et des erreurs en français.
 
@@ -103,6 +103,9 @@ pub struct Friend {
     pub status: Option<String>,
     #[serde(default)]
     pub can_join: bool,
+    /// Statut choisi dans son launcher (`online`, `busy`, `away`) ; absent launcher fermé ou invisible.
+    #[serde(default, deserialize_with = "lenient")]
+    pub availability: Option<String>,
 }
 
 /// Aperçu d'un message : dernier message d'une conversation, ou message cité par une réponse.
@@ -188,6 +191,9 @@ pub struct Conversation {
     /// Faux pour un ancien ami : la conversation reste en lecture seule.
     #[serde(default)]
     pub can_write: bool,
+    /// Ami actuel, qu'on peut retirer ; faux pour un ancien ami (ou un site qui ne le dit pas).
+    #[serde(default)]
+    pub is_friend: bool,
 }
 
 /// Demande d'ami en attente, reçue ou envoyée ; elle expire d'elle-même à `expires_at`.
@@ -251,6 +257,8 @@ pub struct Thread {
     pub has_more: bool,
     #[serde(default)]
     pub can_write: bool,
+    #[serde(default)]
+    pub is_friend: bool,
     #[serde(default)]
     pub archived: bool,
     #[serde(default)]
@@ -421,6 +429,7 @@ fn friend(mut friend: Friend) -> Option<Friend> {
     let line = |text: String, max| Some(clean(&text, max, false)).filter(|text| !text.trim().is_empty());
     friend.server = friend.server.and_then(|server| line(server, SERVER_MAX));
     friend.status = friend.status.and_then(|status| line(status, STATUS_MAX));
+    friend.availability = friend.availability.filter(|availability| matches!(availability.as_str(), "online" | "busy" | "away"));
     Some(friend)
 }
 
@@ -710,6 +719,18 @@ pub async fn delete_message(friend: String, id: u64, for_all: bool, current: Sta
     Ok(())
 }
 
+/// Statut choisi dans la page Messages (`online`, `busy`, `away`, `invisible`), redit chaque minute
+/// tant que le launcher est ouvert : le site l'oublie après 3 minutes sans nouvelle.
+#[tauri::command]
+pub async fn set_availability(availability: String, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<(), String> {
+    if !matches!(availability.as_str(), "online" | "busy" | "away" | "invisible") {
+        return Err("Statut inconnu.".into());
+    }
+    let payload = serde_json::json!({ "availability": availability });
+    site_request(&current, &tokens, "Statut pas encore disponible.", |http, base| http.post(format!("{base}/api/launcher/availability")).json(&payload)).await?;
+    Ok(())
+}
+
 /// Conversation lue jusqu'au message `up_to`.
 #[tauri::command]
 pub async fn mark_messages_read(friend: String, up_to: u64, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<(), String> {
@@ -827,6 +848,17 @@ pub async fn answer_friend_request(player: String, action: String, current: Stat
     Ok(())
 }
 
+/// Retirer un ami (`/friend remove` en jeu) : la conversation reste, en lecture seule.
+#[tauri::command]
+pub async fn remove_friend(friend: String, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<(), String> {
+    let friend = friend_id(&friend)?;
+    site_request(&current, &tokens, "Retirer un ami n'est pas encore disponible dans le launcher.", |http, base| {
+        http.delete(format!("{base}/api/launcher/friends/{friend}"))
+    })
+    .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -838,11 +870,11 @@ mod tests {
         let inbox = inbox(
             serde_json::from_str::<Inbox>(&format!(
                 r#"{{"schema":1,"now":1792400000000,"unread":3,"gifs":true,"conversations":[
-                {{"friend":{{"uuid":"{}","name":"Kanname","online":true,"server":"Practice{bidi}","lastSeen":null,"status":"{}","canJoin":true}},
-                  "last":{{"id":"42","fromMe":false,"kind":"gif","preview":"ah\nah","at":1792399990000,"deleted":false}},"unread":3,"archived":false,"muted":false,"canWrite":true}},
+                {{"friend":{{"uuid":"{}","name":"Kanname","online":true,"server":"Practice{bidi}","lastSeen":null,"status":"{}","canJoin":true,"availability":"busy"}},
+                  "last":{{"id":"42","fromMe":false,"kind":"gif","preview":"ah\nah","at":1792399990000,"deleted":false}},"unread":3,"archived":false,"muted":false,"canWrite":true,"isFriend":true}},
                 {{"friend":{{"uuid":"ab","name":"Valid_Name","online":false}},"last":null,"unread":0,"canWrite":true}},
                 {{"friend":{{"uuid":"{KANNAME}","name":"../x","online":false}},"last":null}},
-                {{"friend":{{"uuid":"{KANNAME}","name":"Ancien","online":false,"server":null,"lastSeen":1,"status":null,"canJoin":false}},"last":{{"id":-1}},"unread":0,"canWrite":false}},
+                {{"friend":{{"uuid":"{KANNAME}","name":"Ancien","online":false,"server":null,"lastSeen":1,"status":null,"canJoin":false,"availability":"invisible"}},"last":{{"id":-1}},"unread":0,"canWrite":false}},
                 "pas une conversation"
             ]}}"#,
                 KANNAME.to_uppercase(),
@@ -857,11 +889,14 @@ mod tests {
         assert_eq!(first.friend.uuid, KANNAME);
         assert_eq!(first.friend.server.as_deref(), Some("Practice"));
         assert_eq!(first.friend.status.as_ref().unwrap().chars().count(), STATUS_MAX);
+        assert_eq!(first.friend.availability.as_deref(), Some("busy"));
         let last = first.last.as_ref().unwrap();
         assert_eq!((last.id, last.kind, last.preview.as_str()), (42, Kind::Gif, "ah ah"));
         // Ancien ami : lecture seule, et un aperçu illisible est simplement absent.
         let former = &inbox.conversations[1];
-        assert!(!former.can_write && former.last.is_none());
+        assert!(!former.can_write && !former.is_friend && former.last.is_none());
+        // Invisible ou inconnu : le site ne devrait pas l'envoyer, le launcher ne le montre pas.
+        assert_eq!(former.friend.availability, None);
     }
 
     #[test]

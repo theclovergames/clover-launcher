@@ -29,7 +29,8 @@ export function CrashDialog(props: {
 }) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className={content}>
+      {/* Plus large : les quatre boutons du pied ne tiennent pas dans 560 px et poussaient tout le contenu hors du cadre. */}
+      <DialogContent className={cn(content, "sm:max-w-[620px]")}>
         <DialogHeader>
           <DialogTitle className="font-display text-2xl font-normal">Minecraft s'est arrêté</DialogTitle>
           <DialogDescription className="text-[13px] leading-relaxed">
@@ -59,12 +60,16 @@ export function CrashDialog(props: {
   );
 }
 
-/** Confirmation avant de changer de cape : elle s'applique au compte Minecraft. `cape` à `null` : l'enlever. */
-export function CapeDialog(props: { request: { cape: Cape | null } | null; onConfirm: (cape: Cape | null) => void; onCancel: () => void }) {
+/**
+ * Confirmation avant de changer de cape : elle s'applique au compte Minecraft. `cape` à `null` :
+ * l'enlever ; `skin` : nom du skin essayé, porté en même temps.
+ */
+export function CapeDialog(props: { request: { cape: Cape | null; skin?: string } | null; onConfirm: (cape: Cape | null) => void; onCancel: () => void }) {
   // Garde la dernière demande affichée pendant l'animation de fermeture.
   const last = useRef(props.request);
   if (props.request) last.current = props.request;
   const cape = last.current?.cape ?? null;
+  const skin = last.current?.skin;
   const text = cape && ownedCapeText(cape.name);
   return (
     <Dialog open={props.request !== null} onOpenChange={(open) => !open && props.onCancel()}>
@@ -75,6 +80,7 @@ export function CapeDialog(props: { request: { cape: Cape | null } | null; onCon
             {text
               ? "Elle remplace ta cape actuelle sur ton compte Minecraft, sur Clover Games comme sur tous les serveurs."
               : "Ton personnage n'aura plus de cape sur ton compte Minecraft, sur Clover Games comme sur tous les serveurs."}
+            {skin && ` Le skin « ${skin} » est porté en même temps.`}
           </DialogDescription>
         </DialogHeader>
         {cape && text && (
@@ -91,7 +97,7 @@ export function CapeDialog(props: { request: { cape: Cape | null } | null; onCon
           </button>
           <button type="button" onClick={() => props.onConfirm(cape)} className={primaryButton}>
             <Check className="size-4" aria-hidden />
-            {cape ? "Porter cette cape" : "Enlever la cape"}
+            {cape ? (skin ? "Porter le skin et la cape" : "Porter cette cape") : skin ? "Porter le skin sans cape" : "Enlever la cape"}
           </button>
         </DialogFooter>
       </DialogContent>

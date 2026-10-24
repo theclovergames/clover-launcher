@@ -29,7 +29,7 @@ test("une case par jour, semaines du lundi, la dernière étant la semaine en co
     session(new Date(2026, 9, 9), 60), // à venir : ignorée
     session(new Date(2026, 1, 1), 30), // avant la période
   ];
-  const half = activity(sessions, now, "half");
+  const half = activity(sessions, now, 26);
   assert.equal(half.days.length, 26 * 7);
   assert.equal(half.days[0].date.getDay(), 1);
   const today = half.days.findIndex((day) => day.date.getTime() === new Date(2026, 9, 7).getTime());
@@ -38,15 +38,15 @@ test("une case par jour, semaines du lundi, la dernière étant la semaine en co
   assert.deepEqual([half.days[today].future, half.days[today + 1].future], [false, true]);
   assert.deepEqual([half.total / 60, half.sessions, half.daysPlayed, half.previous / 60], [360, 5, 4, 30]);
   assert.deepEqual([half.streak, half.best], [3, 3]);
-  assert.equal(activity(sessions, now, "year").days.length, 53 * 7);
+  assert.equal(activity(sessions, now, 53).days.length, 53 * 7);
 });
 
 test("la série tient tant que la journée n'est pas finie", () => {
   const now = new Date(2026, 9, 7, 9);
   const yesterday = [session(new Date(2026, 9, 6, 20), 30), session(new Date(2026, 9, 5, 20), 30)];
-  assert.equal(activity(yesterday, now, "half").streak, 2);
-  assert.equal(activity([session(new Date(2026, 9, 5, 20), 30)], now, "half").streak, 0);
-  assert.equal(activity([], now, "half").streak, 0);
+  assert.equal(activity(yesterday, now, 26).streak, 2);
+  assert.equal(activity([session(new Date(2026, 9, 5, 20), 30)], now, 26).streak, 0);
+  assert.equal(activity([], now, 26).streak, 0);
 });
 
 test("quatre teintes selon le temps joué dans la journée", () => {

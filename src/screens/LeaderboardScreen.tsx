@@ -62,10 +62,11 @@ type PodiumRank = 1 | 2 | 3;
  * Marches du podium, comme sur le site : blocs d'or, de fer et de cuivre en relief, dont la hauteur
  * dessine la silhouette du podium (le premier au centre et plus haut). `text` : couleur du score.
  */
+// `mira:` : style Moderne, métal en teinte légère et chiffre de sa couleur au lieu du bloc plein.
 const PODIUM: Record<PodiumRank, { block: string; face: string; height: string; text: string }> = {
-  1: { block: "bg-[#D9A441]", face: "text-[#5A3D0A]", height: "h-28", text: "text-amber-300" },
-  2: { block: "bg-[#C9CDD2]", face: "text-[#3F454C]", height: "h-20", text: "text-slate-200" },
-  3: { block: "bg-[#C0703A]", face: "text-[#4A2410]", height: "h-14", text: "text-orange-300" },
+  1: { block: "bg-[#D9A441] mira:bg-[#D9A441]/20", face: "text-[#5A3D0A] mira:text-[#E8BC5C]", height: "h-28", text: "text-amber-300" },
+  2: { block: "bg-[#C9CDD2] mira:bg-[#C9CDD2]/15", face: "text-[#3F454C] mira:text-[#DDE1E6]", height: "h-20", text: "text-slate-200" },
+  3: { block: "bg-[#C0703A] mira:bg-[#C0703A]/20", face: "text-[#4A2410] mira:text-[#E0894F]", height: "h-14", text: "text-orange-300" },
 };
 
 /**
@@ -147,7 +148,7 @@ function RankLabel({ rank, podium }: { rank: number; podium: boolean }) {
   if (podium && rank <= 3) {
     const meta = PODIUM[rank as PodiumRank];
     return (
-      <span className={cn("mc-bevel inline-flex size-7 items-center justify-center text-sm font-black tabular-nums [--mc-radius:4px]", meta.block, meta.face)}>
+      <span className={cn("mc-bevel inline-flex size-7 items-center justify-center text-sm font-black tabular-nums [--mc-radius:4px] mira:[--mc-radius:999px]", meta.block, meta.face)}>
         <span className="sr-only">Rang </span>
         {rank}
       </span>

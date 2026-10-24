@@ -68,9 +68,13 @@ const BADGES: Record<ShopBadge, { label: string; color: string }> = {
   sale: { label: "Promo", color: "#ef4444" },
 };
 
-type Services = Pick<typeof api, "shopCatalog" | "shopProduct" | "shopAccount" | "shopCheckout" | "shopPayCredits">;
+type Services = Pick<typeof api, "shopCatalog" | "shopProduct" | "shopCheckout" | "shopPayCredits">;
 
 type Props = {
+  /** Même solde et mêmes restrictions que dans la barre du compte. */
+  account: ShopAccount | null;
+  accountError: string | null;
+  onRefreshAccount: () => void;
   /** Slug de la catégorie ouverte ; la première sinon. */
   category?: string;
   /** Fiche ouverte. */
@@ -529,14 +533,12 @@ function ProductPage(props: { open: OpenProduct; catalog: ShopCatalog; account: 
  * Boutique du serveur, la même que clovergames.fr/shop : produit à la une, catégories, cartes et
  * tableau comparatif, objectif du mois et derniers achats ; la fiche d'un produit permet de
  * l'acheter pour soi ou de l'offrir. Les euros se paient par Stripe dans le navigateur, les pièces
- * du jeu directement ici. Le solde se relit quand la fenêtre revient au premier plan (après un
- * paiement dans le navigateur).
+ * du jeu directement ici. Le solde, partagé avec la barre du compte, se relit après un achat et
+ * quand la fenêtre revient au premier plan (après un paiement dans le navigateur).
  */
-export function ShopScreen({ category: categorySlug, product: open, onCategory, onOpenProduct, onOpenPlayer, onOpenLink, onNotice, services = api }: Props) {
+export function ShopScreen({ account, accountError, onRefreshAccount, category: categorySlug, product: open, onCategory, onOpenProduct, onOpenPlayer, onOpenLink, onNotice, services = api }: Props) {
   const [catalog, setCatalog] = useState<ShopCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [account, setAccount] = useState<ShopAccount | null>(null);
-  const [accountError, setAccountError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setError(null);
@@ -546,21 +548,6 @@ export function ShopScreen({ category: categorySlug, product: open, onCategory, 
       .catch((reason) => setError(String(reason)));
   }, [services]);
   useEffect(load, [load]);
-
-  const refreshAccount = useCallback(() => {
-    services.shopAccount().then(
-      (next) => {
-        setAccount(next);
-        setAccountError(null);
-      },
-      (reason) => setAccountError(String(reason)),
-    );
-  }, [services]);
-  useEffect(() => {
-    refreshAccount();
-    window.addEventListener("focus", refreshAccount);
-    return () => window.removeEventListener("focus", refreshAccount);
-  }, [refreshAccount]);
 
   if (error && !catalog) {
     return (
@@ -601,7 +588,7 @@ export function ShopScreen({ category: categorySlug, product: open, onCategory, 
             services={services}
             onOpenLink={onOpenLink}
             onNotice={onNotice}
-            onPaid={refreshAccount}
+            onPaid={onRefreshAccount}
           />
         ) : (
           <Skeleton className="h-[420px]" />

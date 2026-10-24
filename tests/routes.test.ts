@@ -3,7 +3,7 @@ import test from "node:test";
 import { back, canGoBack, type Names, openFromCrumb, type Route, trail } from "../src/lib/routes.ts";
 
 const names: Names = {
-  tab: (tab) => ({ instances: "Instances", discover: "Découvrir", home: "Accueil", messages: "Messages", profile: "Profil", shop: "Boutique" })[tab as string] ?? tab,
+  tab: (tab) => ({ instances: "Instances", discover: "Découvrir", home: "Accueil", messages: "Messages", profile: "Profil", shop: "Boutique", news: "Actualités" })[tab as string] ?? tab,
   instance: (id) => (id === "x" ? "Survie 1.21" : id),
   section: (section) => (section === "shaderpacks" ? "Shaders" : section === "mods" ? "Mods" : section),
   kind: (kind) => (kind === "shader" ? "Shaders" : kind),
@@ -79,4 +79,12 @@ test("fiche d'un produit : Boutique › produit, « Retour » vers sa catégorie
   assert.deepEqual(trail(product, names).map((crumb) => crumb.label), ["Boutique", "VIP"]);
   assert.deepEqual(trail(product, names)[0].to, { tab: "shop", category: "grades" });
   assert.deepEqual(back([product]), [{ tab: "shop", category: "grades" }]);
+});
+
+test("article : Actualités › titre, « Retour » vers la liste", () => {
+  const article: Route = { tab: "news", article: { source: "clover", slug: "pvpsoup", title: "PvPSoup", category: null, publishedAt: "2026-09-20T10:00:00.000Z", url: "https://clovergames.fr/blog/pvpsoup" } };
+  assert.deepEqual(trail(article, names).map((crumb) => crumb.label), ["Actualités", "PvPSoup"]);
+  assert.deepEqual(trail(article, names)[0].to, { tab: "news" });
+  assert.deepEqual(back([{ tab: "home" }, article]), [{ tab: "home" }]);
+  assert.deepEqual(back([article]), [{ tab: "news" }]);
 });

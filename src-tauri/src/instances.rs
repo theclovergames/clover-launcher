@@ -133,6 +133,69 @@ pub struct Entry {
     pub instance: Instance,
     pub game_dir: String,
     pub installed: bool,
+    /// Logo du modpack dont l'instance vient, en adresse `data:`.
+    pub icon: Option<String>,
+}
+
+/// Logo d'une instance, dans son dossier (`instances/<id>/icon`) : son type est lu dans l'image.
+const ICON: &str = "icon";
+/// Plafond des logos de Modrinth : au-delà, l'image voyagerait trop lourde vers l'interface.
+pub(crate) const MAX_ICON: usize = 256 * 1024;
+
+/// Type d'une image reconnue à ses premiers octets : PNG, JPEG, GIF ou WebP, jamais de SVG (il
+/// porterait du script).
+fn image_type(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
+        [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),
+        [b'G', b'I', b'F', b'8', ..] => Some("image/gif"),
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// Enregistre le logo de l'instance `id` ; une image inconnue ou trop lourde est ignorée.
+pub(crate) fn save_icon(root: &std::path::Path, id: &str, bytes: &[u8]) {
+    if bytes.len() > MAX_ICON || image_type(bytes).is_none() {
+        return;
+    }
+    let dir = root.join("instances").join(id);
+    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| crate::storage::write_atomically(&dir.join(ICON), bytes)) {
+        eprintln!("[instances] logo non enregistré : {e}");
+    }
+}
+
+fn icon(root: &std::path::Path, id: &str) -> Option<String> {
+    data_url(&std::fs::read(root.join("instances").join(id).join(ICON)).ok()?)
+}
+
+/// Logo en adresse `data:` pour l'interface, s'il est une image acceptée.
+pub(crate) fn data_url(bytes: &[u8]) -> Option<String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let kind = image_type(bytes).filter(|_| bytes.len() <= MAX_ICON)?;
+    Some(format!("data:{kind};base64,{}", STANDARD.encode(bytes)))
+}
+
+/// Logo publié (Modrinth, CurseForge), lu dans la limite de `MAX_ICON`.
+pub(crate) async fn fetch_icon(http: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
+    if !url.starts_with("https://") {
+        return None;
+    }
+    let mut response = http.get(url).timeout(std::time::Duration::from_secs(20)).send().await.ok()?.error_for_status().ok()?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() > MAX_ICON {
+            return None;
+        }
+    }
+    Some(bytes)
+}
+
+/// Logo du projet Modrinth `project` (identifiant ou slug).
+pub(crate) async fn modrinth_icon(http: &reqwest::Client, project: &str) -> Option<Vec<u8>> {
+    let url = game::modrinth::projects(http, &[project.to_owned()]).await.ok()?.into_values().next()?.icon_url?;
+    fetch_icon(http, &url).await
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -254,10 +317,8 @@ pub async fn versions(root: &std::path::Path) -> game::Result<Vec<GameVersion>> 
             let versions: Vec<_> = index
                 .versions
                 .into_iter()
-                .filter(|entry| {
-                    matches!(entry.kind.as_str(), "release" | "snapshot")
-                        && (entry.release_time.as_str() >= "2023-06-07" || matches!(entry.id.as_str(), "1.8.9" | "1.12.2" | "1.16.5" | "1.17.1" | "1.18.2" | "1.19.4"))
-                })
+                // Toutes, jusqu'aux Alpha et Bêta ; le launcher les range par famille.
+                .filter(|entry| matches!(entry.kind.as_str(), "release" | "snapshot" | "old_beta" | "old_alpha"))
                 .filter(|entry| validate_version_id(&entry.id).is_ok())
                 .map(|entry| GameVersion {
                     id: entry.id,
@@ -453,6 +514,7 @@ pub async fn list_instances(
                 .as_ref()
                 .is_some_and(|id| paths.versions.join(id).join(format!("{id}.jar")).is_file());
             Ok(Entry {
+                icon: icon(&state.root, &instance.id),
                 instance,
                 installed,
                 game_dir: paths.game.to_string_lossy().into_owned(),
@@ -1094,14 +1156,94 @@ pub async fn install_modpack(project: String, version: Option<String>, app: AppH
     };
     let (http, archive_ref, index_ref, progress_ref) = (&http, &archive, &index, &progress);
     let result = match index.versions() {
-        Ok(versions) => modpack_instance(&state, base, &index.name, Some(project), versions, |paths| async move {
+        Ok(versions) => modpack_instance(&state, base, &index.name, Some(project.clone()), versions, |paths| async move {
             game::content::install_modpack(http, archive_ref, index_ref, &paths.game, &paths.personal_mods, progress_ref).await
         })
         .await,
         Err(error) => Err(error),
     };
     let _ = std::fs::remove_file(&archive);
-    result.map(|(id, ())| id)
+    let (id, ()) = result?;
+    // Sans réseau, l'instance garde l'image de sa version de Minecraft.
+    if let Some(bytes) = modrinth_icon(http, &project).await {
+        save_icon(&state.root, &id, &bytes);
+    }
+    Ok(id)
+}
+
+fn unlinked() -> GameError {
+    GameError::InvalidVersion("cette instance ne vient pas d'un modpack Modrinth".into())
+}
+
+/// Instance personnelle avec des mods : elle-même, ses chemins, sa version de Minecraft et son loader.
+fn modded_instance(app: &AppHandle, state: &AppState, id: &str) -> game::Result<(Instance, Paths, String, ModLoader)> {
+    let instance = resolve(&state.snapshot(), Some(id))?;
+    let minecraft = instance.minecraft.clone().ok_or_else(unlinked)?;
+    let loader = instance.kind.mod_loader().filter(|_| instance.kind != Kind::Clover).ok_or_else(unlinked)?;
+    let paths = paths(Paths::new(app)?, &instance)?;
+    Ok((instance, paths, minecraft, loader))
+}
+
+/// Version plus récente du modpack de l'instance pour sa version de Minecraft ; `None` si elle est
+/// à jour ou ne vient d'aucun modpack. Une instance importée sans modpack noté le cherche à son nom :
+/// il lui est lié, avec son logo, si ses mods sont ceux d'une de ses versions.
+#[tauri::command]
+pub async fn modpack_update(id: String, app: AppHandle, state: State<'_, AppState>) -> game::Result<Option<game::content::PackUpdate>> {
+    let (instance, paths, minecraft, loader) = modded_instance(&app, &state, &id)?;
+    let http = game::download::client();
+    let (project, found) = match instance.modpack {
+        Some(project) => (project, None),
+        None => match game::modrinth::modpack_named(&http, &instance.name).await? {
+            Some(hit) => (hit.project_id.clone(), Some(hit)),
+            None => return Ok(None),
+        },
+    };
+    let update = game::content::modpack_update(&http, &project, &minecraft, loader, &paths.personal_mods).await?;
+    if let Some(hit) = found {
+        state.update(|stored| {
+            if let Some(entry) = stored.instances.iter_mut().find(|entry| entry.id == id) {
+                entry.modpack = Some(project.clone());
+            }
+        }).map_err(|e| GameError::Io(std::io::Error::other(e)))?;
+        if let Some(url) = hit.icon_url.as_deref().filter(|_| icon(&state.root, &id).is_none()) {
+            if let Some(bytes) = fetch_icon(&http, url).await {
+                save_icon(&state.root, &id, &bytes);
+            }
+        }
+    }
+    Ok(update)
+}
+
+/// Installe la version `version` du modpack de l'instance (voir `content::update_modpack`). Les
+/// mods remplacés gardent leur état désactivé ; le loader suit celui que demande le pack s'il est
+/// publié. Pas pendant une partie de l'instance.
+#[tauri::command]
+pub async fn update_modpack(id: String, version: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let (instance, paths, minecraft, loader) = modded_instance(&app, &state, &id).map_err(|e| e.to_string())?;
+    let project = instance.modpack.clone().ok_or_else(|| unlinked().to_string())?;
+    let open = app.state::<game::games::Games>().find(&id).is_some_and(|game| game.running());
+    if open || open_game_dirs(&state.root).iter().any(|open| game::games::same_dir(open, &paths.game)) {
+        return Err("Ferme cette instance avant de mettre à jour son modpack.".into());
+    }
+    let progress = |done, total| {
+        let _ = app.emit("modpack-progress", (done, total));
+    };
+    let staging = state.root.join("downloads").join("modpacks");
+    let http = game::download::client();
+    let updated = game::content::update_modpack(&http, &project, &version, (&minecraft, loader), &paths.game, &paths.personal_mods, &staging, &progress).await.map_err(|e| e.to_string())?;
+    let published = kind_loaders(&state.root, instance.kind, &minecraft).await.is_ok_and(|versions| versions.contains(&updated.loader));
+    state.update(|stored| {
+        let Some(entry) = stored.instances.iter_mut().find(|entry| entry.id == id) else { return };
+        if published {
+            entry.loader = Some(updated.loader.clone());
+        }
+        for name in entry.disabled_mods.iter_mut() {
+            if let Some((_, new)) = updated.renamed.iter().find(|(old, _)| old == name) {
+                name.clone_from(new);
+            }
+        }
+        entry.disabled_mods.retain(|name| !updated.removed.contains(name));
+    })
 }
 
 /// Modpack importé depuis un fichier : l'instance créée, et les fichiers du pack à télécharger
@@ -1149,7 +1291,7 @@ pub async fn import_modpack_file(app: AppHandle, state: State<'_, AppState>) -> 
     };
     let (manifest, entries, version) = (&manifest, &entries, minecraft.as_str());
     let (instance, missing) = modpack_instance(&state, Paths::new(&app)?, &name, None, (minecraft.clone(), mod_loader, loader), |paths| async move {
-        game::content::copy_overrides(archive, &[manifest.overrides.as_str()], &paths.game, &paths.personal_mods)?;
+        game::content::copy_overrides(archive, &[manifest.overrides.as_str()], &paths.game, &paths.personal_mods, true)?;
         game::curseforge::install(http, manifest, entries, version, mod_loader, &paths.game, &paths.personal_mods, progress).await
     })
     .await?;
@@ -1363,6 +1505,11 @@ pub async fn play_personal(
         let personal = game::personal::loadable(&paths.personal_mods, &options.disabled_personal_mods, minecraft, loader);
         game::mods::sync_personal(&paths.mods, &personal).await?;
     }
+    let mut options = options;
+    // Le mod Clover, hors de `mods/` comme dans Clover Games ; aucun pour Forge et NeoForge.
+    if matches!(instance.kind, Kind::Fabric | Kind::Quilt) {
+        options.clover_mods = game::client_mod::install(&paths.root.join("client-mods"), minecraft).into_iter().collect();
+    }
     game::launch::spawn(app, &instance.id, &paths, installation, session, world.map(game::launch::QuickPlay::World).as_ref(), &options, on_join).await
 }
 
@@ -1414,6 +1561,21 @@ mod tests {
         assert!(!to.join("quick-play.json").exists());
         copy_instance_dir(&root.join("absent"), &root.join("c")).unwrap();
         assert!(!root.join("c").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn only_light_raster_images_become_instance_logos() {
+        let root = std::env::temp_dir().join(format!("clover-icon-{}", rand::random::<u64>()));
+        let id = "instance-0123456789abcdef0123456789abcdef";
+        save_icon(&root, id, b"<svg onload=\"alert(1)\"/>");
+        assert_eq!(icon(&root, id), None);
+        let mut heavy = b"\x89PNG".to_vec();
+        heavy.resize(MAX_ICON + 1, 0);
+        save_icon(&root, id, &heavy);
+        assert_eq!(icon(&root, id), None);
+        save_icon(&root, id, b"RIFF\0\0\0\0WEBPVP8 ");
+        assert_eq!(icon(&root, id).as_deref(), Some("data:image/webp;base64,UklGRgAAAABXRUJQVlA4IA=="));
         std::fs::remove_dir_all(root).unwrap();
     }
 
