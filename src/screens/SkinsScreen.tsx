@@ -20,8 +20,8 @@ type Props = {
   look: SkinLook;
   saved: SavedSkin[];
   activeId: string | null;
-  /** Porte un skin de la bibliothèque. */
-  onSelect: (skin: SavedSkin) => void;
+  /** Porte un skin de la bibliothèque ; avec `cape`, la cape choisie en même temps (`null` : sans cape). */
+  onSelect: (skin: SavedSkin, cape?: Cape | null) => void;
   onAddFile: (file: File) => void;
   onRename: (skin: SavedSkin, name: string) => void;
   /** Retire un skin de la bibliothèque locale, sans toucher au skin porté. */
@@ -32,8 +32,8 @@ type Props = {
   onSkinModel: (skin: SavedSkin, model: SkinModel) => void;
   /** Capes possédées par le compte. */
   capes: Cape[];
-  /** Skin de la Découverte ou du compte : ajouté à la bibliothèque, porté seulement si `wear`. */
-  onRemoteSkin: (skin: { texture: string; model: SkinModel; name: string }, wear: boolean) => void;
+  /** Skin de la Découverte ou du compte : ajouté à la bibliothèque, porté seulement si `wear`, avec `cape` comme `onSelect`. */
+  onRemoteSkin: (skin: { texture: string; model: SkinModel; name: string }, wear: boolean, cape?: Cape | null) => void;
   /** Porte une cape du compte, ou l'enlève (`null`), une fois confirmé. */
   onWearCape: (cape: Cape | null) => void;
   /** Enregistre un skin en .png là où le joueur le choisit. */
@@ -145,13 +145,13 @@ function SkinTile({ skin, worn, tried, onTry, onRename, onExport, onRemove }: Ti
         className={cn("absolute inset-0 rounded-lg border border-border bg-card transition-colors hover:bg-card-hover", tried && selectedFrame)}
       />
       {worn && (
-        <span className="pointer-events-none absolute top-2 left-2 flex items-center gap-1 rounded-md bg-primary px-1.5 py-0.5 text-[11px] font-bold text-primary-foreground">
+        <span className="pointer-events-none absolute top-2 left-2 z-10 flex items-center gap-1 rounded-md bg-primary px-1.5 py-0.5 text-[11px] font-bold text-primary-foreground">
           <Check className="size-3" strokeWidth={3} aria-hidden />
           Porté
         </span>
       )}
       {!editing && (
-        <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+        <div className="absolute top-2 right-2 z-10 flex flex-col gap-1 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
           <TileAction label={`Renommer ${skin.name}`} onClick={() => setEditing(true)}>
             <Pencil aria-hidden />
           </TileAction>
@@ -232,7 +232,8 @@ function AddSkinTile({ onFile }: { onFile: (file: File) => void }) {
 const grid = "grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-3";
 
 /** Cape du compte, ou « Aucune » (`cape` absent) ; le choix passe par une confirmation. */
-function CapeTile({ cape, active, disabled, onSelect }: { cape?: Cape; active: boolean; disabled: boolean; onSelect: () => void }) {
+/** `active` : la cape de l'aperçu (encadrée) ; `worn` : celle du compte (coche). */
+function CapeTile({ cape, active, worn, disabled, onSelect }: { cape?: Cape; active: boolean; worn: boolean; disabled: boolean; onSelect: () => void }) {
   const text = cape && ownedCapeText(cape.name);
   return (
     <li>
@@ -247,7 +248,7 @@ function CapeTile({ cape, active, disabled, onSelect }: { cape?: Cape; active: b
           active && selectedFrame,
         )}
       >
-        {active && (
+        {worn && (
           <span className="absolute top-1.5 right-1.5 grid size-5 place-items-center rounded-full bg-[#e9e3d4] text-background">
             <Check className="size-3.5" strokeWidth={3} aria-hidden />
           </span>
@@ -304,14 +305,18 @@ export function SkinsScreen(props: Props) {
   const [discoverOpened, setDiscoverOpened] = useState(false);
   const [discoverView, setDiscoverView] = useState<"skins" | "capes">("skins");
   const [trial, setTrial] = useState<Trial | null>(null);
-  /** Cape choisie, en attente de confirmation : l'aperçu la montre déjà. */
-  const [capeRequest, setCapeRequest] = useState<{ cape: Cape | null } | null>(null);
+  /** Cape de Mes capes choisie : l'aperçu la montre avec le skin affiché, « Porter » l'applique avec lui. */
+  const [capeChoice, setCapeChoice] = useState<{ cape: Cape | null } | null>(null);
+  /** Confirmation en cours : la cape, et le nom du skin essayé qui part avec elle. */
+  const [capeRequest, setCapeRequest] = useState<{ cape: Cape | null; skin?: string } | null>(null);
   /** Bras demandés pour le skin porté, en attente de confirmation : l'aperçu les montre déjà. */
   const [modelRequest, setModelRequest] = useState<SkinModel | null>(null);
   const [filter, setFilter] = useState("");
   const [dropping, setDropping] = useState(false);
   const [elytra, setElytra] = useState(false);
-  const shown = capeRequest ? { ...look, cape: capeRequest.cape } : modelRequest ? { ...look, model: modelRequest } : trial ? trialLook(look, trial) : look;
+  const tried = trial ? trialLook(look, trial) : look;
+  const shown = modelRequest ? { ...look, model: modelRequest } : capeChoice ? { ...tried, cape: capeChoice.cape } : tried;
+  const shownCape = shown.cape?.id ?? null;
   const triedSkin = trial?.kind === "skin" ? trial : null;
   const busy = status?.kind === "busy";
   const show = (id: "mine" | "discover", inside?: "skins" | "capes") => {
@@ -329,23 +334,42 @@ export function SkinsScreen(props: Props) {
     return () => window.clearTimeout(timer);
   }, [status]);
 
+  const reset = () => {
+    setTrial(null);
+    setCapeChoice(null);
+  };
+
   // Échap quitte l'essai, sauf dans un champ ou pendant la confirmation d'une cape.
   useEffect(() => {
-    if (!trial) return;
+    if (!trial && !capeChoice) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || capeRequest || event.target instanceof HTMLInputElement) return;
       setTrial(null);
+      setCapeChoice(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [trial, capeRequest]);
+  }, [trial, capeChoice, capeRequest]);
 
-  const wearTried = () => {
+  /** Le skin essayé, avec `cape` si une cape a été choisie avec lui : un seul envoi au compte. */
+  const wearSkin = (cape?: Cape | null) => {
     if (!triedSkin) return;
     const entry = triedSkin.savedId ? saved.find((skin) => skin.id === triedSkin.savedId) : undefined;
-    if (entry) onSelect({ ...entry, model: triedSkin.model });
-    else onRemoteSkin(triedSkin, true);
+    if (entry) onSelect({ ...entry, model: triedSkin.model }, cape);
+    else onRemoteSkin(triedSkin, true, cape);
+  };
+
+  /** « Porter » : une cape choisie demande d'abord confirmation et part avec le skin essayé ; un skin seul part tout de suite. */
+  const wear = () => {
+    if (capeChoice) return setCapeRequest({ cape: capeChoice.cape, skin: triedSkin?.name });
+    wearSkin();
     setTrial(null);
+  };
+
+  /** Une cape de Mes capes s'essaie avec le skin affiché ; recliquer celle qu'on porte annule le choix. */
+  const pickCape = (cape: Cape | null) => {
+    if (trial?.kind === "cape") setTrial(null);
+    setCapeChoice((cape?.id ?? null) === (look.cape?.id ?? null) ? null : { cape });
   };
 
   // Bras du skin essayé (gardés pour un skin de la bibliothèque), sinon du skin porté après confirmation.
@@ -361,19 +385,19 @@ export function SkinsScreen(props: Props) {
 
   return (
     <main className="flex min-h-0 flex-1">
-      {/* Le personnage, teinté par les couleurs du skin porté ou essayé. */}
       <CharacterColumn
         label="Aperçu du skin"
         name={trial?.kind === "cape" ? playerName : (triedSkin?.name ?? playerName)}
         look={shown}
         animate={animateSkin}
         elytra={elytra}
+        recenter={false}
         tints={[
           ...(look.texture ? [{ id: "worn", src: look.texture }] : []),
           ...(triedSkin ? [{ id: "trial", src: triedSkin.texture }] : []),
         ]}
         tint={triedSkin ? "trial" : "worn"}
-        top={trial && <span className="rounded-lg border border-primary/40 bg-black/45 px-3 py-1.5 text-xs font-bold text-primary backdrop-blur-sm">Essai</span>}
+        top={(trial || capeChoice) && <span className="rounded-lg border border-primary/40 bg-black/45 px-3 py-1.5 text-xs font-bold text-primary backdrop-blur-sm">Essai</span>}
         overlay={shown.cape && <Choice label="Dos du personnage" value={elytra} options={BACK} onChange={setElytra} />}
       >
         {/* Hauteur réservée : l'aperçu ne saute pas entre ton skin et un essai. */}
@@ -391,9 +415,9 @@ export function SkinsScreen(props: Props) {
           {triedSkin ? (
             <>
               <div className="flex gap-2">
-                <button type="button" onClick={wearTried} disabled={busy} className={primaryButton}>
+                <button type="button" onClick={wear} disabled={busy} className={primaryButton}>
                   <Shirt className="size-4" aria-hidden />
-                  Porter ce skin
+                  {capeChoice ? "Porter le skin et la cape" : "Porter ce skin"}
                 </button>
                 {!triedSkin.savedId && (
                   <button type="button" onClick={() => onRemoteSkin(triedSkin, false)} title="Ajouter à Mes skins" aria-label="Ajouter à Mes skins" className={iconButton}>
@@ -406,6 +430,11 @@ export function SkinsScreen(props: Props) {
               </div>
               <p className="text-center text-[11px] text-muted-foreground">Rien n'est envoyé à ton compte tant que tu ne le portes pas.</p>
             </>
+          ) : capeChoice ? (
+            <button type="button" onClick={wear} disabled={busy} className={primaryButton}>
+              <Shirt className="size-4" aria-hidden />
+              {capeChoice.cape ? "Porter cette cape" : "Enlever ma cape"}
+            </button>
           ) : trial?.kind === "cape" ? (
             trial.owned ? (
               trial.owned.id !== look.cape?.id ? (
@@ -443,11 +472,11 @@ export function SkinsScreen(props: Props) {
               </button>
             </div>
           )}
-          {trial && (
-            <button type="button" onClick={() => setTrial(null)} className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground">
-              <Undo2 className="size-3.5" aria-hidden />
+          {(trial || capeChoice) && (
+            <button type="button" onClick={reset} className={secondaryButton}>
+              <Undo2 className="size-4" aria-hidden />
               Revenir à mon skin
-              <kbd className="rounded border border-border px-1 font-sans text-[10px] font-semibold">Échap</kbd>
+              <kbd className="rounded border border-border px-1 font-sans text-[10px] font-semibold text-muted-foreground">Échap</kbd>
             </button>
           )}
         </div>
@@ -479,7 +508,10 @@ export function SkinsScreen(props: Props) {
             <div hidden={view !== "discover"} className="mt-5">
               <SkinGallery
                 trial={trial}
-                onTrial={setTrial}
+                onTrial={(next) => {
+                  setTrial(next);
+                  if (next.kind === "cape") setCapeChoice(null);
+                }}
                 onSave={(skin) => onRemoteSkin(skin, false)}
                 owned={capes}
                 activeCapeId={look.cape?.id ?? null}
@@ -566,12 +598,12 @@ export function SkinsScreen(props: Props) {
               {capes.length > 0 ? (
                 <>
                   <ul className="grid grid-cols-[repeat(auto-fill,minmax(104px,1fr))] gap-3">
-                    <CapeTile active={look.cape === null} disabled={busy} onSelect={() => look.cape !== null && setCapeRequest({ cape: null })} />
+                    <CapeTile active={shownCape === null} worn={look.cape === null} disabled={busy} onSelect={() => pickCape(null)} />
                     {capes.map((cape) => (
-                      <CapeTile key={cape.id} cape={cape} active={look.cape?.id === cape.id} disabled={busy} onSelect={() => look.cape?.id !== cape.id && setCapeRequest({ cape })} />
+                      <CapeTile key={cape.id} cape={cape} active={shownCape === cape.id} worn={look.cape?.id === cape.id} disabled={busy} onSelect={() => pickCape(cape)} />
                     ))}
                   </ul>
-                  <p className="text-xs text-muted-foreground">Clique sur une cape pour la porter (une confirmation t'est demandée) ; survole-la pour savoir comment elle s'obtient.</p>
+                  <p className="text-xs text-muted-foreground">Clique sur une cape pour l'essayer avec le skin affiché, puis « Porter » ; survole-la pour savoir comment elle s'obtient.</p>
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground">Ce compte ne possède aucune cape.</p>
@@ -603,8 +635,9 @@ export function SkinsScreen(props: Props) {
         onCancel={() => setCapeRequest(null)}
         onConfirm={(cape) => {
           setCapeRequest(null);
-          if (trial?.kind === "cape") setTrial(null);
-          onWearCape(cape);
+          if (triedSkin) wearSkin(cape);
+          else onWearCape(cape);
+          reset();
         }}
       />
     </main>

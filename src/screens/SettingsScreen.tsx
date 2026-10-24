@@ -2,14 +2,15 @@ import { Check, FolderInput, FolderOpen, Gamepad2, HardDrive, Info, Palette, Plu
 import type { LucideIcon } from "lucide-react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
-import lobby from "@/assets/home/lobby.webp";
 import { RemoveAccountButton } from "@/components/AccountMenu";
+import { SegmentBar } from "@/components/SegmentBar";
 import { DiscordLogo } from "@/components/DiscordLogo";
 import { PlayerHead } from "@/components/PlayerHead";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { ACCENTS, type Accent, accent, HERO_TONES, type HeroTone, heroTone } from "@/lib/appearance";
-import { navItem, secondaryButton } from "@/lib/buttons";
+import { ScenePreview } from "@/components/SkyScenes";
+import { ACCENTS, type Accent, accent, SCENES, type Scene, sceneOf } from "@/lib/appearance";
+import { navItem, secondaryButton, slidingSegment } from "@/lib/buttons";
 import { DISCORD_URL } from "@/lib/site";
 import { cn, fold } from "@/lib/utils";
 import type { Profile } from "@/types";
@@ -31,12 +32,15 @@ export type Settings = {
   scale: 90 | 100 | 110 | 125;
   animations: "system" | "reduced";
   animatedSkin: boolean;
-  showVotes: boolean;
   /** Clé de `ACCENTS` : boutons, sélections et barres. */
   accent: string;
-  /** Clé de `HERO_TONES` : bandeau de l'accueil. */
+  /** Clé de `SCENES` : bandeau de l'accueil. */
   hero: string;
   corners: "rounded" | "square";
+  /** Boutons en relief, cadres et cases façon Minecraft, ou style Mira de shadcn/ui. */
+  uiStyle: "minecraft" | "mira";
+  /** Météo réelle chez le joueur dans le ciel ; désactivée, le relais n'est plus appelé. */
+  skyWeather: boolean;
   // Jeu
   memoryAuto: boolean;
   /** Mémoire allouée au jeu, en Go. */
@@ -149,7 +153,7 @@ function Toggle({ id, checked, onChange, children, hint }: { id: string; checked
 /** Choix exclusif à quelques valeurs, en boutons collés comme un sélecteur de mode du jeu. */
 function Segmented<T extends string | number>({ label, value, options, onChange }: { label: string; value: T; options: { value: T; label: string }[]; onChange: (value: T) => void }) {
   return (
-    <div role="radiogroup" aria-label={label} className="flex gap-1 self-start rounded-lg border border-border bg-sunken p-1">
+    <SegmentBar role="radiogroup" aria-label={label} value={value} className="self-start">
       {options.map((option) => (
         <button
           key={String(option.value)}
@@ -157,12 +161,12 @@ function Segmented<T extends string | number>({ label, value, options, onChange 
           role="radio"
           aria-checked={value === option.value}
           onClick={() => onChange(option.value)}
-          className={cn("rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors", value === option.value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground")}
+          className={slidingSegment(value === option.value)}
         >
           {option.label}
         </button>
       ))}
-    </div>
+    </SegmentBar>
   );
 }
 
@@ -375,10 +379,10 @@ function Appearance({ settings, onChange }: Pick<Props, "settings" | "onChange">
         </div>
       </Row>
 
-      <Row title="Bandeau de l'accueil" hint="Teinte du dégradé posé sur l'image du lobby, derrière ton skin.">
-        <div role="radiogroup" aria-label="Bandeau de l'accueil" className="grid grid-cols-4 gap-2">
-          {(Object.keys(HERO_TONES) as HeroTone[]).map((id) => {
-            const checked = heroTone(settings.hero) === id;
+      <Row title="Décor de l'accueil" hint="Le paysage derrière ton skin. Dans le monde normal, il suit l'heure et la météo ; le Nether et l'End ont leur propre ciel.">
+        <div role="radiogroup" aria-label="Décor de l'accueil" className="grid grid-cols-5 gap-2">
+          {(Object.keys(SCENES) as Scene[]).map((id) => {
+            const checked = sceneOf(settings.hero) === id;
             return (
               <button
                 key={id}
@@ -388,12 +392,12 @@ function Appearance({ settings, onChange }: Pick<Props, "settings" | "onChange">
                 onClick={() => onChange({ hero: id })}
                 className={cn("group flex flex-col gap-1.5 rounded-lg border p-1.5 text-left transition-colors", checked ? "border-[#e9e3d4]/60" : "border-border hover:border-[#4a4237]")}
               >
-                <span className="relative h-12 overflow-hidden rounded-md">
-                  <img src={lobby} alt="" draggable={false} className="absolute inset-0 size-full object-cover object-[50%_38%]" />
-                  <span className="absolute inset-0" style={{ background: `linear-gradient(to top, ${HERO_TONES[id].shade} 0%, ${HERO_TONES[id].shade}cc 30%, transparent 85%)` }} />
+                <span className={cn("relative grid h-14 place-items-end justify-center overflow-hidden rounded-md bg-linear-to-b pb-1.5", SCENES[id].bg)}>
+                  <ScenePreview scene={id} />
+                  <span className="absolute inset-x-0 bottom-0 h-1.5 bg-black/25" />
                   {checked && <Check className="absolute top-1.5 right-1.5 size-3.5 text-white" aria-hidden />}
                 </span>
-                <span className={cn("px-0.5 text-xs font-semibold", checked ? "text-foreground" : "text-muted-foreground group-hover:text-foreground")}>{HERO_TONES[id].label}</span>
+                <span className={cn("px-0.5 text-xs font-semibold", checked ? "text-foreground" : "text-muted-foreground group-hover:text-foreground")}>{SCENES[id].label}</span>
               </button>
             );
           })}
@@ -409,6 +413,18 @@ function Appearance({ settings, onChange }: Pick<Props, "settings" | "onChange">
             { value: "square", label: "Carrés" },
           ]}
           onChange={(corners) => onChange({ corners })}
+        />
+      </Row>
+
+      <Row title="Style" hint="« Moderne » remplace les boutons en relief et les cadres façon Minecraft par un style plus sobre.">
+        <Segmented
+          label="Style"
+          value={settings.uiStyle}
+          options={[
+            { value: "minecraft", label: "Minecraft" },
+            { value: "mira", label: "Moderne" },
+          ]}
+          onChange={(uiStyle) => onChange({ uiStyle })}
         />
       </Row>
 
@@ -428,8 +444,13 @@ function Appearance({ settings, onChange }: Pick<Props, "settings" | "onChange">
         <Toggle id="animated-skin" checked={settings.animatedSkin} onChange={(animatedSkin) => onChange({ animatedSkin })} hint="Ton personnage respire, s'impatiente puis se fatigue quand tu ne touches plus au launcher.">
           Skin animé
         </Toggle>
-        <Toggle id="show-votes" checked={settings.showVotes} onChange={(showVotes) => onChange({ showVotes })} hint="La pastille « Pseudo a voté pour le serveur » dans la barre du haut.">
-          Afficher les derniers votes
+        <Toggle
+          id="sky-weather"
+          checked={settings.skyWeather}
+          onChange={(skyWeather) => onChange({ skyWeather })}
+          hint="Pluie, neige, orage ou brouillard dans le ciel, selon le temps qu'il fait chez toi (à une dizaine de kilomètres près). Désactivée, le launcher ne demande plus la météo."
+        >
+          Météo réelle
         </Toggle>
       </Row>
     </>
@@ -643,7 +664,7 @@ function Storage({ settings, onChange, storage, onOpenGameDir, onImport, onChang
       <Row title="Autres launchers" hint="Launcher officiel, Modrinth App, Prism Launcher, MultiMC, CurseForge. Leurs fichiers sont copiés, jamais déplacés.">
         <button type="button" onClick={onImport} className={`${secondaryButton} self-start`}>
           <FolderInput className="size-4" aria-hidden />
-          Importer des réglages, serveurs ou mondes…
+          Importer des modpacks, instances ou réglages…
         </button>
       </Row>
     </>
@@ -705,6 +726,15 @@ function About({ about, onOpenLink }: Pick<Props, "about" | "onOpenLink">) {
           <span className="font-pixel text-[12px] text-foreground">{about.minecraft}</span> · Fabric <span className="font-pixel text-[12px] text-foreground">{about.fabric}</span>
         </p>
         <p className="text-xs text-muted-foreground">Compilé le {built}</p>
+      </Row>
+      <Row title="Crédits">
+        <p className="text-sm text-muted-foreground">
+          Météo de l'accueil :{" "}
+          <button type="button" onClick={() => onOpenLink("https://api.met.no")} className="font-semibold text-foreground underline-offset-2 hover:underline">
+            MET Norway
+          </button>
+          , sous licence CC BY 4.0.
+        </p>
       </Row>
       <Row title="Aide" hint="Une question, un plantage, une suggestion.">
         <div className="flex flex-wrap gap-2">

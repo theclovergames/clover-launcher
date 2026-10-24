@@ -483,6 +483,11 @@ pub async fn install_dependencies(http: &reqwest::Client, dir: &Path, files: &[S
     Ok(resolved)
 }
 
+/// Le `fabric.mod.json` de ce `.jar` (en mémoire) accepte-t-il `minecraft` ?
+pub(crate) fn fabric_accepts(jar: &[u8], minecraft: &str) -> bool {
+    matches!(read_jar(std::io::Cursor::new(jar)), Some(Jar::Fabric(fabric)) if fabric.minecraft().is_some_and(|ranges| ranges.iter().any(|range| accepts(range, minecraft))))
+}
+
 /// Mods du joueur à charger au lancement : activés, faits pour `loader` et pour `minecraft`.
 pub fn loadable(dir: &Path, disabled: &[String], minecraft: &str, loader: ModLoader) -> Vec<PathBuf> {
     jars(dir)

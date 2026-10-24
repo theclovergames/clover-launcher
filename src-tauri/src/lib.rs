@@ -24,6 +24,7 @@ mod steam;
 mod storage;
 mod store;
 mod update;
+mod weather;
 #[cfg(windows)]
 mod tray_popup;
 
@@ -339,7 +340,7 @@ async fn site_feed() -> site::Feed {
     site::feed().await
 }
 
-/// Page Actualités : blog de Clover Games et annonces officielles de Minecraft.
+/// Page Actualités : blog, changelog et annonces officielles de Minecraft.
 #[tauri::command]
 async fn news_page() -> site::NewsPage {
     site::news_page().await
@@ -349,6 +350,12 @@ async fn news_page() -> site::NewsPage {
 #[tauri::command]
 async fn blog_article(slug: String) -> Result<site::BlogArticle, String> {
     site::blog_article(&slug).await
+}
+
+/// Note complète du changelog de Clover Games.
+#[tauri::command]
+async fn changelog_article(slug: String) -> Result<site::ChangelogArticle, String> {
+    site::changelog_article(&slug).await
 }
 
 /// Note de version Minecraft complète.
@@ -1259,6 +1266,7 @@ pub fn run() {
             notifications::mark_notifications_read,
             notifications::system_notification,
             messages::message_conversations,
+            messages::set_availability,
             messages::message_thread,
             messages::send_message,
             messages::send_gif,
@@ -1271,9 +1279,11 @@ pub fn run() {
             messages::search_gifs,
             messages::send_friend_request,
             messages::answer_friend_request,
+            messages::remove_friend,
             location::pick_game_dir,
             location::move_game_dir,
             steam::steam_status,
+            weather::weather,
             steam::steam_add,
             steam::steam_remove,
             get_catalogue,
@@ -1281,6 +1291,7 @@ pub fn run() {
             site_feed,
             news_page,
             blog_article,
+            changelog_article,
             minecraft_article,
             system_info,
             storage_usage,
@@ -1324,6 +1335,8 @@ pub fn run() {
             instances::list_instances,
             instances::install_modpack,
             instances::modpack_versions,
+            instances::modpack_update,
+            instances::update_modpack,
             instances::import_modpack_file,
             install_modrinth_content,
             instances::instance_content,

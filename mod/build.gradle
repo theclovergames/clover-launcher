@@ -1,32 +1,64 @@
 plugins {
-    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'net.fabricmc.fabric-loom' version "${loom_version}" apply false
+    id 'net.fabricmc.fabric-loom-remap' version "${loom_version}" apply false
 }
 
-version = project.mod_version
-group = project.maven_group
+// Une construction par version de Minecraft (versions/<version>/gradle.properties) : la version
+// visée, la plage acceptée dans fabric.mod.json, le Java du jeu et les dossiers de sources (src/<nom>),
+// communs d'abord, puis ceux de l'époque de l'API.
+subprojects {
+    // Depuis 26.1, Minecraft n'est plus obfusqué : ni mappings ni remappage.
+    def obfuscated = !minecraft_version.startsWith('26.')
+    apply plugin: obfuscated ? 'net.fabricmc.fabric-loom-remap' : 'net.fabricmc.fabric-loom'
 
-base {
-    archivesName = project.archives_base_name
-}
+    version = "${mod_version}+${minecraft_version}"
+    group = maven_group
+    base { archivesName = 'cloverclient' }
 
-dependencies {
-    minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
-}
+    sourceSets.main {
+        java.srcDirs = sources.split(',').collect { rootProject.file("src/${it.trim()}/java") }
+        resources.srcDirs = [rootProject.file('src/main/resources')]
+    }
 
-processResources {
-    def version = project.version
-    inputs.property "version", version
-    filesMatching("fabric.mod.json") {
-        expand "version": version
+    dependencies {
+        minecraft "com.mojang:minecraft:${minecraft_version}"
+        if (obfuscated) {
+            mappings loom.officialMojangMappings()
+            modImplementation "net.fabricmc:fabric-loader:${loader_version}"
+        } else {
+            implementation "net.fabricmc:fabric-loader:${loader_version}"
+        }
+    }
+
+    // `runClient` de développement : vérification du mod et nombre d'injections dans le journal ;
+    // `-PrunJava=<java>` pour lancer les anciennes versions avec leur Java (8 jusqu'à la 1.16).
+    loom.runs.client.vmArgs '-Dcloverclient.selftest=true'
+    if (rootProject.hasProperty('runJava')) {
+        tasks.named('runClient') { executable = rootProject.runJava }
+    }
+
+    processResources {
+        // `-PstrictMixins` (tests) : une injection sans cible fait échouer le lancement au lieu d'être ignorée.
+        def values = [version: project.version, minecraft: minecraft_range, java: java_version, require: rootProject.hasProperty('strictMixins') ? 1 : 0]
+        inputs.properties values
+        filesMatching(['fabric.mod.json', 'cloverclient.mixins.json']) { expand values }
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        it.options.release = java_version as int
+        it.options.compilerArgs << '-Xlint:-options'
     }
 }
 
-tasks.withType(JavaCompile).configureEach {
-    it.options.release = 25
-}
-
-java {
-    sourceCompatibility = JavaVersion.VERSION_25
-    targetCompatibility = JavaVersion.VERSION_25
+// Les JAR de toutes les versions, nommés par version, là où le launcher les embarque.
+tasks.register('launcherJars', Copy) {
+    description = 'Construit le mod pour chaque version et copie les JAR dans src-tauri/client-mods/.'
+    subprojects.each { version ->
+        dependsOn "${version.path}:build"
+        from(version.layout.buildDirectory.dir('libs')) {
+            include 'cloverclient-*.jar'
+            rename { "cloverclient-${version.name}.jar" }
+        }
+    }
+    into rootProject.file('../src-tauri/client-mods')
 }

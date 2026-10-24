@@ -1,21 +1,23 @@
-import { ArrowRight, ArrowUpRight, Check, CircleAlert, Copy, MessageCircle, PenLine, Play, RotateCcw, Share2, Shirt, Star, Users } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, CircleAlert, Copy, PenLine, Play, RotateCcw, Share2, Shirt, Users } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { ActivityHeatmap } from "@/components/ActivityHeatmap";
 import { CharacterColumn } from "@/components/CharacterColumn";
 import { LevelBlock, longDate, type Mode, ModeTiles, ModeTilesSkeleton, number, Playtime, RecentAchievements, Section, Skeleton, useModeTiles } from "@/components/PlayerStats";
 import { type CardData, cardFacts, ProfileCardDialog } from "@/components/ProfileCard";
+import { FriendRow } from "@/components/FriendRow";
 import { CapeFront } from "@/components/SkinFront";
 import { api } from "@/lib/api";
+import { shownStatus } from "@/lib/availability";
 import { secondaryButton } from "@/lib/buttons";
 import { ownedCapeText, textureHash } from "@/lib/capes";
-import { ago, findMode, headUrl, presence } from "@/lib/friends";
+import { ago, findMode } from "@/lib/friends";
 import { locatorBarColor } from "@/lib/locator";
 import { modeArt } from "@/lib/mode-art";
 import { rankBadge } from "@/lib/ranks";
 import { SITE_URL } from "@/lib/site";
 import { cn, fold } from "@/lib/utils";
-import type { CatalogueCape, Friend, PlaySession, PlayerStats, Profile, SkinLook } from "@/types";
+import type { CatalogueCape, PlaySession, PlayerStats, Profile, SkinLook } from "@/types";
 
 /** Une cape que moins de joueurs recensés possèdent est marquée rare. */
 const RARE_BELOW = 10_000;
@@ -42,62 +44,6 @@ type Props = {
   /** Sources de données, remplacées par des exemples sur la planche. */
   services?: Pick<typeof api, "playerStats" | "nameChangeInfo" | "discoverCapes" | "savePng">;
 };
-
-/**
- * Ami : tête, pseudo, où il est ; « Rejoindre » s'il l'accepte et que son serveur a une adresse
- * directe, « Écrire » ouvre sa conversation.
- */
-function FriendRow({ friend, mode, playBusy, onJoin, onWrite, onOpen }: { friend: Friend; mode: Mode | undefined; playBusy: boolean; onJoin: (mode: string) => void; onWrite?: () => void; onOpen?: () => void }) {
-  const where = presence(friend, mode?.name);
-  const joinable = friend.canJoin && mode?.quickPlay === true;
-  return (
-    <li className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-white/[0.03]">
-      <span className="relative shrink-0">
-        <img src={headUrl(friend.name)} alt="" width={36} height={36} className={cn("pixelated size-9 rounded-[4px]", !friend.online && "opacity-60 grayscale-[35%]")} />
-        {friend.online && <span aria-hidden className="absolute -right-0.5 -bottom-0.5 size-3 rounded-full border-2 border-background bg-primary" />}
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="flex items-center gap-1.5">
-          {onOpen ? (
-            <button type="button" onClick={onOpen} title={`Voir le profil de ${friend.name}`} className="truncate text-[13px] font-bold underline-offset-2 hover:underline">
-              {friend.name}
-            </button>
-          ) : (
-            <span className="truncate text-[13px] font-bold">{friend.name}</span>
-          )}
-          {friend.favorite && <Star className="size-3 shrink-0 fill-[#e8bc5c] text-[#e8bc5c]" aria-label="Favori" />}
-        </span>
-        <span className={cn("truncate text-[11px]", friend.online ? "text-primary" : "text-muted-foreground")}>
-          {where}
-          {friend.status && <span className="text-muted-foreground italic"> · {friend.status}</span>}
-        </span>
-      </span>
-      {joinable && mode && (
-        <button
-          type="button"
-          disabled={playBusy}
-          onClick={() => onJoin(mode.id)}
-          title={`Rejoindre ${friend.name} sur ${mode.name}`}
-          className="flex shrink-0 items-center gap-1 rounded-md border border-primary/35 bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary transition-colors enabled:hover:bg-primary/20 disabled:opacity-60"
-        >
-          <Play className="size-3 fill-current" aria-hidden />
-          Rejoindre
-        </button>
-      )}
-      {onWrite && (
-        <button
-          type="button"
-          onClick={onWrite}
-          aria-label={`Écrire à ${friend.name}`}
-          title={`Écrire à ${friend.name}`}
-          className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
-        >
-          <MessageCircle className="size-4" aria-hidden />
-        </button>
-      )}
-    </li>
-  );
-}
 
 /**
  * Profil du compte actif, organisé autour des modes : à gauche le personnage avec son niveau et sa
@@ -148,7 +94,7 @@ export function ProfileScreen({ profile, look, animateSkin, sessions, skinCount,
   useEffect(() => pick(null), [uuid, pick]);
 
   const friends = data?.friends ?? null;
-  const onlineFriends = friends?.filter((friend) => friend.online).length ?? 0;
+  const onlineFriends = friends?.filter((friend) => shownStatus(friend)).length ?? 0;
 
   /** Meilleur classement parmi les modes, pour la carte. */
   const bestRank = played
@@ -193,7 +139,6 @@ export function ProfileScreen({ profile, look, animateSkin, sessions, skinCount,
 
   return (
     <main className="flex min-h-0 flex-1">
-      {/* Le personnage, teinté par l'illustration du mode choisi. */}
       <CharacterColumn
         label="Ton personnage"
         name={profile.name}

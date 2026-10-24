@@ -3,9 +3,11 @@
 //
 //   npm run install:local
 //
-// Construit l'installeur NSIS sans artefacts de mise à jour (pas de clé de signature), l'installe
-// en silencieux par-dessus l'installation existante, puis relance le launcher. Refuse si un
-// Minecraft lancé par Clover tourne : l'installation fermerait le launcher, et le jeu avec lui.
+// Construit l'installeur NSIS sans artefacts de mise à jour (pas de clé de signature), avec le
+// profil Cargo `local` (sans LTO, incrémental : bien plus rapide que `release` après la première
+// fois), l'installe en silencieux par-dessus l'installation existante, puis relance le launcher.
+// Refuse si un Minecraft lancé par Clover tourne : l'installation fermerait le launcher, et le jeu
+// avec lui.
 // Comptes, instances et mondes (~/.cloverlauncher) ne sont pas touchés.
 
 import { execFileSync, spawn } from "node:child_process";
@@ -28,11 +30,11 @@ const target = process.env.CARGO_TARGET_DIR ?? join(root, "src-tauri", "target")
 const config = join(target, "install-local.conf.json");
 mkdirSync(target, { recursive: true });
 writeFileSync(config, JSON.stringify({ bundle: { createUpdaterArtifacts: false } }));
-execFileSync("npm", ["run", "tauri", "build", "--", "--bundles", "nsis", "--config", `"${config}"`], { cwd: root, stdio: "inherit", shell: true });
+execFileSync("npm", ["run", "tauri", "build", "--", "--bundles", "nsis", "--config", `"${config}"`, "--", "--profile", "local"], { cwd: root, stdio: "inherit", shell: true });
 
 // Sans `version` dans tauri.conf.json, Tauri prend celle de Cargo.toml.
 const version = readFileSync(join(root, "src-tauri", "Cargo.toml"), "utf8").match(/^version = "(.+)"$/m)?.[1];
-const installer = join(target, "release", "bundle", "nsis", `Clover Launcher_${version}_x64-setup.exe`);
+const installer = join(target, "local", "bundle", "nsis", `Clover Launcher_${version}_x64-setup.exe`);
 if (!existsSync(installer)) throw new Error(`Installeur introuvable : ${installer}`);
 
 // Une partie a pu démarrer pendant la compilation.

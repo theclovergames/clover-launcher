@@ -10,7 +10,7 @@
 //!
 //! Une installation Vanilla, Fabric, Quilt, Forge ou NeoForge peut aussi devenir une nouvelle instance
 //! personnelle (`import_as_instance`) : même version, dossier séparé, tous les mods faits pour son
-//! loader copiés.
+//! loader copiés, et le logo du modpack pour la reconnaître.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -39,10 +39,21 @@ pub struct Cache {
     mods: HashMap<PathBuf, (Stamp, ModFile)>,
     /// Réponses de Modrinth par empreinte : projet, ou `None` pour un fichier qu'il ne connaît pas.
     projects: HashMap<String, Option<String>>,
+    /// Modpacks Modrinth par nom de profil, `None` sans modpack de ce nom.
+    packs: HashMap<String, Option<Pack>>,
+}
+
+/// Modpack Modrinth reconnu à son nom : son projet (pour le mettre à jour) et son logo.
+#[derive(Clone)]
+struct Pack {
+    project: String,
+    icon: Option<String>,
 }
 
 #[derive(Clone)]
 struct Found {
+    /// Identifiant donné au front : le dossier, plus la configuration quand plusieurs le partagent.
+    id: String,
     dir: PathBuf,
     name: String,
     game: Game,
@@ -53,6 +64,20 @@ struct Found {
     /// Mods faits pour le loader de l'installation (fichiers) : ceux d'une nouvelle instance créée
     /// par l'import.
     loader_mods: Vec<String>,
+    icon: Option<Icon>,
+    /// Projet Modrinth du modpack, repris par l'instance pour ses mises à jour.
+    modpack: Option<String>,
+}
+
+/// Logo d'une installation, repris par l'instance qu'elle devient.
+#[derive(Clone, Debug, PartialEq)]
+enum Icon {
+    /// Image de l'autre launcher (Prism Launcher, MultiMC).
+    File(PathBuf),
+    /// Vignette publiée du modpack (CurseForge).
+    Url(String),
+    /// Modpack Modrinth de ce nom : Modrinth App ne note le sien que dans `app.db`, jamais ouvert.
+    Modrinth(String),
 }
 
 /// Taille et date de modification : un `.jar` qui n'a pas changé n'est pas relu.
@@ -69,6 +94,19 @@ struct Source {
     game: Game,
     /// Dossier du jeu (`options.txt`, `saves/`…).
     dir: PathBuf,
+    icon: Option<Icon>,
+    /// Projet Modrinth du modpack, quand l'autre launcher le note.
+    modpack: Option<String>,
+    /// Configuration du launcher officiel (clé de `launcher_profiles.json`) : plusieurs partagent
+    /// souvent `.minecraft`, chacune est une installation à part.
+    profile: Option<String>,
+}
+
+impl Source {
+    fn id(&self) -> String {
+        let path = self.dir.to_string_lossy();
+        self.profile.as_ref().map_or_else(|| path.clone().into_owned(), |profile| format!("{path}#{profile}"))
+    }
 }
 
 /// Ce que l'autre launcher dit du jeu d'une installation, quand il le dit.
@@ -129,6 +167,8 @@ pub struct Installation {
     /// Mods faits pour le loader de l'installation, catalogue compris : ceux copiés dans une
     /// nouvelle instance.
     loader_mods: Vec<String>,
+    /// Logo du modpack : adresse `data:` d'une image de l'autre launcher, ou image publiée.
+    icon: Option<String>,
 }
 
 /// Éléments cochés dans l'interface. `options` reprend aussi les réglages des mods (`config/`) ;
@@ -167,7 +207,7 @@ pub struct Imported {
 
 /// Emplacements par défaut des launchers ; `data` est `%APPDATA%`, `~/Library/Application Support`
 /// ou `~/.local/share`.
-fn sources(home: &Path, data: &Path) -> Vec<Source> {
+fn sources(home: &Path, data: &Path, clover: &Path) -> Vec<Source> {
     let mut found = Vec::new();
     let official = if cfg!(windows) {
         data.join(".minecraft")
@@ -176,7 +216,7 @@ fn sources(home: &Path, data: &Path) -> Vec<Source> {
     } else {
         home.join(".minecraft")
     };
-    official_sources(&official, &mut found);
+    official_sources(&official, clover, &mut found);
     for app in ["ModrinthApp", "com.modrinth.theseus"] {
         modrinth_sources(&data.join(app).join("profiles"), &mut found);
     }
@@ -212,29 +252,62 @@ struct OfficialProfile {
     last_used: String,
 }
 
-/// Launcher officiel : `.minecraft`, plus un dossier par installation qui en a choisi un autre.
-/// Seuls les profils de `launcher_profiles.json` sont gardés ; les comptes sont ailleurs.
-fn official_sources(root: &Path, found: &mut Vec<Source>) {
+/// Launcher officiel : une installation par configuration de `launcher_profiles.json` (« Dernière
+/// version », « 1.21.11 »…), de la plus récemment jouée à la plus ancienne, même quand elles
+/// partagent `.minecraft`. Sans configuration lisible, `.minecraft` seul. Seuls les profils sont
+/// lus ; les comptes sont ailleurs.
+fn official_sources(root: &Path, clover: &Path, found: &mut Vec<Source>) {
     if !root.is_dir() {
         return;
     }
-    let mut profiles: Vec<OfficialProfile> = read_json::<LauncherProfiles>(&root.join("launcher_profiles.json"))
-        .map(|file| file.profiles.into_values().collect())
+    let mut profiles: Vec<(String, OfficialProfile)> = read_json::<LauncherProfiles>(&root.join("launcher_profiles.json"))
+        .map(|file| file.profiles.into_iter().collect())
         .unwrap_or_default();
-    // Le profil joué en dernier donne la version affichée (dates ISO 8601 : ordre lexical).
-    profiles.sort_by(|a, b| b.last_used.cmp(&a.last_used));
-    let default = profiles.iter().find(|profile| profile.game_dir.as_deref().is_none_or(|dir| dir == root));
-    let game = default.map(|profile| parse_version_id(&profile.last_version_id)).unwrap_or_default();
-    found.push(Source { launcher: "Launcher officiel", name: "Installation par défaut".into(), game, dir: root.to_path_buf() });
-    let mut seen = HashSet::from([root.to_path_buf()]);
-    for profile in &profiles {
-        let Some(dir) = profile.game_dir.as_ref().filter(|dir| dir.is_dir()) else { continue };
-        if !seen.insert(dir.clone()) {
-            continue;
-        }
-        let name = if profile.name.is_empty() { profile.last_version_id.clone() } else { profile.name.clone() };
-        found.push(Source { launcher: "Launcher officiel", name, game: parse_version_id(&profile.last_version_id), dir: dir.clone() });
+    if profiles.is_empty() {
+        found.push(Source { launcher: "Launcher officiel", name: "Installation par défaut".into(), game: Game::default(), dir: root.to_path_buf(), icon: None, modpack: None, profile: None });
+        return;
     }
+    // Dates ISO 8601 : l'ordre lexical est le bon.
+    profiles.sort_by(|a, b| b.1.last_used.cmp(&a.1.last_used));
+    for (key, profile) in profiles {
+        let (fallback, game) = match profile.last_version_id.as_str() {
+            "latest-release" => ("Dernière version".to_owned(), latest_version(clover, root, false)),
+            "latest-snapshot" => ("Dernière snapshot".to_owned(), latest_version(clover, root, true)),
+            id => (id.to_owned(), parse_version_id(id)),
+        };
+        let name = if profile.name.is_empty() { fallback } else { profile.name };
+        let dir = profile.game_dir.unwrap_or_else(|| root.to_path_buf());
+        found.push(Source { launcher: "Launcher officiel", name, game, dir, icon: None, modpack: None, profile: Some(key) });
+    }
+}
+
+/// Version des configurations « Dernière version » et « Dernière snapshot » : d'après la liste de
+/// Mojang gardée par Clover (`instance-versions.json`, de la plus récente à la plus ancienne),
+/// sinon d'après les versions installées dans `.minecraft/versions`.
+fn latest_version(clover: &Path, root: &Path, snapshot: bool) -> Game {
+    let known = read_json::<Vec<instances::GameVersion>>(&clover.join("instance-versions.json"))
+        .and_then(|versions| versions.into_iter().find(|version| snapshot || !version.snapshot))
+        .map(|version| version.id);
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Installed {
+        id: String,
+        #[serde(rename = "type")]
+        kind: String,
+        #[serde(default)]
+        release_time: String,
+        /// Profil d'un loader (Fabric, Forge…) : il hérite d'une version de Mojang.
+        inherits_from: Option<String>,
+    }
+    let installed = || {
+        subdirs(&root.join("versions"))
+            .into_iter()
+            .filter_map(|dir| read_json::<Installed>(&dir.join(format!("{}.json", file_name(&dir)))))
+            .filter(|version| version.inherits_from.is_none() && (version.kind == "release" || (snapshot && version.kind == "snapshot")))
+            .max_by(|a, b| a.release_time.cmp(&b.release_time))
+            .map(|version| version.id)
+    };
+    Game::new(known.or_else(installed).as_deref(), None, None)
 }
 
 /// `lastVersionId` du launcher officiel : « 1.21.4 », « fabric-loader-0.16.10-1.21.4 »,
@@ -263,7 +336,8 @@ fn parse_version_id(id: &str) -> Game {
 /// comptes : il n'est pas ouvert, le journal du jeu suffit (`log_hint`).
 fn modrinth_sources(profiles: &Path, found: &mut Vec<Source>) {
     for dir in subdirs(profiles) {
-        found.push(Source { launcher: "Modrinth App", name: file_name(&dir), game: Game::default(), dir });
+        let name = file_name(&dir);
+        found.push(Source { launcher: "Modrinth App", icon: Some(Icon::Modrinth(name.clone())), name, game: Game::default(), dir, modpack: None, profile: None });
     }
 }
 
@@ -280,11 +354,13 @@ struct PrismComponent {
 
 /// Prism Launcher et MultiMC : `instances/<id>/` (ou `InstanceDir` de leur configuration), avec
 /// `instance.cfg` (nom) et `mmc-pack.json` (composants) ; le jeu est dans `.minecraft/` ou
-/// `minecraft/`. Les comptes (`accounts.json`) ne sont pas lus.
+/// `minecraft/`. Le logo choisi (`iconKey`) est une image du dossier `icons/`. Les comptes
+/// (`accounts.json`) ne sont pas lus.
 fn prism_sources(launcher: &'static str, root: &Path, config: &str, found: &mut Vec<Source>) {
-    let custom = fs::read_to_string(root.join(config)).ok().and_then(|text| ini_value(&text, "InstanceDir"));
+    let config = fs::read_to_string(root.join(config)).unwrap_or_default();
     // Un chemin absolu remplace `root` dans `join`.
-    let instances = custom.map_or_else(|| root.join("instances"), |dir| root.join(dir));
+    let folder = |key: &str, default: &str| ini_value(&config, key).map_or_else(|| root.join(default), |dir| root.join(dir));
+    let (instances, icons) = (folder("InstanceDir", "instances"), folder("IconsDir", "icons"));
     for dir in subdirs(&instances) {
         let Ok(cfg) = fs::read_to_string(dir.join("instance.cfg")) else { continue };
         let Some(game) = [".minecraft", "minecraft"].iter().map(|name| dir.join(name)).find(|path| path.is_dir()) else { continue };
@@ -302,7 +378,14 @@ fn prism_sources(launcher: &'static str, root: &Path, config: &str, found: &mut 
         });
         let name = ini_value(&cfg, "name").unwrap_or_else(|| file_name(&dir));
         let (loader, version) = loader.unzip();
-        found.push(Source { launcher, name, game: Game::new(minecraft.as_deref(), loader, version.flatten()), dir: game });
+        // Les logos fournis avec le launcher (« default », « grass »…) n'ont pas de fichier.
+        let icon = ini_value(&cfg, "iconKey")
+            .filter(|key| !key.contains(['/', '\\']) && !key.starts_with('.'))
+            .and_then(|key| ["png", "jpg", "jpeg", "gif", "webp"].iter().map(|ext| icons.join(format!("{key}.{ext}"))).find(|path| path.is_file()))
+            .map(Icon::File);
+        // Modpack installé depuis Modrinth : Prism note son projet.
+        let modpack = ini_value(&cfg, "ManagedPackID").filter(|_| ini_value(&cfg, "ManagedPackType").as_deref() == Some("modrinth"));
+        found.push(Source { launcher, name, game: Game::new(minecraft.as_deref(), loader, version.flatten()), dir: game, icon, modpack, profile: None });
     }
 }
 
@@ -312,6 +395,14 @@ struct CurseForgeInstance {
     name: Option<String>,
     game_version: Option<String>,
     base_mod_loader: Option<CurseForgeLoader>,
+    /// Modpack dont l'instance a été installée.
+    installed_modpack: Option<CurseForgePack>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CurseForgePack {
+    thumbnail_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -340,7 +431,8 @@ fn curseforge_sources(instances: &Path, found: &mut Vec<Source>) {
         });
         let name = meta.name.clone().unwrap_or_else(|| file_name(&dir));
         let (loader, version) = loader.unzip();
-        found.push(Source { launcher: "CurseForge", name, game: Game::new(meta.game_version.as_deref(), loader, version), dir });
+        let icon = meta.installed_modpack.and_then(|pack| pack.thumbnail_url).map(Icon::Url);
+        found.push(Source { launcher: "CurseForge", name, game: Game::new(meta.game_version.as_deref(), loader, version), dir, icon, modpack: None, profile: None });
     }
 }
 
@@ -491,11 +583,13 @@ fn scan(home: &Path, data: &Path, clover: &Path, known: &mut HashMap<PathBuf, (S
     let clover = fs::canonicalize(clover).unwrap_or_else(|_| clover.to_path_buf());
     let mut seen = HashSet::new();
     let mut read = HashMap::new();
-    let scans = sources(home, data)
+    let scans = sources(home, data, &clover)
         .into_iter()
         .filter(|source| {
             let dir = fs::canonicalize(&source.dir).unwrap_or_else(|_| source.dir.clone());
-            !dir.starts_with(&clover) && seen.insert(dir)
+            // Un même dossier vu deux fois (Prism natif et Flatpak…) ; les configurations du
+            // launcher officiel qui partagent `.minecraft` restent chacune la leur.
+            !dir.starts_with(&clover) && seen.insert((dir, source.profile.clone()))
         })
         .filter_map(|mut source| {
             let content = content(&source.dir);
@@ -508,7 +602,8 @@ fn scan(home: &Path, data: &Path, clover: &Path, known: &mut HashMap<PathBuf, (S
                 .into_iter()
                 .filter_map(|jar| {
                     let stamp = stamp(&jar)?;
-                    let file = match known.remove(&jar) {
+                    // Déjà lu pour une autre configuration du même dossier, ou à la recherche précédente.
+                    let file = match read.get(&jar).cloned().or_else(|| known.remove(&jar)) {
                         Some((before, file)) if before == stamp => file,
                         _ => ModFile { name: file_name(&jar), sha512: game::personal::sha512(&jar).ok()?, loader: game::personal::jar_loader(&jar) },
                     };
@@ -516,7 +611,9 @@ fn scan(home: &Path, data: &Path, clover: &Path, known: &mut HashMap<PathBuf, (S
                     Some(file)
                 })
                 .collect();
-            if source.game.minecraft.is_none() {
+            // Le journal dit le dernier jeu lancé dans ce dossier : pas forcément celui d'une
+            // configuration qui le partage.
+            if source.game.minecraft.is_none() && source.profile.is_none() {
                 if let Some(hint) = log_hint(&source.dir) {
                     // Le loader annoncé par l'autre launcher prime sur celui du journal.
                     if source.game.loader.is_some() {
@@ -533,10 +630,9 @@ fn scan(home: &Path, data: &Path, clover: &Path, known: &mut HashMap<PathBuf, (S
     scans
 }
 
-/// Projet Modrinth d'un mod du catalogue, lu dans l'URL de son fichier
-/// (`cdn.modrinth.com/data/<projet>/versions/…`).
+/// Projet Modrinth d'un mod du catalogue, lu dans l'URL de son fichier.
 fn catalogue_project(entry: &game::manifest::Mod) -> Option<&str> {
-    entry.file.as_ref()?.url.strip_prefix("https://cdn.modrinth.com/data/")?.split('/').next()
+    game::modrinth::cdn_project(&entry.file.as_ref()?.url)
 }
 
 // ── Copie ───────────────────────────────────────────────────────────────────────
@@ -756,9 +852,9 @@ pub async fn detect_installations(app: AppHandle, state: State<'_, AppState>, de
     let data = app.path().data_dir().map_err(path_error)?;
     let root = state.root.clone();
     let handle = app.clone();
-    let (mut known, mut projects) = {
+    let (mut known, mut projects, mut packs) = {
         let mut cache = detected.0.lock().expect("import");
-        (std::mem::take(&mut cache.mods), std::mem::take(&mut cache.projects))
+        (std::mem::take(&mut cache.mods), std::mem::take(&mut cache.projects), std::mem::take(&mut cache.packs))
     };
     let (scans, known) = tauri::async_runtime::spawn_blocking(move || {
         let scans = scan(&home, &data, &root, &mut known, &|source, mods| {
@@ -791,6 +887,24 @@ pub async fn detect_installations(app: AppHandle, state: State<'_, AppState>, de
             Err(e) => eprintln!("[import] Modrinth injoignable pour identifier les mods : {e}"),
         }
     }
+    // Profils Modrinth App avec des mods : leur modpack cherché par son nom, en parallèle.
+    let names: HashSet<&str> = scans
+        .iter()
+        .filter(|scan| !scan.mods.is_empty())
+        .filter_map(|scan| match &scan.source.icon {
+            Some(Icon::Modrinth(name)) if !packs.contains_key(name) => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let http = game::download::client();
+    let found = futures_util::future::join_all(names.into_iter().map(|name| async { (name.to_owned(), modrinth_pack(&http, name).await) })).await;
+    for (name, pack) in found {
+        // Sans réseau, rien n'est retenu : la recherche suivante réessaie.
+        match pack {
+            Ok(pack) => drop(packs.insert(name, pack)),
+            Err(e) => eprintln!("[import] modpack « {name} » non cherché : {e}"),
+        }
+    }
 
     let mut dirs = Vec::new();
     let mut installations = Vec::new();
@@ -814,17 +928,33 @@ pub async fn detect_installations(app: AppHandle, state: State<'_, AppState>, de
         let mut loader_mods: Vec<String> = mods.iter().filter(|file| file.loader.is_some_and(loads)).map(|file| file.name.clone()).collect();
         loader_mods.sort_by_key(|name| name.to_lowercase());
         let path = source.dir.to_string_lossy().into_owned();
+        let id = source.id();
         let catalogue = catalogue_mods.iter().map(|entry| entry.id.clone()).collect();
+        let (icon, modpack) = match source.icon {
+            Some(Icon::Modrinth(name)) => {
+                let pack = packs.get(&name).cloned().flatten();
+                (pack.as_ref().and_then(|pack| pack.icon.clone()).map(Icon::Url), pack.map(|pack| pack.project))
+            }
+            icon => (icon, source.modpack),
+        };
+        let preview = icon.as_ref().and_then(|icon| match icon {
+            Icon::File(path) => instances::data_url(&read_icon(path)?),
+            Icon::Url(url) => url.starts_with("https://").then(|| url.clone()),
+            Icon::Modrinth(_) => None,
+        });
         dirs.push(Found {
+            id: id.clone(),
             dir: source.dir,
             name: source.name.clone(),
             game: source.game.clone(),
             personal: personal.clone(),
             catalogue,
             loader_mods: loader_mods.clone(),
+            icon,
+            modpack,
         });
         installations.push(Installation {
-            id: path.clone(),
+            id,
             launcher: source.launcher,
             name: source.name,
             minecraft: source.game.minecraft,
@@ -836,9 +966,10 @@ pub async fn detect_installations(app: AppHandle, state: State<'_, AppState>, de
             personal_mods: personal.iter().map(|name| name.trim_end_matches(".jar").to_owned()).collect(),
             other_mods,
             loader_mods: loader_mods.iter().map(|name| name.trim_end_matches(".jar").to_owned()).collect(),
+            icon: preview,
         });
     }
-    *detected.0.lock().expect("import") = Cache { installations: dirs, mods: known, projects };
+    *detected.0.lock().expect("import") = Cache { installations: dirs, mods: known, projects, packs };
     Ok(installations)
 }
 
@@ -848,7 +979,7 @@ pub async fn detect_installations(app: AppHandle, state: State<'_, AppState>, de
 /// Clover est ouvert : il réécrirait ces fichiers en quittant. Avancement : évènement
 /// `import-progress` (0 à 1).
 fn found(detected: &Detected, id: &str) -> Result<Found, String> {
-    detected.0.lock().expect("import").installations.iter().find(|found| found.dir.to_string_lossy() == id).cloned().ok_or_else(|| "Installation introuvable : relance la recherche.".into())
+    detected.0.lock().expect("import").installations.iter().find(|found| found.id == id).cloned().ok_or_else(|| "Installation introuvable : relance la recherche.".into())
 }
 
 /// Type d'instance Clover pour le loader d'une installation : l'import reprend Vanilla, Fabric,
@@ -871,6 +1002,30 @@ fn pick_loader(versions: &[String], wanted: Option<&str>) -> Option<String> {
         .and_then(|wanted| versions.iter().find(|version| *version == wanted || version.strip_prefix(wanted).is_some_and(|rest| rest.starts_with('-'))))
         .or(versions.first())
         .cloned()
+}
+
+/// Image d'un logo de l'autre launcher, plafonnée : un octet de plus suffit à refuser une image
+/// trop lourde.
+fn read_icon(path: &Path) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    fs::File::open(path).ok()?.take(instances::MAX_ICON as u64 + 1).read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// Modpack Modrinth qui porte exactement ce nom ; `Err` sans réseau. Un profil renommé comme un
+/// autre pack n'en prend que le logo : sa mise à jour exige que ses mods ressemblent à ceux du pack.
+async fn modrinth_pack(http: &reqwest::Client, name: &str) -> game::Result<Option<Pack>> {
+    Ok(game::modrinth::modpack_named(http, name).await?.map(|hit| Pack { project: hit.project_id, icon: hit.icon_url }))
+}
+
+/// Image du logo d'une installation, pour l'instance qu'elle devient ; `None` sans réseau.
+async fn icon_bytes(icon: &Icon) -> Option<Vec<u8>> {
+    match icon {
+        Icon::File(path) => read_icon(path),
+        Icon::Url(url) => instances::fetch_icon(&game::download::client(), url).await,
+        // Résolu en `Url` par la recherche des installations.
+        Icon::Modrinth(_) => None,
+    }
 }
 
 /// Crée une instance personnelle à partir d'une installation détectée : même version de Minecraft
@@ -902,6 +1057,7 @@ pub async fn import_as_instance(id: String, choices: Choices, app: AppHandle, st
         minecraft: input.minecraft,
         loader: input.loader,
         separate: true,
+        modpack: found.modpack.clone(),
         ..instances::Instance::builtin()
     };
     let paths = instances::paths(game::Paths::new(&app).map_err(|e| e.to_string())?, &instance).map_err(|e| e.to_string())?;
@@ -922,6 +1078,11 @@ pub async fn import_as_instance(id: String, choices: Choices, app: AppHandle, st
     if let Some(mod_loader) = mod_loader.filter(|_| !mods.is_empty()) {
         if let Err(e) = game::personal::install_dependencies(&game::download::client(), &paths.personal_mods, &mods, &minecraft, mod_loader, &[]).await {
             eprintln!("[import] dépendances non vérifiées : {e}");
+        }
+    }
+    if let Some(icon) = &found.icon {
+        if let Some(bytes) = icon_bytes(icon).await {
+            instances::save_icon(&state.root, &instance.id, &bytes);
         }
     }
     let id = instance.id.clone();
@@ -1095,9 +1256,14 @@ mod tests {
         let profiles = serde_json::json!({ "profiles": {
             "a": { "name": "", "lastVersionId": "latest-release", "lastUsed": "2026-01-01T00:00:00.000Z" },
             "b": { "name": "PvP", "lastVersionId": "fabric-loader-0.16.10-1.21.4", "gameDir": custom, "lastUsed": "2026-02-01T00:00:00.000Z" },
+            "c": { "name": "", "lastVersionId": "1.6.4", "lastUsed": "2025-12-01T00:00:00.000Z" },
         }});
         write(&official.join("launcher_profiles.json"), profiles.to_string());
         write(&official.join("options.txt"), "version:4903\n");
+        write(&official.join("versions/26.1/26.1.json"), r#"{"id":"26.1","type":"release","releaseTime":"2026-03-01T00:00:00+00:00"}"#);
+        write(&official.join("versions/26.2/26.2.json"), r#"{"id":"26.2","type":"release","releaseTime":"2026-06-01T00:00:00+00:00"}"#);
+        write(&official.join("versions/26.3-snapshot-1/26.3-snapshot-1.json"), r#"{"id":"26.3-snapshot-1","type":"snapshot","releaseTime":"2026-07-01T00:00:00+00:00"}"#);
+        write(&official.join("versions/fabric-loader-0.19.5-26.2/fabric-loader-0.19.5-26.2.json"), r#"{"id":"fabric-loader-0.19.5-26.2","inheritsFrom":"26.2","type":"release","releaseTime":"2026-09-01T00:00:00+00:00"}"#);
         write(&official.join("logs/latest.log"), "[19:44:37] [main/INFO]: Loading Minecraft 26.2 with Fabric Loader 0.19.5\n");
         write(&custom.join("saves/Monde/level.dat"), "x");
         write(&custom.join("shaderpacks/Complementary.zip"), "x");
@@ -1108,14 +1274,18 @@ mod tests {
         write(&data.join("ModrinthApp/profiles/Empty/logs/latest.log"), "");
 
         let prism = data.join("PrismLauncher/instances/skyblock");
-        write(&prism.join("instance.cfg"), "[General]\nname=Skyblock\n");
+        write(&prism.join("instance.cfg"), "[General]\nname=Skyblock\niconKey=skyblock\nManagedPack=true\nManagedPackType=modrinth\nManagedPackID=sKyBl0ck\n");
+        write(&data.join("PrismLauncher/icons/skyblock.png"), "x");
         write(&prism.join("mmc-pack.json"), r#"{"components":[{"uid":"net.minecraft","version":"1.20.1"},{"uid":"net.fabricmc.fabric-loader","version":"0.15.0"}]}"#);
         write(&prism.join(".minecraft/screenshots/a.png"), "x");
         write(&prism.join(".minecraft/screenshots/notes.txt"), "x");
         write(&data.join("PrismLauncher/instances/_MMC_TEMP/instance.cfg"), "name=temp");
 
         let curse = home.join("curseforge/minecraft/Instances/All the Mods");
-        write(&curse.join("minecraftinstance.json"), r#"{"name":"All the Mods","gameVersion":"1.21.1","baseModLoader":{"name":"neoforge-21.1.77"}}"#);
+        write(
+            &curse.join("minecraftinstance.json"),
+            r#"{"name":"All the Mods","gameVersion":"1.21.1","baseModLoader":{"name":"neoforge-21.1.77"},"installedModpack":{"thumbnailUrl":"https://media.forgecdn.net/atm.png"}}"#,
+        );
         write(&curse.join("resourcepacks/Faithful.zip"), "x");
 
         let clover = home.join(".cloverlauncher");
@@ -1130,18 +1300,37 @@ mod tests {
         assert_eq!(
             summary,
             [
-                ("Launcher officiel", "Installation par défaut", Game::new(Some("26.2"), Some("Fabric"), Some("0.19.5"))),
+                // Plus récente d'abord ; « Dernière version » : la version installée la plus récente.
                 ("Launcher officiel", "PvP", Game::new(Some("1.21.4"), Some("Fabric"), Some("0.16.10"))),
+                ("Launcher officiel", "Dernière version", Game::new(Some("26.2"), None, None)),
+                // Même `.minecraft` que « Dernière version », mais une installation à part.
+                ("Launcher officiel", "1.6.4", Game::new(Some("1.6.4"), None, None)),
                 ("Modrinth App", "Fabulously Optimized", Game::default()),
                 ("Prism Launcher", "Skyblock", Game::new(Some("1.20.1"), Some("Fabric"), Some("0.15.0"))),
                 ("CurseForge", "All the Mods", Game::new(Some("1.21.1"), Some("NeoForge"), Some("21.1.77"))),
             ]
         );
-        assert_eq!(found[1].content, Content { worlds: 1, shader_packs: 1, ..Content::default() });
-        let loaders: Vec<_> = found[2].mods.iter().map(|file| (file.name.as_str(), file.loader)).collect();
+        let icons: Vec<_> = found.iter().map(|scan| scan.source.icon.clone()).collect();
+        assert_eq!(
+            icons,
+            [
+                None,
+                None,
+                None,
+                Some(Icon::Modrinth("Fabulously Optimized".into())),
+                Some(Icon::File(data.join("PrismLauncher/icons/skyblock.png"))),
+                Some(Icon::Url("https://media.forgecdn.net/atm.png".into())),
+            ]
+        );
+        let packs: Vec<_> = found.iter().map(|scan| scan.source.modpack.as_deref()).collect();
+        assert_eq!(packs, [None, None, None, None, Some("sKyBl0ck"), None]);
+        assert_eq!(found[0].content, Content { worlds: 1, shader_packs: 1, ..Content::default() });
+        assert_ne!(found[1].source.id(), found[2].source.id());
+        assert_eq!(found[1].source.dir, found[2].source.dir);
+        let loaders: Vec<_> = found[3].mods.iter().map(|file| (file.name.as_str(), file.loader)).collect();
         assert_eq!(loaders.len(), 2);
         assert!(loaders.contains(&("sodium.jar", Some("Fabric"))) && loaders.contains(&("create.jar", Some("Forge"))));
-        assert_eq!(found[3].content.screenshots, 1);
+        assert_eq!(found[4].content.screenshots, 1);
 
         // Nouvelle recherche : un mod inchangé n'est pas relu (empreinte gardée), un ajout l'est et
         // un fichier retiré sort du cache.
@@ -1152,7 +1341,7 @@ mod tests {
         write(&modrinth.join("lithium.jar"), jar(Some("lithium")));
         fs::remove_file(modrinth.join("create.jar")).unwrap();
         let again = scan(&home, &data, &clover, &mut known, &|_, _| {});
-        let hashes: HashMap<_, _> = again[2].mods.iter().map(|file| (file.name.as_str(), file.sha512.as_str())).collect();
+        let hashes: HashMap<_, _> = again[3].mods.iter().map(|file| (file.name.as_str(), file.sha512.as_str())).collect();
         assert_eq!(hashes["sodium.jar"], "gardée");
         assert_eq!(hashes["lithium.jar"].len(), 128);
         assert_eq!(known.len(), 2);

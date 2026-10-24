@@ -41,3 +41,28 @@ test("la version d'un modpack proposée suit la version de Minecraft voulue", ()
   assert.equal(preferredModpackVersion(versions)?.id, "b");
   assert.equal(preferredModpackVersion([]), undefined);
 });
+
+test("préversions, snapshots et anciennes versions rejoignent leur famille, dans l'ordre", () => {
+  const entry = (id: string, released: string, snapshot = false) => ({ id, snapshot, released });
+  const versions = [
+    entry("26.1", "2026-03-24"),
+    entry("26.1-snapshot-2", "2026-01-13", true),
+    entry("1.21.5", "2025-03-25"),
+    entry("1.21.5-rc1", "2025-03-20", true),
+    entry("25w10a", "2025-03-05", true),
+    entry("1.21.4", "2024-12-03"),
+    entry("1.0", "2011-11-18"),
+    entry("b1.8.1", "2011-09-19"),
+    entry("b1.7.3", "2011-07-08"),
+    entry("a1.2.6", "2010-12-03"),
+    entry("c0.30_01c", "2009-12-22"),
+  ];
+  const groups = groupVersions(versions, [], true);
+  assert.deepEqual(groups.map((group) => group.id), ["26.1", "1.21", "1.0", "Bêta", "Alpha"]);
+  assert.deepEqual(groups.find((group) => group.id === "1.21")?.versions, ["1.21.5", "1.21.5-rc1", "25w10a", "1.21.4"]);
+  assert.deepEqual(groups.find((group) => group.id === "Alpha")?.versions, ["a1.2.6", "c0.30_01c"]);
+  // Sans snapshots : seulement les versions sorties.
+  assert.deepEqual(groupVersions(versions, [], false).find((group) => group.id === "1.21")?.versions, ["1.21.5", "1.21.4"]);
+  assert.equal(versionFamily("26.1-snapshot-2"), "26.1");
+  assert.equal(versionFamily("1.14_combat-212796"), "1.14");
+});

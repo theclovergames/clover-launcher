@@ -17,15 +17,16 @@ import {
   Globe,
   LoaderCircle,
   type LucideIcon,
-  MessageCircle,
   Monitor,
   PenLine,
   Play,
   Reply,
   RotateCcw,
+  Send,
   SendHorizontal,
   SmilePlus,
   Trash2,
+  UserMinus,
   UserPlus,
   UserRound,
   X,
@@ -36,12 +37,14 @@ import { EmojiPanel, EmojiPicker } from "@/components/EmojiPicker";
 import { EmptyState } from "@/components/EmptyState";
 import { GifPicker } from "@/components/GifPicker";
 import { SearchField } from "@/components/SearchField";
+import { StatusDot, StatusMenu } from "@/components/StatusMenu";
 import { Tabs } from "@/components/Tabs";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api } from "@/lib/api";
-import { primaryButton, secondaryButton } from "@/lib/buttons";
+import { AVAILABILITIES, type ChosenStatus, shownStatus } from "@/lib/availability";
+import { countBadge, primaryButton, secondaryButton } from "@/lib/buttons";
 import { QUICK_REACTIONS } from "@/lib/emojis";
 import { findMode, headUrl, joinableMode, presence } from "@/lib/friends";
 import {
@@ -89,7 +92,7 @@ type Mode = { id: string; name: string; quickPlay: boolean };
 
 export type MessagesServices = Pick<
   typeof api,
-  "messageThread" | "sendMessage" | "sendGif" | "editMessage" | "reactMessage" | "deleteMessage" | "markMessagesRead" | "setConversationState" | "reportMessage" | "searchGifs" | "sendFriendRequest" | "answerFriendRequest"
+  "messageThread" | "sendMessage" | "sendGif" | "editMessage" | "reactMessage" | "deleteMessage" | "markMessagesRead" | "setConversationState" | "reportMessage" | "searchGifs" | "sendFriendRequest" | "answerFriendRequest" | "removeFriend"
 >;
 
 type Props = {
@@ -111,6 +114,10 @@ type Props = {
   onNotice: (message: string) => void;
   /** Ouvre le profil d'un joueur, par son pseudo. */
   onOpenPlayer: (name: string) => void;
+  /** Pseudo du compte actif, et son statut choisi (en bas de la liste des conversations). */
+  me: string;
+  status: ChosenStatus;
+  onStatus: (next: ChosenStatus) => void;
   /** Sources de données, remplacées par des exemples sur la planche. */
   services?: MessagesServices;
 };
@@ -165,12 +172,13 @@ function Skeleton({ className }: { className?: string }) {
   return <span aria-hidden className={cn("block animate-pulse rounded-lg bg-white/[0.04]", className)} />;
 }
 
-/** Tête de l'ami, avec le point vert s'il est en ligne. */
+/** Tête de l'ami, avec la pastille de son statut (en ligne, occupé, absent) ; grisée hors ligne. */
 function FriendHead({ friend, size }: { friend: ChatFriend; size: number }) {
+  const shown = shownStatus(friend);
   return (
     <span className="relative shrink-0">
-      <img src={headUrl(friend.name)} alt="" width={size} height={size} draggable={false} style={{ width: size, height: size }} className={cn("pixelated rounded-[4px]", !friend.online && "opacity-60 grayscale-[35%]")} />
-      {friend.online && <span aria-hidden className="absolute -right-0.5 -bottom-0.5 size-3 rounded-full border-2 border-background bg-primary" />}
+      <img src={headUrl(friend.name)} alt="" width={size} height={size} draggable={false} style={{ width: size, height: size }} className={cn("pixelated rounded-[4px]", !shown && "opacity-60 grayscale-[35%]")} />
+      <StatusDot availability={shown} />
     </span>
   );
 }
@@ -193,6 +201,8 @@ type ConversationActions = {
   muted: boolean;
   onState: (change: { archived?: boolean; muted?: boolean }) => void;
   onClear?: { disabled: boolean; onSelect: () => void };
+  /** Ami actuel seulement (pas un ancien ami). */
+  onRemoveFriend?: () => void;
 };
 
 function ConversationMenuItems({ parts: { Item, Separator }, actions }: { parts: MenuParts; actions: ConversationActions }) {
@@ -200,7 +210,7 @@ function ConversationMenuItems({ parts: { Item, Separator }, actions }: { parts:
     <>
       {actions.onOpen && (
         <Item onSelect={actions.onOpen}>
-          <MessageCircle aria-hidden />
+          <Send aria-hidden />
           Ouvrir la conversation
         </Item>
       )}
@@ -229,14 +239,18 @@ function ConversationMenuItems({ parts: { Item, Separator }, actions }: { parts:
         {actions.muted ? <Bell aria-hidden /> : <BellOff aria-hidden />}
         {actions.muted ? "Rétablir les notifications" : "Couper les notifications"}
       </Item>
+      {(actions.onClear || actions.onRemoveFriend) && <Separator />}
       {actions.onClear && (
-        <>
-          <Separator />
-          <Item destructive disabled={actions.onClear.disabled} onSelect={actions.onClear.onSelect}>
-            <Eraser aria-hidden />
-            Vider la conversation
-          </Item>
-        </>
+        <Item destructive disabled={actions.onClear.disabled} onSelect={actions.onClear.onSelect}>
+          <Eraser aria-hidden />
+          Vider la conversation
+        </Item>
+      )}
+      {actions.onRemoveFriend && (
+        <Item destructive onSelect={actions.onRemoveFriend}>
+          <UserMinus aria-hidden />
+          Retirer des amis
+        </Item>
       )}
     </>
   );
@@ -256,7 +270,8 @@ function RightClickMenu({ label, children, menu }: { label: string; children: Re
 function ConversationRow({ conversation, selected, modes, onOpen, actions }: { conversation: Conversation; selected: boolean; modes: Mode[]; onOpen: () => void; actions: ConversationActions }) {
   const { friend, last, unread, muted } = conversation;
   const loud = unread > 0 && !muted;
-  const where = friend.online ? (friend.server ? (findMode(modes, friend.server)?.name ?? friend.server) : "En ligne") : null;
+  // Le mode où il joue ; son statut, la pastille de sa tête le dit déjà.
+  const where = friend.server ? (findMode(modes, friend.server)?.name ?? friend.server) : null;
   return (
     <li>
       <RightClickMenu label={`Actions pour la conversation avec ${friend.name}`} menu={<ConversationMenuItems parts={CONTEXT} actions={actions} />}>
@@ -279,7 +294,7 @@ function ConversationRow({ conversation, selected, modes, onOpen, actions }: { c
               </span>
               {muted && <BellOff className="size-3.5 shrink-0 text-muted-foreground" aria-label="Notifications coupées" />}
               {unread > 0 && (
-                <span className={cn("grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full px-1 font-pixel text-[10px] leading-none", muted ? "bg-secondary text-muted-foreground" : "bg-primary text-primary-foreground")}>
+                <span className={cn(countBadge, "shrink-0", muted ? "bg-secondary text-muted-foreground" : "bg-primary text-primary-foreground")}>
                   {unread > 99 ? "99+" : unread}
                   <span className="sr-only"> non lu{unread > 1 ? "s" : ""}</span>
                 </span>
@@ -309,10 +324,7 @@ function RequestButton({ label, tone, busy, onClick, children }: { label: string
       onClick={onClick}
       aria-label={label}
       title={label}
-      className={cn(
-        "grid size-8 shrink-0 place-items-center rounded-md transition-colors disabled:opacity-50",
-        tone === "primary" ? "bg-primary/12 text-primary enabled:hover:bg-primary/20" : "text-muted-foreground enabled:hover:bg-white/[0.06] enabled:hover:text-foreground",
-      )}
+      className={cn(tone === "primary" ? primaryButton : secondaryButton, "size-8 shrink-0 px-0 [--mc-radius:5px]")}
     >
       {children}
     </button>
@@ -384,7 +396,7 @@ function FriendRequests({ requests, busy, onAnswer, onOpenPlayer }: { requests: 
     <section aria-labelledby="friend-requests" className="mb-2 border-b border-border pb-2">
       <h2 id="friend-requests" className="flex items-center gap-2 px-2.5 pt-1 pb-1 text-[11px] font-bold tracking-wide text-muted-foreground uppercase">
         Demandes d'amis
-        {requests.incoming.length > 0 && <span className="rounded-full bg-destructive px-1.5 font-pixel text-[10px] leading-[16px] text-white normal-case">{requests.incoming.length}</span>}
+        {requests.incoming.length > 0 && <span className={cn(countBadge, "normal-case")}>{requests.incoming.length}</span>}
       </h2>
       <ul className="flex flex-col gap-0.5">
         {requests.incoming.map((request) => row(request, true))}
@@ -460,6 +472,9 @@ function ConversationList({
   onSendRequest,
   onOpenPlayer,
   actionsFor,
+  me,
+  status,
+  onStatus,
 }: {
   inbox: Inbox | null;
   error: string | null;
@@ -471,6 +486,9 @@ function ConversationList({
   onSendRequest: (name: string) => Promise<boolean>;
   onOpenPlayer: (name: string) => void;
   actionsFor: (conversation: Conversation) => ConversationActions;
+  me: string;
+  status: ChosenStatus;
+  onStatus: (next: ChosenStatus) => void;
 }) {
   const [view, setView] = useState<"all" | "archived">("all");
   const [query, setQuery] = useState("");
@@ -535,6 +553,11 @@ function ConversationList({
           <CloudOff className="mt-px size-3.5 shrink-0" aria-hidden />
           Liste non actualisée : {error}
         </p>
+      )}
+      {me && (
+        <div className="shrink-0 border-t border-border p-2">
+          <StatusMenu name={me} status={status} onChange={onStatus} />
+        </div>
       )}
     </aside>
   );
@@ -885,6 +908,7 @@ function ThreadPane(props: {
   onOpenPlayer: (name: string) => void;
   updateInbox: Props["updateInbox"];
   refreshInbox: Props["refreshInbox"];
+  onRemoveFriend: () => void;
   services: MessagesServices;
 }) {
   const { conversation, services, updateInbox, onNotice } = props;
@@ -1278,6 +1302,7 @@ function ThreadPane(props: {
     muted,
     onState: (change) => void changeState(change),
     onClear: { disabled: !loaded || loaded.messages.length === 0, onSelect: clearConversation },
+    onRemoveFriend: conversation.isFriend ? props.onRemoveFriend : undefined,
   };
   const seenId = loaded ? seenMessageId(loaded.messages, loaded.seenUpTo) : null;
   const entries = [...(loaded?.messages ?? []).map(entryOf), ...pending.map(pendingEntry)];
@@ -1299,7 +1324,7 @@ function ThreadPane(props: {
               {archived && <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">Archivée</span>}
               {muted && <BellOff className="size-3.5 shrink-0 text-muted-foreground" aria-label="Notifications coupées" />}
             </h2>
-            <p className={cn("truncate text-xs", friend.online ? "text-primary" : "text-muted-foreground")}>
+            <p className={cn("truncate text-xs", shownStatus(friend) ? AVAILABILITIES[shownStatus(friend)!].text : "text-muted-foreground")}>
               {presence(friend, modeName)}
               {friend.status && <span className="text-muted-foreground italic"> · {friend.status}</span>}
             </p>
@@ -1529,12 +1554,12 @@ function DividedRow({ divider, children }: { divider: boolean; children: ReactNo
  * clovergames.fr. La liste est relevée toutes les 15 s sur la page, la conversation ouverte toutes
  * les 3 s quand la fenêtre est au premier plan.
  */
-export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox, updateInbox, modes, playBusy, onPlay, onNotice, onOpenPlayer, services = api }: Props) {
+export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox, updateInbox, modes, playBusy, onPlay, onNotice, onOpenPlayer, me, status, onStatus, services = api }: Props) {
   /** UUID de la demande en cours de traitement. */
   const [requestBusy, setRequestBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirmation | null>(null);
-  /** Change quand une conversation est vidée depuis la liste : ouverte, elle se recharge vide. */
-  const [cleared, setCleared] = useState(0);
+  /** Change quand une conversation change depuis la liste (vidée, ami retiré) : ouverte, elle se recharge. */
+  const [reloads, setReloads] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let timer = 0;
@@ -1644,10 +1669,35 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
           .setConversationState(conversation.friend.uuid, { clear: true })
           .then(() => {
             updateInbox((current) => ({ ...current, conversations: updateConversation(current.conversations, conversation.friend.uuid, (entry) => ({ ...entry, last: null, unread: 0 })) }));
-            setCleared((count) => count + 1);
+            setReloads((count) => count + 1);
           })
           .catch((reason) => onNotice(String(reason))),
     });
+
+  const removeFriend = (conversation: Conversation) => {
+    const { uuid, name } = conversation.friend;
+    setConfirm({
+      title: `Retirer ${name} de tes amis ?`,
+      description: "Vous ne pourrez plus vous écrire. Votre conversation reste lisible, et tu pourras lui renvoyer une demande plus tard.",
+      confirm: "Retirer",
+      onConfirm: () =>
+        void services
+          .removeFriend(uuid)
+          .then(() => {
+            // Sans message, la conversation d'un ancien ami disparaît de la liste.
+            updateInbox((current) => ({
+              ...current,
+              conversations: conversation.last
+                ? updateConversation(current.conversations, uuid, (entry) => ({ ...entry, isFriend: false, canWrite: false }))
+                : current.conversations.filter((entry) => entry.friend.uuid !== uuid),
+            }));
+            setReloads((count) => count + 1);
+            onNotice(`${name} ne fait plus partie de tes amis.`);
+            void refreshInbox();
+          })
+          .catch((reason) => onNotice(String(reason))),
+    });
+  };
 
   const listActions = (conversation: Conversation): ConversationActions => {
     const join = joinableMode(conversation.friend, modes);
@@ -1660,6 +1710,7 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
       muted: conversation.muted,
       onState: (change) => void setState(conversation, change),
       onClear: { disabled: conversation.last === null, onSelect: () => clear(conversation) },
+      onRemoveFriend: conversation.isFriend ? () => removeFriend(conversation) : undefined,
     };
   };
   const conversation = friend && inbox ? (inbox.conversations.find((entry) => plain(entry.friend.uuid) === plain(friend)) ?? null) : null;
@@ -1676,10 +1727,13 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
         onSendRequest={sendRequest}
         onOpenPlayer={onOpenPlayer}
         actionsFor={listActions}
+        me={me}
+        status={status}
+        onStatus={onStatus}
       />
       {conversation ? (
         <ThreadPane
-          key={`${conversation.friend.uuid}:${cleared}`}
+          key={`${conversation.friend.uuid}:${reloads}`}
           conversation={conversation}
           gifs={inbox?.gifs ?? false}
           modes={modes}
@@ -1689,6 +1743,7 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
           onOpenPlayer={onOpenPlayer}
           updateInbox={updateInbox}
           refreshInbox={refreshInbox}
+          onRemoveFriend={() => removeFriend(conversation)}
           services={services}
         />
       ) : (
@@ -1697,7 +1752,7 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
             <LoaderCircle className="size-6 animate-spin text-muted-foreground" aria-label="Chargement" />
           ) : (
             <>
-              <MessageCircle className="size-10 text-muted-foreground/60" strokeWidth={1.75} aria-hidden />
+              <Send className="size-10 text-muted-foreground/60" strokeWidth={1.75} aria-hidden />
               <p className="font-display text-xl leading-none">{friend ? "Conversation introuvable" : friendless ? "Pas encore d'amis à qui écrire" : "Choisis un ami"}</p>
               <p className="max-w-sm text-sm text-muted-foreground">
                 {friend ? (

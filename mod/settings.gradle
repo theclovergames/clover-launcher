@@ -10,3 +10,9 @@ pluginManagement {
 }
 
 rootProject.name = 'cloverclient'
+
+// Un sous-projet par version de Minecraft visée : versions/<version>/gradle.properties.
+file('versions').eachDir { dir ->
+    include(":${dir.name}")
+    project(":${dir.name}").projectDir = dir
+}

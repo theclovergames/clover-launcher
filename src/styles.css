@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "tailwindcss" source(".");
 @plugin "@tailwindcss/typography";
 @import "tw-animate-css";
 @import "./shadcn.css";
@@ -9,6 +9,11 @@
 @custom-variant tall (@media (min-height: 800px));
 /* Fenêtre basse (moins de 720 px) : la colonne de navigation se resserre pour garder Profil visible. */
 @custom-variant short (@media (max-height: 719px));
+/* Actualités de l'accueil assez hautes pour le dernier article en grand, bannière entière. */
+@custom-variant news-roomy (@container news (min-height: 340px));
+/* Style « Moderne » (Paramètres → Apparence) : celui de shadcn/ui Mira à la place du relief Minecraft. */
+@custom-variant mira (:root[data-style="mira"] &);
+@custom-variant news-tall (@container news (min-height: 640px) and (min-width: 300px));
 
 /* Chiffres façon jeu (compteurs de joueurs, versions, mémoire). Sous-ensemble latin de Monocraft, OFL. */
 @font-face {
@@ -170,12 +175,243 @@
   }
 }
 
+/*
+ * Ciel de l'accueil (`HomeSky`) : les nuages dérivent de gauche à droite et le soleil respire ; les
+ * joueurs en élytres sont animés par le composant. Animations réduites (système ou réglage) : rien
+ * ne bouge, les nuages restent à `--x`.
+ */
+@layer components {
+  .sky-drift {
+    transform: translateX(var(--x, 0));
+    animation: sky-drift linear infinite;
+    will-change: transform;
+  }
+  .sky-sun {
+    animation: sky-sun 7s ease-in-out infinite alternate;
+  }
+  .sky-twinkle {
+    animation: sky-twinkle 3.8s ease-in-out infinite alternate;
+  }
+  .sky-flap {
+    animation: sky-flap 0.6s steps(1, end) infinite;
+  }
+  .sky-bat-wing {
+    transform-origin: 11px 6px;
+    animation: sky-bat-wing 0.26s ease-in-out infinite;
+  }
+  .sky-bat-wing-back {
+    animation-delay: -0.035s;
+  }
+  .sky-allay-wing {
+    transform-origin: 14px 9px;
+    animation: sky-allay-wing 0.7s ease-in-out infinite;
+  }
+  .sky-allay-wing-back {
+    animation-delay: -0.1s;
+  }
+  .sky-bob {
+    animation: sky-bob 3.2s ease-in-out infinite alternate;
+  }
+  /* Pluie et neige : la tuile glisse d'une hauteur (`--fall`), et de biais pour la neige (`--drift`). */
+  .sky-fall {
+    animation: sky-fall linear infinite;
+  }
+  /* Lucioles : elles s'allument et s'éteignent ; immobiles, elles restent à demi allumées. */
+  .sky-glow {
+    opacity: 0.6;
+    animation: sky-glow ease-in-out infinite;
+  }
+  .sky-firefly {
+    animation: sky-firefly ease-in-out infinite alternate;
+  }
+  /* Décors : fumée, braises et particules qui montent de `--rise`, cristaux de l'End qui tournent, lapins qui sautent. */
+  .sky-rise {
+    opacity: 0.5;
+    animation: sky-rise ease-out infinite;
+  }
+  .sky-spin {
+    animation: sky-spin 4s linear infinite;
+  }
+  .sky-hop {
+    animation: sky-hop 2.2s ease-in-out infinite;
+  }
+  /* Téléportation d'un enderman : les particules jaillissent de `--dx`, `--dy` et s'éteignent. */
+  .sky-burst {
+    opacity: 0;
+    animation: sky-burst 0.8s ease-out forwards;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sky-drift,
+    .sky-sun,
+    .sky-twinkle,
+    .sky-flap,
+    .sky-bat-wing,
+    .sky-allay-wing,
+    .sky-bob,
+    .sky-fall,
+    .sky-glow,
+    .sky-firefly,
+    .sky-rise,
+    .sky-spin,
+    .sky-hop {
+      animation: none;
+    }
+    .sky-flap-alt {
+      opacity: 0;
+    }
+  }
+}
+.reduce-motion .sky-drift,
+.reduce-motion .sky-sun,
+.reduce-motion .sky-twinkle,
+.reduce-motion .sky-flap,
+.reduce-motion .sky-bat-wing,
+.reduce-motion .sky-allay-wing,
+.reduce-motion .sky-bob,
+.reduce-motion .sky-fall,
+.reduce-motion .sky-glow,
+.reduce-motion .sky-firefly,
+.reduce-motion .sky-rise,
+.reduce-motion .sky-spin,
+.reduce-motion .sky-hop {
+  animation: none !important;
+}
+/* Personnage endormi : chaque « z » monte en grossissant, puis s'efface. */
+@keyframes sky-bat-wing {
+  0%, 100% { transform: rotate(10deg) scaleY(0.18); }
+  50% { transform: rotate(-12deg) scaleY(1); }
+}
+@keyframes sky-allay-wing {
+  0%, 100% { transform: rotate(-12deg) scaleX(0.45); }
+  50% { transform: rotate(14deg) scaleX(1); }
+}
+@keyframes sleep-z {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.6);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(1.1em, -2.4em) scale(1.2);
+  }
+}
+.sleep-z {
+  opacity: 0;
+  animation: sleep-z 2.4s ease-out infinite;
+}
+/* Ailes immobiles : une seule image. */
+.reduce-motion .sky-flap-alt {
+  opacity: 0;
+}
+@keyframes sky-drift {
+  from {
+    transform: translateX(-25%);
+  }
+  to {
+    transform: translateX(105%);
+  }
+}
+@keyframes sky-sun {
+  to {
+    transform: scale(1.04);
+  }
+}
+@keyframes sky-rise {
+  from {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.8;
+  }
+  to {
+    transform: translateY(var(--rise, -40px));
+    opacity: 0;
+  }
+}
+@keyframes sky-burst {
+  from {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+  to {
+    transform: translate(var(--dx), var(--dy));
+    opacity: 0;
+  }
+}
+@keyframes sky-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes sky-hop {
+  0%,
+  55%,
+  85%,
+  100% {
+    transform: translateY(0);
+  }
+  70% {
+    transform: translateY(-10px);
+  }
+}
+@keyframes sky-glow {
+  0%,
+  100% {
+    opacity: 0.18;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes sky-firefly {
+  0% { transform: translate(0, 0); }
+  35% { transform: translate(calc(var(--firefly-x) * 0.6), var(--firefly-y)); }
+  70% { transform: translate(var(--firefly-x), calc(var(--firefly-y) * 0.3)); }
+  100% { transform: translate(calc(var(--firefly-x) * -0.25), calc(var(--firefly-y) * -0.4)); }
+}
+@keyframes sky-fall {
+  to {
+    background-position: var(--drift, 0px) var(--fall);
+  }
+}
+@keyframes sky-twinkle {
+  to {
+    opacity: 0.45;
+  }
+}
+@keyframes sky-flap {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes sky-bob {
+  from {
+    transform: translateY(-4px);
+  }
+  to {
+    transform: translateY(4px);
+  }
+}
+
 /* Contour du jeu : 2 px quasi noirs, liseré intérieur décalé. */
 @utility mc-frame {
   border: 2px solid var(--mc-outline);
   outline: 2px solid var(--mc-frame);
   outline-offset: -4px;
   border-radius: calc(var(--mc-radius, 8px) * var(--corner-scale, 1));
+  /* Mira : liseré fin et ombre douce, comme les popovers de shadcn/ui. */
+  :root[data-style="mira"] & {
+    border: 0;
+    outline: none;
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--foreground) 10%, transparent),
+      0 4px 6px -1px rgb(0 0 0 / 0.1),
+      0 2px 4px -2px rgb(0 0 0 / 0.1);
+  }
 }
 
 /* Case d'inventaire : fond creusé, même contour. */
@@ -185,6 +421,10 @@
   outline: 2px solid var(--mc-frame);
   outline-offset: -4px;
   border-radius: calc(var(--mc-radius, 6px) * var(--corner-scale, 1));
+  :root[data-style="mira"] & {
+    border: 1px solid var(--border);
+    outline: none;
+  }
 }
 
 /* Bouton en relief : arête claire en haut, ombre en bas, enfoncé au clic. */
@@ -201,6 +441,24 @@
   &:active:not(:disabled) {
     box-shadow: inset 0 -1px 0 0 rgb(0 0 0 / 0.28);
     transform: translateY(1px);
+  }
+  /* Mira : bord transparent, fond éclairci au survol, anneau au focus, à peine enfoncé au clic. */
+  :root[data-style="mira"] & {
+    border: 1px solid transparent;
+    background-clip: padding-box;
+    box-shadow: none;
+    transition: background-color 150ms, color 150ms, transform 150ms;
+    &:hover:not(:disabled) {
+      filter: none;
+      background-image: linear-gradient(color-mix(in oklch, var(--foreground) 6%, transparent) 0 0);
+    }
+    &:focus-visible {
+      border-color: var(--ring);
+      box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 30%, transparent);
+    }
+    &:active:not(:disabled) {
+      box-shadow: none;
+    }
   }
 }
 
@@ -249,7 +507,7 @@ html[data-surface="tray-menu"] #root {
   border: 1px solid #3a352d;
   border-radius: 14px;
   background: #14120f;
-  color: #eee8db;
+  color: var(--foreground);
   font-family: "Segoe UI", sans-serif;
   font-size: 13px;
 }
@@ -258,7 +516,7 @@ html[data-surface="tray-menu"] #root {
   align-items: center;
   height: 28px;
   padding-inline: 10px;
-  border-radius: 7px;
+  border-radius: 8px;
   outline: none;
   cursor: default;
 }
@@ -356,6 +614,23 @@ html[data-surface="tray-menu"] #root {
   }
   .play-slab:disabled {
     cursor: default;
+  }
+  /* Style Moderne (shadcn/ui Mira) : même face, sans contour ni tranche, posée sur une ombre douce. */
+  :root[data-style="mira"] .play-slab {
+    --lift: 0px;
+    border: 1px solid transparent;
+    background-clip: padding-box;
+    box-shadow: 0 12px 28px -10px rgb(0 0 0 / 0.6);
+  }
+  :root[data-style="mira"] .play-slab:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  /* Pendant la partie, la même dalle en rouge ferme le jeu. */
+  .play-slab-stop {
+    --gold-top: #ef5b54;
+    --gold-bottom: #c42d2a;
+    --gold-edge: #6e1513;
+    --gold-ink: #fff;
   }
   /* Avancement de l'installation : la face s'assombrit de gauche à droite. */
   .play-slab-fill {

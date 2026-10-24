@@ -93,6 +93,8 @@ pub(crate) fn build_arguments(paths: &Paths, installation: &Installation, sessio
         ("auth_player_name", session.profile.name.clone()),
         ("auth_uuid", session.profile.uuid.replace('-', "")),
         ("auth_access_token", session.minecraft_token.clone()),
+        // Avant la 1.6 : jeton et UUID dans un seul argument.
+        ("auth_session", format!("token:{}:{}", session.minecraft_token, session.profile.uuid.replace('-', ""))),
         ("auth_xuid", String::new()),
         ("user_type", "msa".into()),
         ("user_properties", "{}".into()),
@@ -101,6 +103,11 @@ pub(crate) fn build_arguments(paths: &Paths, installation: &Installation, sessio
         ("version_type", vanilla.kind.clone().unwrap_or_else(|| "release".into())),
         ("game_directory", paths.game.to_string_lossy().into_owned()),
         ("assets_root", paths.assets.to_string_lossy().into_owned()),
+        // Anciennes versions : leurs assets par leur nom (voir `install`), sinon dans `resources/`.
+        ("game_assets", {
+            let named = paths.assets.join("virtual").join(&index);
+            if named.is_dir() { named } else { paths.game.join("resources") }.to_string_lossy().into_owned()
+        }),
         ("assets_index_name", index),
         ("natives_directory", natives.to_string_lossy().into_owned()),
         ("classpath", classpath),
@@ -135,6 +142,8 @@ pub(crate) fn build_arguments(paths: &Paths, installation: &Installation, sessio
     if !options.clover_mods.is_empty() {
         let mods = options.clover_mods.iter().map(|path| path.to_string_lossy()).collect::<Vec<_>>().join(separator);
         arguments.push(format!("-Dfabric.addMods={mods}"));
+        // Même liste pour Quilt Loader, qui lit sa propre propriété.
+        arguments.push(format!("-Dloader.addMods={mods}"));
     }
     arguments.push(main_class);
     arguments.extend(expand(&vanilla.arguments.game, &features));

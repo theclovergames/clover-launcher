@@ -11,6 +11,8 @@ type Props = {
   onPlay: (mode: string) => void;
   /** Jeu en préparation ou déjà lancé : les cartes ne lancent rien. */
   busy?: boolean;
+  /** Cartes par rangée ; par défaut une seule rangée, jusqu'à six. */
+  columns?: number;
 };
 
 /**
@@ -20,10 +22,10 @@ type Props = {
  * jeu connecté à ce mode. Un mode annoncé, encore en développement, est grisé, sans clic. Une
  * seule rangée tant qu'il y a au plus six modes.
  */
-export function ModeGrid({ modes, onPlay, busy = false }: Props) {
+export function ModeGrid({ modes, onPlay, busy = false, columns }: Props) {
   const shown = modes.filter((mode) => mode.quickPlay || mode.soon);
   return (
-    <ul className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(shown.length, 6)}, minmax(0, 1fr))` }}>
+    <ul className="grid gap-2" style={{ gridTemplateColumns: `repeat(${columns ?? Math.min(shown.length, 6)}, minmax(0, 1fr))` }}>
       {shown.map((mode) => {
         const soon = Boolean(mode.soon);
         const offline = !soon && mode.players === null;

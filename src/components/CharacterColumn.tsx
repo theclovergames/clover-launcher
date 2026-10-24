@@ -1,6 +1,6 @@
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
-import { SkinViewer } from "@/components/SkinViewer";
+import { nameOverhang, StandingSkin } from "@/components/SkinViewer";
 import { cn } from "@/lib/utils";
 import type { SkinLook } from "@/types";
 
@@ -11,10 +11,9 @@ function useSkinStage() {
   useLayoutEffect(() => {
     const node = stage.current;
     if (!node) return;
+    // Le plus grand qui tienne en hauteur, pseudo et marge du bas (12 px) compris, et en largeur.
     const measure = () => {
-      // Place du pseudo au-dessus de la tête et marge sous les pieds.
-      const free = Math.min(node.clientHeight - 48, (node.clientWidth - 24) / 0.78);
-      setHeight([480, 420, 360, 300, 250, 210, 170].find((size) => free >= size) ?? 140);
+      setHeight([480, 420, 360, 300, 250, 210, 170].find((size) => nameOverhang(size) + size + 12 <= node.clientHeight && size * 0.78 <= node.clientWidth - 24) ?? 140);
     };
     const observer = new ResizeObserver(measure);
     observer.observe(node);
@@ -33,6 +32,8 @@ type Props = {
   look: SkinLook;
   animate?: boolean;
   elytra?: boolean;
+  /** Voir `SkinViewer`. */
+  recenter?: boolean;
   /** Images floutées derrière le personnage ; celle de `tint` est visible, les autres en fondu. */
   tints: { id: string; src: string }[];
   tint: string | null;
@@ -45,11 +46,12 @@ type Props = {
 };
 
 /**
- * Colonne du personnage des pages Profil et Skins : aperçu 3D debout juste au-dessus de son
- * contenu, pseudo au-dessus de la tête, fond teinté par une image floutée qui change en fondu
- * (mode choisi, skin essayé), lueur verte du launcher sans image.
+ * Colonne du personnage des pages Profil, Skins et d'un joueur : le même personnage debout que sur
+ * l'accueil (`StandingSkin`), juste au-dessus de son contenu, sur un fond classique (le ciel animé
+ * reste à l'accueil) teinté par une image floutée qui change en fondu (mode choisi, skin essayé),
+ * lueur verte du launcher sans image.
  */
-export function CharacterColumn({ label, name, skinLabel, look, animate, elytra, tints, tint, top, overlay, children }: Props) {
+export function CharacterColumn({ label, name, skinLabel, look, animate, elytra, recenter, tints, tint, top, overlay, children }: Props) {
   const skin = useSkinStage();
   const tinted = tints.some((entry) => entry.id === tint);
   return (
@@ -71,12 +73,9 @@ export function CharacterColumn({ label, name, skinLabel, look, animate, elytra,
 
       {/* Le personnage se tient juste au-dessus de son contenu, quelle que soit la hauteur de la fenêtre. */}
       <div ref={skin.stage} className="relative flex min-h-0 flex-1 items-end justify-center px-3 pb-3">
-        <div className="relative flex shrink-0 flex-col items-center">
-          <p className="max-w-48 truncate bg-black/40 px-2.5 pt-1.5 pb-1 font-pixel text-[16px] leading-none">{name}</p>
-          <div aria-hidden className="absolute bottom-1 left-1/2 h-4 w-24 -translate-x-1/2 rounded-[50%] bg-black/60 blur-[6px]" />
-          <SkinViewer look={look} width={Math.round(skin.height * 0.78)} height={skin.height} animate={animate} elytra={elytra} label={skinLabel} />
-          {overlay && <div className="absolute bottom-0 left-1/2 -translate-x-1/2">{overlay}</div>}
-        </div>
+        <StandingSkin name={name} look={look} height={skin.height} animate={animate} elytra={elytra} recenter={recenter} label={skinLabel}>
+          {overlay}
+        </StandingSkin>
       </div>
 
       {children && <div className="relative flex shrink-0 justify-center px-5 pb-5">{children}</div>}

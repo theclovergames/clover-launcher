@@ -71,11 +71,25 @@ export type MinecraftNewsItem = {
 /** Page Actualités ; `null` : le site n'a pas répondu pour cette source. */
 export type NewsPage = {
   blog: NewsItem[] | null;
+  changelog: ChangelogItem[] | null;
   /** `translated: false` : annonces en anglais, comme Mojang les publie. */
   minecraft: { translated: boolean; items: MinecraftNewsItem[] } | null;
 };
 
 export type BlogArticle = { slug: string; title: string; category: string | null; image: string | null; author: string | null; publishedAt: string; url: string; html: string };
+
+export type ChangelogItem = {
+  slug: string;
+  title: string;
+  excerpt: string;
+  version: string | null;
+  category: "launcher" | "site" | "minecraft";
+  image: string | null;
+  url: string;
+  publishedAt: string;
+};
+
+export type ChangelogArticle = ChangelogItem & { author: string | null; html: string };
 
 export type MinecraftArticle = { id: string; title: string; html: string; publishedAt: string; image: string | null };
 
@@ -110,7 +124,8 @@ export type Instance = {
   /** Projet Modrinth du modpack dont l'instance a été créée ; absent pour un pack importé d'un fichier. */
   modpack?: string | null;
 };
-export type InstanceEntry = Instance & { gameDir: string; installed: boolean };
+/** `icon` : logo du modpack dont l'instance vient, en adresse `data:`. */
+export type InstanceEntry = Instance & { gameDir: string; installed: boolean; icon?: string | null };
 export type InstanceInput = Pick<Instance, "name" | "kind" | "minecraft" | "loader" | "separate" | "memoryMb">;
 export type AvailableVersion = { id: string; snapshot: boolean; released: string };
 /** Partie terminée (`history.rs`) : début en secondes Unix, code de sortie `null` si le jeu a été tué. */
@@ -239,6 +254,8 @@ export type DetectedInstance = {
   personalMods: string[];
   /** Mods d'un autre loader que Fabric : pas repris dans l'instance Clover Games. */
   otherMods: string[];
+  /** Logo du modpack (adresse `data:` ou image publiée), repris par l'instance créée. */
+  icon: string | null;
 };
 
 /** Avancement de la recherche (évènements `import-scan`) : installations annoncées, puis mods envoyés à Modrinth. */
@@ -306,6 +323,8 @@ export type ModrinthHit = {
 export type ModrinthPage = { hits: ModrinthHit[]; totalHits: number };
 /** Version d'un modpack que le launcher sait installer, de la plus récente à la plus ancienne. */
 export type ModpackVersion = { id: string; name: string; number: string; loaders: string[]; gameVersions: string[]; release: boolean; published: string };
+/** Mise à jour du modpack d'une instance : numéro installé, puis identifiant et numéro de la version proposée. */
+export type ModpackUpdate = { installed: string; id: string; number: string };
 /** Ordre des résultats de recherche ; sans texte, « relevance » classe par téléchargements. */
 export type SearchSort = "relevance" | "downloads" | "follows" | "newest" | "updated";
 /** Catégories Modrinth (« worldgen », « 16x »), toutes exigées à la fois. */
@@ -403,7 +422,12 @@ export type Friend = {
   lastSeen: number | null;
   status: string | null;
   canJoin: boolean;
+  /** Statut choisi dans son launcher ; absent launcher fermé (ou invisible, ou site plus ancien). */
+  availability?: Exclude<Availability, "invisible"> | null;
 };
+
+/** Statut choisi dans Messages, vu des amis (sauf « invisible », vu hors ligne). */
+export type Availability = "online" | "busy" | "away" | "invisible";
 
 // ── Messages entre amis (`/api/launcher/messages`, filtrés par le cœur Rust) ──
 
@@ -434,7 +458,8 @@ export type ChatMessage = {
   deleted: boolean;
   reactions: MessageReactions;
 };
-export type Conversation = { friend: ChatFriend; last: MessagePreview | null; unread: number; archived: boolean; muted: boolean; canWrite: boolean };
+/** `isFriend` : ami actuel, qu'on peut retirer (faux pour un ancien ami). */
+export type Conversation = { friend: ChatFriend; last: MessagePreview | null; unread: number; archived: boolean; muted: boolean; canWrite: boolean; isFriend: boolean };
 /** Demande d'ami en attente ; dates en millisecondes, elle expire d'elle-même à `expiresAt`. */
 export type FriendRequest = { uuid: string; name: string; at: number; expiresAt: number };
 /** `now` : heure du site ; `gifs` : recherche de GIF disponible ; `requests` : demandes d'amis en attente. */
@@ -449,9 +474,12 @@ export type Thread = {
   seenUpTo: number;
   hasMore: boolean;
   canWrite: boolean;
+  isFriend: boolean;
   archived: boolean;
   muted: boolean;
 };
+/** Temps qu'il fait chez le joueur (relais Clover, MET Norway), pour le ciel de l'accueil. */
+export type Weather = { sky: "clear" | "fair" | "cloudy" | "overcast" | "fog" | "rain" | "storm" | "snow"; heavy: boolean; temperature: number | null };
 /** Lien du compte actif avec un autre joueur : demande `outgoing` envoyée, `incoming` reçue. */
 export type Relation = "self" | "friend" | "outgoing" | "incoming" | "none";
 /** Profil d'un autre joueur (`/api/launcher/players`) : sans pièces ni amis, présence réservée à ses amis. */

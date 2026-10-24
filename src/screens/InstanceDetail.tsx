@@ -1,4 +1,4 @@
-import { AppWindow, Box, Check, Clover, Copy, Database, Expand, FolderOpen, FolderSearch, Globe, Heart, Image as ImageIcon, PackageOpen, Play, Plus, Server, Sprout, SquareTerminal, Sun, Trash2 } from "lucide-react";
+import { AppWindow, Box, Check, Clover, Copy, Database, Expand, FolderOpen, FolderSearch, Globe, Heart, Image as ImageIcon, PackageOpen, Play, Plus, RefreshCw, Server, Sprout, SquareTerminal, Sun, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
 import { ActivityHeatmap } from "@/components/ActivityHeatmap";
@@ -15,16 +15,16 @@ import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
 import { opensWorldsDirectly } from "@/lib/game-versions";
-import { KINDS, instanceSummary } from "@/lib/instances";
+import { instanceSummary, loaderSummary } from "@/lib/instances";
 import { formatDuration, playStats, topServers } from "@/lib/play-history";
 import { cn, formatSize } from "@/lib/utils";
 import { versionImage } from "@/lib/version-art";
 import { type Confirmation, ConfirmDialog } from "@/screens/Dialogs";
 import type { ContentKind } from "@/lib/content-kinds";
 import type { InstanceSection } from "@/lib/routes";
-import type { ContentEntry, ContentFolder, InstanceEntry, PlaySession, PlayState, WorldInfo } from "@/types";
+import type { ContentEntry, ContentFolder, InstanceEntry, ModpackUpdate, PlaySession, PlayState, WorldInfo } from "@/types";
 
-type Services = Pick<typeof api, "playHistory" | "instanceContent" | "setContentEnabled" | "trashContent" | "showContent" | "renameWorld">;
+type Services = Pick<typeof api, "playHistory" | "instanceContent" | "setContentEnabled" | "trashContent" | "showContent" | "renameWorld" | "modpackUpdate">;
 
 type Props = {
   entry: InstanceEntry;
@@ -35,6 +35,8 @@ type Props = {
   onPlayWorld?: (world: string) => void;
   /** Export en `.mrpack` ; absent pour l'instance Clover Games, qui suit le serveur. */
   onExport?: () => void;
+  /** Installe une version plus récente de son modpack Modrinth ; absent pour Clover Games et Vanilla. */
+  onUpdateModpack?: (version: string) => Promise<void>;
   onStop: (force: boolean) => void;
   /** Supprime l'instance, après confirmation ; absent pour Clover Games, qui suit le serveur. */
   onDelete?: () => void;
@@ -46,6 +48,8 @@ type Props = {
   onRenameServer?: (address: string, name: string) => Promise<void>;
   /** `world` : dossier d'un monde précis. */
   onOpenFolder: (folder: "game" | ContentFolder, world?: string) => void;
+  /** Console de l'instance : la partie en cours, ou les journaux des précédentes. */
+  onOpenConsole: () => void;
   /** Contenu de l'onglet Mods ; absent pour Vanilla, qui se lance sans mods. */
   mods?: ReactNode;
   /** Change après une installation : l'onglet ouvert relit son dossier. */
@@ -82,8 +86,40 @@ const sessionFormat = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: 
 const iconButton = cn(secondaryButton, "h-11 w-11 px-0");
 const card = "rounded-lg border border-border bg-card";
 
+/**
+ * Version plus récente du modpack de l'instance, cherchée à l'ouverture de sa page : rien tant
+ * qu'elle est à jour, ou si Modrinth ne répond pas.
+ */
+function ModpackUpdateButton({ id, disabled, check, onUpdate }: { id: string; disabled: boolean; check: (id: string) => Promise<ModpackUpdate | null>; onUpdate: (version: string) => Promise<void> }) {
+  const [update, setUpdate] = useState<ModpackUpdate | null>(null);
+  const [updating, setUpdating] = useState(false);
+  useEffect(() => {
+    let live = true;
+    check(id).then((found) => live && setUpdate(found), () => {});
+    return () => {
+      live = false;
+    };
+  }, [id, check]);
+  if (!update) return null;
+  return (
+    <button
+      type="button"
+      disabled={disabled || updating}
+      title={`Version installée : ${update.installed}. Les mods du modpack sont remplacés ; tes réglages et les mods que tu as ajoutés restent.`}
+      onClick={() => {
+        setUpdating(true);
+        onUpdate(update.id).then(() => setUpdate(null), () => {}).finally(() => setUpdating(false));
+      }}
+      className={cn(secondaryButton, "h-11")}
+    >
+      <RefreshCw className={cn("size-4 text-primary", updating && "motion-safe:animate-spin")} aria-hidden />
+      {updating ? "Mise à jour…" : `Mettre à jour en ${update.number}`}
+    </button>
+  );
+}
+
 /** Page d'une instance : son temps de jeu, son activité, ses serveurs et le contenu de son dossier. */
-export function InstanceDetail({ entry, play, running, onPlay, onPlayWorld, onExport, onStop, onDelete, settings, serverNames = {}, onRenameServer, onOpenFolder, mods, contentRevision = 0, onSearch, section: requested, onSection, services = api }: Props) {
+export function InstanceDetail({ entry, play, running, onPlay, onPlayWorld, onExport, onUpdateModpack, onStop, onDelete, settings, serverNames = {}, onRenameServer, onOpenFolder, onOpenConsole, mods, contentRevision = 0, onSearch, section: requested, onSection, services = api }: Props) {
   // Les shaders passent par Iris, un mod : Vanilla n'en charge pas.
   const sections = SECTIONS.filter((item) => (item.id !== "shaderpacks" || entry.kind !== "vanilla") && (item.id !== "mods" || mods) && (item.id !== "settings" || settings));
   // Un onglet absent (Mods d'une instance Vanilla) ramène à l'aperçu.
@@ -108,9 +144,13 @@ export function InstanceDetail({ entry, play, running, onPlay, onPlayWorld, onEx
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              {onUpdateModpack && <ModpackUpdateButton id={entry.id} disabled={play.kind !== "ready"} check={services.modpackUpdate} onUpdate={onUpdateModpack} />}
               <button type="button" onClick={() => onOpenFolder("game")} className={cn(secondaryButton, "h-11")}>
                 <FolderOpen className="size-4" aria-hidden />
                 Ouvrir le dossier
+              </button>
+              <button type="button" title="Console" aria-label={`Console de ${entry.name}`} onClick={onOpenConsole} className={iconButton}>
+                <SquareTerminal className="size-4" aria-hidden />
               </button>
               {onExport && (
                 <button type="button" title="Exporter en modpack" aria-label={`Exporter ${entry.name} en modpack`} onClick={onExport} disabled={!entry.minecraft} className={iconButton}>
@@ -189,7 +229,7 @@ function Overview({
   const recent = [...(sessions ?? [])].reverse().slice(0, 5);
   const facts: [string, string][] = [
     ["Version", entry.minecraft ?? "…"],
-    ["Type", `${KINDS[entry.kind].label}${entry.loader ? ` ${entry.loader}` : ""}`],
+    ["Type", loaderSummary(entry)],
     ["Dossier", entry.id === "clover" || !entry.separate ? "Commun" : "Séparé"],
     ["Mémoire", entry.memoryMb ? `${entry.memoryMb / 1024} Go` : "Comme le launcher"],
     ["Dernière partie", entry.lastPlayed ? dateFormat.format(new Date(entry.lastPlayed * 1000)) : "Jamais"],

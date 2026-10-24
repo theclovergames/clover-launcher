@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 // @ts-ignore — worker JavaScript sans déclarations.
-import worker, { checkBody, isAllowedRoute, Quota } from "../relay/worker.js";
+import worker, { checkBody, isAllowedRoute, Quota, sky, zone } from "../relay/worker.js";
 
 const AGENT = "CloverLauncher/0.4.7 (+https://clovergames.fr)";
 
@@ -79,4 +79,45 @@ test("plafond global sur une minute", () => {
   assert.equal(quota.fetch().status, 429);
   quota.window--;
   assert.equal(quota.fetch().status, 204);
+});
+
+test("météo : symboles de MET Norway ramenés au ciel de l'accueil", () => {
+  assert.deepEqual(sky("clearsky_night"), { sky: "clear", heavy: false });
+  assert.deepEqual(sky("fair_day"), { sky: "fair", heavy: false });
+  assert.deepEqual(sky("partlycloudy_day"), { sky: "cloudy", heavy: false });
+  assert.deepEqual(sky("cloudy"), { sky: "overcast", heavy: false });
+  assert.deepEqual(sky("lightrainshowers_day"), { sky: "rain", heavy: false });
+  assert.deepEqual(sky("heavysleet"), { sky: "rain", heavy: true });
+  assert.deepEqual(sky("heavysnowshowersandthunder_day"), { sky: "storm", heavy: true });
+  assert.deepEqual(sky("snow"), { sky: "snow", heavy: false });
+  assert.equal(sky("inconnu"), null);
+  assert.equal(sky(undefined), null);
+});
+
+test("météo : zone arrondie à 0,1°, rien sans position", () => {
+  assert.deepEqual(zone({ latitude: "48.85660", longitude: "2.35220" }), { lat: "48.9", lon: "2.4" });
+  assert.equal(zone({ latitude: "48.8" }), null);
+  assert.equal(zone(undefined), null);
+});
+
+test("météo : seule la zone part chez MET Norway, seul le temps revient", async () => {
+  const real = globalThis.fetch;
+  let seen = "";
+  globalThis.fetch = (async (url: string) => {
+    seen = url;
+    return Response.json({ properties: { timeseries: [{ data: { instant: { details: { air_temperature: -2.6 } }, next_1_hours: { summary: { symbol_code: "rainandthunder" } } } }] } });
+  }) as typeof fetch;
+  const request = (agent = AGENT, cf: object | null = { latitude: "45.76404", longitude: "4.83566" }) =>
+    Object.assign(new Request("https://curseforge.clovergames.fr/weather", { headers: { "user-agent": agent } }), { cf });
+  try {
+    const res = await worker.fetch(request(), env());
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { schema: 1, sky: "storm", heavy: false, temperature: -3 });
+    assert.equal(seen, "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=45.8&lon=4.8");
+    assert.equal((await worker.fetch(request("curl/8"), env())).status, 403);
+    assert.equal((await worker.fetch(request(AGENT, null), env())).status, 404);
+    assert.equal((await worker.fetch(request(), env(false))).status, 429);
+  } finally {
+    globalThis.fetch = real;
+  }
 });
