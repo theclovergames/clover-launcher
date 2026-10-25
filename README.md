@@ -64,7 +64,8 @@ En production, le manifeste est publié par la CI : Actions › Manifeste › Ru
 
 ## Publier une version
 
-1. Monter `version` dans `src-tauri/Cargo.toml` (c'est la seule source de la version).
+1. Monter `version` dans `src-tauri/Cargo.toml`, puis `npm version <x.y.z> --no-git-tag-version` : la CI
+   refuse un tag si `Cargo.toml` et `package.json` diffèrent.
 2. Déplacer la section « Pas encore publié » de [CHANGELOG.md](CHANGELOG.md) sous le nouveau
    numéro, avec la date.
 3. Committer, puis pousser le tag : `git tag v0.5.0 && git push origin v0.5.0`.
