@@ -2,7 +2,7 @@
  * Boutique : prix, mise en avant et tableau comparatif, comme sur clovergames.fr/shop. Testé par
  * `tests/shop.test.ts`.
  */
-import type { ShopFeature, ShopProduct } from "../types";
+import type { ShopCatalog, ShopFeature, ShopProduct } from "../types";
 
 const euros = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
 const whole = new Intl.NumberFormat("fr-FR");
@@ -12,6 +12,21 @@ export const formatEuros = (cents: number) => euros.format(cents / 100);
 
 /** « 1 250 pièces » */
 export const formatCoins = (coins: number) => `${whole.format(coins)} pièce${coins > 1 ? "s" : ""}`;
+
+/** « 1 250 crédits » */
+export const formatCredits = (credits: number) => `${whole.format(credits)} crédit${credits > 1 ? "s" : ""}`;
+
+/** Prix payables depuis le launcher dans chaque monnaie du jeu ; `null` si le site la ferme ou si le produit ne s'y paie pas. */
+export function gamePrices(product: Pick<ShopProduct, "credits" | "pieces">, catalog: Pick<ShopCatalog, "credits" | "pieces">): { credits: number | null; pieces: number | null } {
+  return { credits: catalog.credits?.enabled ? product.credits : null, pieces: catalog.pieces?.enabled ? product.pieces : null };
+}
+
+/** Prix à afficher, dans l'ordre des paiements (euros, crédits, pièces) : le premier est le prix principal. */
+export function priceLabels(product: ShopProduct, catalog: Pick<ShopCatalog, "credits" | "pieces">): string[] {
+  const { credits, pieces } = gamePrices(product, catalog);
+  const labels = [product.euro ? priceLabel(product) : null, credits === null ? null : formatCredits(credits), pieces === null ? null : formatCoins(pieces)].filter((label): label is string => label !== null);
+  return labels.length > 0 ? labels : [priceLabel(product)];
+}
 
 /** Prix en euros, « / mois » ou « / an » pour un abonnement. */
 export function priceLabel(product: Pick<ShopProduct, "priceCents" | "type" | "interval">): string {

@@ -323,7 +323,7 @@ export function NameDialog(props: {
  * Ce que l'on demande de confirmer : titre, explication, et l'élément concerné (chemin, nom).
  * `install` : rien n'est supprimé, le bouton est celui d'une installation.
  */
-/** `install` ou `pay` : action voulue (installer, payer en pièces), bouton de la couleur principale. */
+/** `install` ou `pay` : action voulue (installer, payer en crédits ou en pièces), bouton de la couleur principale. */
 export type Confirmation = { title: string; description: string; detail?: string; confirm: string; onConfirm: () => void; install?: boolean; pay?: boolean };
 
 /**

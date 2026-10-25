@@ -1263,6 +1263,7 @@ pub fn run() {
             shop::shop_account,
             shop::shop_checkout,
             shop::shop_pay_credits,
+            shop::shop_pay_pieces,
             notifications::mark_notifications_read,
             notifications::system_notification,
             messages::message_conversations,

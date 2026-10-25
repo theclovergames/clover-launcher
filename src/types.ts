@@ -399,7 +399,10 @@ export type PlayerStats = {
   /** Grade en jeu : groupe LuckPerms principal (sans accent) et son libellé. */
   rank: { id: string; label: string } | null;
   level: { level: number; totalXp: number; into: number; needed: number; rank: number | null } | null;
+  /** Pièces, gagnées en jeu. */
   coins: number | null;
+  /** Crédits, achetés en euros. */
+  credits: number | null;
   votes: { total: number; month: number } | null;
   streak: { current: number; best: number } | null;
   /** Dates en millisecondes ; `online` : serveur où il joue en ce moment. */
@@ -482,7 +485,7 @@ export type Thread = {
 export type Weather = { sky: "clear" | "fair" | "cloudy" | "overcast" | "fog" | "rain" | "storm" | "snow"; heavy: boolean; temperature: number | null };
 /** Lien du compte actif avec un autre joueur : demande `outgoing` envoyée, `incoming` reçue. */
 export type Relation = "self" | "friend" | "outgoing" | "incoming" | "none";
-/** Profil d'un autre joueur (`/api/launcher/players`) : sans pièces ni amis, présence réservée à ses amis. */
+/** Profil d'un autre joueur (`/api/launcher/players`) : sans crédits, pièces ni amis, présence réservée à ses amis. */
 export type OtherPlayer = { uuid: string; name: string; relation: Relation; canRequest: boolean; stats: PlayerStats };
 /** Résultat d'une demande d'ami : `accepted` si ce joueur avait déjà demandé. */
 export type RequestSent = { result: "sent" | "accepted"; player: { uuid: string; name: string } };
@@ -522,8 +525,10 @@ export type ShopProduct = {
   description: string | null;
   imageUrl: string | null;
   priceCents: number;
-  /** Prix en pièces ; `null` si le produit ne se paie pas en pièces. */
+  /** Prix en crédits ; `null` si le produit ne se paie pas en crédits. */
   credits: number | null;
+  /** Prix en pièces ; `null` si le produit ne se paie pas en pièces. */
+  pieces: number | null;
   /** Payable en euros (par Stripe, dans le navigateur). */
   euro: boolean;
   type: "one_time" | "subscription";
@@ -539,6 +544,7 @@ export type ShopProduct = {
 export type ShopCategory = { slug: string; name: string; description: string | null; color: string | null; icon: string | null };
 export type ShopCatalog = {
   credits: { enabled: boolean; perEuro: number } | null;
+  pieces: { enabled: boolean; perCredit: number } | null;
   banner: { text: string; url: string | null } | null;
   /** Objectif du mois, en euros. */
   goal: { label: string; target: number; current: number } | null;
@@ -548,6 +554,7 @@ export type ShopCatalog = {
   categories: ShopCategory[];
   products: ShopProduct[];
 };
-/** Solde de pièces (`null` : économie du jeu injoignable) et produits que le joueur ne peut pas acheter pour lui, avec la raison. */
-export type ShopAccount = { balance: number | null; blocked: Record<string, string> };
-export type CreditsPaid = { productName: string; credits: number; remaining: number | null };
+/** Soldes de crédits et de pièces (`null` : économie du jeu injoignable) et produits que le joueur ne peut pas acheter pour lui, avec la raison. */
+export type ShopAccount = { credits: number | null; pieces: number | null; blocked: Record<string, string> };
+/** Achat payé en crédits ou en pièces : montant débité et solde restant dans cette monnaie. */
+export type ShopPaid = { productName: string; amount: number; remaining: number | null };

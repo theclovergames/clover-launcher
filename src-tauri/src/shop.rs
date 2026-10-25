@@ -1,9 +1,10 @@
 //! Boutique du serveur pour la page Boutique, lue sur le site : catalogue public
 //! (`/api/launcher/shop`, mis en cache par le site), fiche d'un produit, puis, avec le jeton du
-//! site, le solde de pièces du joueur, ce qu'il ne peut pas acheter, et les deux paiements. Les
-//! euros passent par Stripe dans le navigateur (le launcher ne voit jamais une carte) ; les pièces,
-//! monnaie du jeu, se dépensent ici. Réponses réduites à ce qui s'affiche : textes bornés, adresses
-//! en https seulement, identifiants sûrs pour une adresse.
+//! site, les soldes de crédits et de pièces du joueur, ce qu'il ne peut pas acheter, et les
+//! paiements. Les euros passent par Stripe dans le navigateur (le launcher ne voit jamais une
+//! carte) ; les crédits (monnaie achetée en euros) et les pièces (gagnées en jeu) se dépensent ici.
+//! Réponses réduites à ce qui s'affiche : textes bornés, adresses en https seulement, identifiants
+//! sûrs pour une adresse.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -37,6 +38,8 @@ const URL_MAX: usize = 1024;
 const CONTENT_MAX: usize = 200_000;
 /// Prix borné (100 000 €) : un nombre plus grand vient d'une erreur du site.
 const PRICE_MAX: u64 = 10_000_000;
+/// Prix en crédits ou en pièces, borné de même.
+const AMOUNT_MAX: u64 = PRICE_MAX * 1000;
 const STRIPE_CHECKOUT: &str = "https://checkout.stripe.com/";
 
 const UNAVAILABLE: &str = "La boutique n'est pas encore disponible dans le launcher.";
@@ -95,9 +98,12 @@ pub struct Product {
     #[serde(default, deserialize_with = "lenient")]
     pub image_url: Option<String>,
     pub price_cents: u64,
-    /// Prix en pièces ; `None` si le produit ne se paie pas en pièces.
+    /// Prix en crédits ; `None` si le produit ne se paie pas en crédits.
     #[serde(default, deserialize_with = "lenient")]
     pub credits: Option<u64>,
+    /// Prix en pièces ; `None` si le produit ne se paie pas en pièces (ou site d'avant les pièces).
+    #[serde(default, deserialize_with = "lenient")]
+    pub pieces: Option<u64>,
     /// Payable en euros.
     #[serde(default)]
     pub euro: bool,
@@ -143,6 +149,15 @@ pub struct Credits {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pieces {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub per_credit: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Banner {
     pub text: String,
     #[serde(default, deserialize_with = "lenient")]
@@ -176,6 +191,8 @@ pub struct Catalog {
     #[serde(default, deserialize_with = "lenient")]
     pub credits: Option<Credits>,
     #[serde(default, deserialize_with = "lenient")]
+    pub pieces: Option<Pieces>,
+    #[serde(default, deserialize_with = "lenient")]
     pub banner: Option<Banner>,
     #[serde(default, deserialize_with = "lenient")]
     pub goal: Option<Goal>,
@@ -189,21 +206,29 @@ pub struct Catalog {
     pub products: Vec<Product>,
 }
 
-/// Le joueur face à la boutique : son solde (`None` : économie du jeu injoignable) et, par produit,
+/// Le joueur face à la boutique : ses soldes (`None` : économie du jeu injoignable) et, par produit,
 /// la raison qui l'empêche de l'acheter pour lui.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Account {
-    #[serde(default, deserialize_with = "lenient")]
+    /// Solde unique des sites d'avant les deux monnaies, payé par `/shop/credits` : il tient lieu
+    /// de crédits quand `credits` manque.
+    #[serde(default, deserialize_with = "lenient", skip_serializing)]
     pub balance: Option<u64>,
+    #[serde(default, deserialize_with = "lenient")]
+    pub credits: Option<u64>,
+    #[serde(default, deserialize_with = "lenient")]
+    pub pieces: Option<u64>,
     #[serde(default, deserialize_with = "lenient")]
     pub blocked: Option<BTreeMap<String, String>>,
 }
 
+/// Achat payé en crédits ou en pièces : montant débité et solde restant dans cette monnaie.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreditsPaid {
+pub struct Paid {
     pub product_name: String,
-    pub credits: u64,
+    #[serde(alias = "credits", alias = "pieces")]
+    pub amount: u64,
     #[serde(default, deserialize_with = "lenient")]
     pub remaining: Option<u64>,
 }
@@ -245,10 +270,12 @@ fn product(mut product: Product) -> Option<Product> {
     product.slug = product.slug.and_then(|slug| line(&slug, ID_MAX));
     product.description = product.description.and_then(|text| line(&text, DESCRIPTION_MAX));
     product.image_url = https(product.image_url);
-    product.credits = product.credits.filter(|credits| *credits <= PRICE_MAX * 1000);
-    // Un abonnement se renouvelle par Stripe : jamais en pièces.
+    product.credits = product.credits.filter(|credits| *credits <= AMOUNT_MAX);
+    product.pieces = product.pieces.filter(|pieces| *pieces <= AMOUNT_MAX);
+    // Un abonnement se renouvelle par Stripe : jamais en crédits ni en pièces.
     if product.kind == Kind::Subscription {
         product.credits = None;
+        product.pieces = None;
         product.interval = product.interval.or(Some(Interval::Month));
     } else {
         product.interval = None;
@@ -296,7 +323,7 @@ fn account(account: Account) -> Account {
         .filter_map(|(id, reason)| Some((id, line(&reason, REASON_MAX)?)))
         .take(BLOCKED_MAX)
         .collect();
-    Account { balance: account.balance, blocked: Some(blocked) }
+    Account { balance: None, credits: account.credits.or(account.balance), pieces: account.pieces, blocked: Some(blocked) }
 }
 
 /// Lecture publique du site, mise en cache par lui.
@@ -372,13 +399,23 @@ pub async fn shop_checkout(product: String, gift: Option<String>, current: State
     checkout_url(&body)
 }
 
-#[tauri::command]
-pub async fn shop_pay_credits(product: String, gift: Option<String>, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<CreditsPaid, String> {
-    let payload = purchase(&product, gift.as_deref())?;
-    let body = signed(&current, &tokens, |http, base| http.post(format!("{base}/api/launcher/shop/credits")).json(&payload)).await?;
-    let mut paid: CreditsPaid = decode(&body)?;
+/// Paiement dans une monnaie du jeu : `path` est la route du site qui la débite.
+async fn pay(path: &str, product: &str, gift: Option<&str>, current: &CurrentSession, tokens: &SiteTokens) -> Result<Paid, String> {
+    let payload = purchase(product, gift)?;
+    let body = signed(current, tokens, |http, base| http.post(format!("{base}{path}")).json(&payload)).await?;
+    let mut paid: Paid = decode(&body)?;
     paid.product_name = line(&paid.product_name, NAME_MAX).unwrap_or_default();
     Ok(paid)
+}
+
+#[tauri::command]
+pub async fn shop_pay_credits(product: String, gift: Option<String>, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<Paid, String> {
+    pay("/api/launcher/shop/credits", &product, gift.as_deref(), &current, &tokens).await
+}
+
+#[tauri::command]
+pub async fn shop_pay_pieces(product: String, gift: Option<String>, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<Paid, String> {
+    pay("/api/launcher/shop/pieces", &product, gift.as_deref(), &current, &tokens).await
 }
 
 #[cfg(test)]
@@ -388,21 +425,22 @@ mod tests {
     #[test]
     fn keeps_only_what_is_shown() {
         let raw: Catalog = serde_json::from_str(
-            r#"{"schema":1,"credits":{"enabled":true,"perEuro":100},
+            r#"{"schema":1,"credits":{"enabled":true,"perEuro":100},"pieces":{"enabled":true,"perCredit":100},
               "banner":{"text":"  ","url":null},
               "goal":{"label":"Serveur dédié","target":150,"current":42.5},
               "topBuyer":{"name":"<b>"},
               "recent":[{"name":"Kanname","product":"VIP","at":"2026-10-20T10:00:00.000Z"},{"name":"../x","product":"VIP","at":"x"}],
               "categories":[{"slug":"grades","name":"Grades","color":"yellow","icon":"Crown"},{"slug":"x","name":"","color":"y"},{"slug":"cosmetiques","name":"Cosmétiques","color":"url(x)","icon":null}],
               "products":[
-                {"id":"vip","slug":"grade-vip","category":"grades","name":"VIP","description":"Le grade\nVIP","imageUrl":"https://cdn.example/vip.png","priceCents":999,"credits":999,"euro":true,"type":"one_time","interval":"month","badge":"best-offer","section":null,"features":[{"label":"Kit","value":true},{"label":"Homes","value":"5"},{"label":"","value":true},{"label":"Bad","value":{"x":1}}],"grade":true},
-                {"id":"plus","category":"grades","name":"Plus","imageUrl":"javascript:alert(1)","priceCents":499,"credits":499,"euro":true,"type":"subscription","interval":null,"badge":"soon"},
+                {"id":"vip","slug":"grade-vip","category":"grades","name":"VIP","description":"Le grade\nVIP","imageUrl":"https://cdn.example/vip.png","priceCents":999,"credits":999,"pieces":99900,"euro":true,"type":"one_time","interval":"month","badge":"best-offer","section":null,"features":[{"label":"Kit","value":true},{"label":"Homes","value":"5"},{"label":"","value":true},{"label":"Bad","value":{"x":1}}],"grade":true},
+                {"id":"plus","category":"grades","name":"Plus","imageUrl":"javascript:alert(1)","priceCents":499,"credits":499,"pieces":49900,"euro":true,"type":"subscription","interval":null,"badge":"soon"},
                 {"id":"../admin","category":"grades","name":"Piège","priceCents":1,"type":"one_time"},
                 {"id":"mystery","category":"grades","name":"Mystère","priceCents":1,"type":"lifetime"}
               ]}"#,
         )
         .unwrap();
         let shop = catalog(raw);
+        assert_eq!(shop.pieces.as_ref().map(|pieces| (pieces.enabled, pieces.per_credit)), Some((true, 100)));
         assert!(shop.banner.is_none() && shop.top_buyer.is_none());
         assert_eq!(shop.goal.as_ref().map(|goal| goal.current), Some(42.5));
         assert_eq!(shop.recent.len(), 1);
@@ -412,8 +450,17 @@ mod tests {
         let [vip, plus] = &shop.products[..] else { unreachable!() };
         assert_eq!(vip.description.as_deref(), Some("Le grade VIP"));
         assert_eq!((vip.badge, vip.interval, vip.features.len()), (Some(Badge::BestOffer), None, 2));
+        assert_eq!((vip.credits, vip.pieces), (Some(999), Some(99900)));
         assert!(plus.image_url.is_none() && plus.badge.is_none());
-        assert_eq!((plus.credits, plus.interval), (None, Some(Interval::Month)), "un abonnement ne se paie qu'en euros");
+        assert_eq!((plus.credits, plus.pieces, plus.interval), (None, None, Some(Interval::Month)), "un abonnement ne se paie qu'en euros");
+    }
+
+    #[test]
+    fn reads_a_catalog_without_pieces() {
+        let raw: Catalog = serde_json::from_str(r#"{"schema":1,"credits":{"enabled":true,"perEuro":100},"products":[{"id":"vip","category":"grades","name":"VIP","priceCents":499,"credits":499,"euro":true,"type":"one_time"}]}"#).unwrap();
+        let shop = catalog(raw);
+        assert!(shop.pieces.is_none());
+        assert_eq!((shop.products[0].credits, shop.products[0].pieces), (Some(499), None));
     }
 
     #[test]
@@ -429,9 +476,27 @@ mod tests {
 
     #[test]
     fn reads_the_account() {
-        let raw: Account = serde_json::from_str(r#"{"schema":1,"balance":1250,"blocked":{"vip":"Tu possèdes déjà ce grade.","../x":"non","plus":"  "}}"#).unwrap();
-        let account = account(raw);
-        assert_eq!(account.balance, Some(1250));
-        assert_eq!(account.blocked.unwrap().into_iter().collect::<Vec<_>>(), [("vip".to_owned(), "Tu possèdes déjà ce grade.".to_owned())]);
+        let raw: Account = serde_json::from_str(r#"{"schema":1,"balance":1250,"credits":1250,"pieces":49900,"blocked":{"vip":"Tu possèdes déjà ce grade.","../x":"non","plus":"  "}}"#).unwrap();
+        let read = account(raw);
+        assert_eq!((read.credits, read.pieces), (Some(1250), Some(49900)));
+        assert_eq!(read.blocked.unwrap().into_iter().collect::<Vec<_>>(), [("vip".to_owned(), "Tu possèdes déjà ce grade.".to_owned())]);
+        let unreachable = account(serde_json::from_str(r#"{"schema":1,"balance":null,"credits":null,"pieces":null}"#).unwrap());
+        assert_eq!((unreachable.credits, unreachable.pieces), (None, None));
+    }
+
+    #[test]
+    fn reads_the_single_balance_of_an_older_site_as_credits() {
+        let read = account(serde_json::from_str(r#"{"schema":1,"balance":1250,"blocked":{}}"#).unwrap());
+        assert_eq!((read.credits, read.pieces), (Some(1250), None));
+        let shown = serde_json::to_value(&read).unwrap();
+        assert!(shown.get("balance").is_none() && shown["credits"] == 1250 && shown["pieces"].is_null());
+    }
+
+    #[test]
+    fn reads_both_payments() {
+        let credits: Paid = decode(r#"{"schema":1,"productName":"VIP","credits":499,"remaining":751}"#).unwrap();
+        let pieces: Paid = decode(r#"{"schema":1,"productName":"VIP","pieces":49900,"remaining":null}"#).unwrap();
+        assert_eq!((credits.amount, credits.remaining), (499, Some(751)));
+        assert_eq!((pieces.amount, pieces.remaining), (49900, None));
     }
 }

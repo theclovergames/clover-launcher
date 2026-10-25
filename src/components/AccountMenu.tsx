@@ -2,12 +2,13 @@ import { ChevronDown, PenLine, UserPlus, X } from "lucide-react";
 import { useState } from "react";
 
 import coinsIcon from "@/assets/icons/coins.png";
+import creditsIcon from "@/assets/icons/credits.png";
 import { linkTone, SITE_LINKS } from "@/components/HomeExtras";
 import { PlayerHead } from "@/components/PlayerHead";
 import { pixel } from "@/components/PlayerStats";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { secondaryButton } from "@/lib/buttons";
-import { formatCoins } from "@/lib/shop";
+import { formatCoins, formatCredits } from "@/lib/shop";
 import { cn } from "@/lib/utils";
 import type { Account } from "@/screens/SettingsScreen";
 import type { Profile } from "@/types";
@@ -15,8 +16,9 @@ import type { Profile } from "@/types";
 type Props = {
   /** Compte actif, affiché sur le bouton. */
   profile: Profile;
-  /** Solde du compte actif ; `null` pendant la lecture ou si l'économie est indisponible. */
-  coins: number | null;
+  /** Soldes du compte actif ; `null` pendant la lecture ou si l'économie est indisponible. */
+  credits: number | null;
+  pieces: number | null;
   skin: string | null;
   accounts: Account[];
   onUse: (uuid: string) => void;
@@ -32,6 +34,18 @@ type Props = {
 
 const row = "flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-[13px] font-semibold";
 const item = `${row} transition-colors hover:bg-secondary`;
+
+/** Un solde sous le pseudo : icône du pack serveur et montant en Monocraft, tiret s'il est indisponible. */
+function Amount({ icon, amount, format, noun }: { icon: string; amount: number | null; format: (amount: number) => string; noun: string }) {
+  const label = amount === null ? `Solde de ${noun} indisponible` : format(amount);
+  return (
+    <span className="flex items-center gap-1" title={label}>
+      <img src={icon} alt="" width={16} height={16} className="pixelated shrink-0" />
+      <span className="mc-text-shadow font-pixel text-[11px] leading-none text-accent" aria-hidden>{amount === null ? "—" : pixel(amount)}</span>
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
 
 /** Retire un compte du launcher ; partagé avec Paramètres › Générales. */
 export function RemoveAccountButton({ name, onClick }: { name: string; onClick: () => void }) {
@@ -49,7 +63,7 @@ export function RemoveAccountButton({ name, onClick }: { name: string; onClick: 
 }
 
 /** Bascule entre comptes en un clic depuis la barre de titre, et mène au vote, au Discord et au site. */
-export function AccountMenu({ profile, coins, skin, accounts, onUse, onRemove, onAdd, onRename, onOpenLink, defaultOpen }: Props) {
+export function AccountMenu({ profile, credits, pieces, skin, accounts, onUse, onRemove, onAdd, onRename, onOpenLink, defaultOpen }: Props) {
   const [open, setOpen] = useState(defaultOpen ?? false);
   const run = (action: () => void) => () => {
     setOpen(false);
@@ -67,10 +81,9 @@ export function AccountMenu({ profile, coins, skin, accounts, onUse, onRemove, o
           <PlayerHead skin={skin} size={24} />
           <span className="flex flex-col items-start gap-0.5 text-left leading-none">
             <span>{profile.name}</span>
-            <span className="flex items-center gap-1" title={coins === null ? "Solde de pièces indisponible" : formatCoins(coins)}>
-              <img src={coinsIcon} alt="" width={16} height={16} className="pixelated shrink-0" />
-              <span className="mc-text-shadow font-pixel text-[11px] leading-none text-accent" aria-hidden>{coins === null ? "—" : pixel(coins)}</span>
-              <span className="sr-only">{coins === null ? "Solde de pièces indisponible" : formatCoins(coins)}</span>
+            <span className="flex items-center gap-2.5">
+              <Amount icon={creditsIcon} amount={credits} format={formatCredits} noun="crédits" />
+              <Amount icon={coinsIcon} amount={pieces} format={formatCoins} noun="pièces" />
             </span>
           </span>
           <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />

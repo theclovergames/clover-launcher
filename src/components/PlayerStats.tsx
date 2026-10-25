@@ -1,4 +1,4 @@
-import { Clock, Coins, Flame, Medal, Play, Star, Trophy, Vote } from "lucide-react";
+import { Clock, Coins, Flame, Gem, Medal, Play, Star, Trophy, Vote } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useState } from "react";
 
 import launcherLogo from "@/assets/brand/launcher.png";
@@ -122,18 +122,25 @@ function Hotbar({ items }: { items: HotbarItem[] }) {
   );
 }
 
-/** Cases de la barre : les pièces seulement sur son propre profil (le site ne les donne pas pour un autre). */
+/** Cases de la barre : les crédits et les pièces seulement sur son propre profil (le site ne les donne pas pour un autre). */
 function hotbar(data: PlayerStats, own: boolean): HotbarItem[] {
-  const { coins, votes, streak, achievements } = data;
+  const { coins, credits, votes, streak, achievements } = data;
   return [
     ...(own
       ? [
+          {
+            label: "Crédits",
+            icon: <Gem />,
+            tone: "text-[#4cc3cf]",
+            count: credits === null ? null : pixel(credits),
+            lore: credits === null ? "Indisponible" : `${number.format(credits)}, achetés en euros`,
+          },
           {
             label: "Pièces",
             icon: <Coins />,
             tone: "text-[#e8bc5c]",
             count: coins === null ? null : pixel(coins),
-            lore: coins === null ? "Indisponible" : `${number.format(coins)}, pour la boutique en jeu`,
+            lore: coins === null ? "Indisponible" : `${number.format(coins)}, gagnées en jeu`,
           },
         ]
       : []),
@@ -432,7 +439,7 @@ export function LevelBlock({ data, loading, own }: { data: PlayerStats | null; l
       </div>
     );
   }
-  const items = data && (own ? data.coins !== null || data.votes !== null || data.streak !== null || data.achievements !== null : true) ? hotbar(data, own).filter((item) => own || item.count !== null) : [];
+  const items = data && (own ? data.coins !== null || data.credits !== null || data.votes !== null || data.streak !== null || data.achievements !== null : true) ? hotbar(data, own).filter((item) => own || item.count !== null) : [];
   if (!data?.level && items.length === 0) return null;
   return (
     <div className="flex w-full max-w-[220px] flex-col items-center gap-2.5">

@@ -131,8 +131,12 @@ pub struct PlayerStats {
     pub rank: Option<Rank>,
     #[serde(default, deserialize_with = "lenient")]
     pub level: Option<Level>,
+    /// Pièces, gagnées en jeu.
     #[serde(default, deserialize_with = "lenient")]
     pub coins: Option<i64>,
+    /// Crédits, achetés en euros ; absent des sites d'avant les deux monnaies.
+    #[serde(default, deserialize_with = "lenient")]
+    pub credits: Option<i64>,
     #[serde(default, deserialize_with = "lenient")]
     pub votes: Option<Votes>,
     #[serde(default, deserialize_with = "lenient")]
@@ -255,7 +259,7 @@ mod tests {
         let stats: PlayerStats = serde_json::from_str(
             r##"{"schema":1,"linked":true,"grade":{"label":"Gérant","color":"#eab308"},
             "level":{"level":27,"totalXp":216135,"into":3719,"needed":20675,"rank":1},
-            "coins":374,"votes":{"total":34,"month":0},"streak":{"current":4,"best":13},
+            "coins":374,"credits":499,"votes":{"total":34,"month":0},"streak":{"current":4,"best":13},
             "presence":{"firstSeen":1783836549150,"lastSeen":1791292461123,"lastServer":"Lobby","online":null},
             "playtime":{"total":348127,"longest":84092,"joins":909,"servers":[{"id":"Lobby","seconds":180609}]},
             "modes":[{"id":"practice","rank":1,"stats":{"rating":1005,"peakRating":null,"wins":47,"label":"<b>x</b>"}}],
@@ -264,6 +268,7 @@ mod tests {
         .unwrap();
         let stats = numbers_only(stats);
         assert!(stats.linked);
+        assert_eq!((stats.coins, stats.credits), (Some(374), Some(499)));
         assert_eq!(stats.level.as_ref().unwrap().rank, Some(1));
         assert_eq!(stats.playtime.as_ref().unwrap().servers[0].id, "Lobby");
         let mode = &stats.modes.as_ref().unwrap()[0];
@@ -287,7 +292,7 @@ mod tests {
         let stats: PlayerStats = serde_json::from_str(r#"{"linked":false,"grade":{"label":"X","color":"red"},"level":"oops","coins":12}"#).unwrap();
         let stats = numbers_only(stats);
         assert!(stats.level.is_none() && stats.grade.is_none());
-        assert_eq!(stats.coins, Some(12));
+        assert_eq!((stats.coins, stats.credits), (Some(12), None));
     }
 
     #[test]

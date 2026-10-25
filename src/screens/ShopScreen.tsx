@@ -40,7 +40,7 @@ import { headUrl } from "@/lib/friends";
 import { shortWhen } from "@/lib/messages";
 import type { OpenProduct } from "@/lib/routes";
 import { openLink, safeHtml } from "@/lib/safe-html";
-import { bySection, comparison, featuredProduct, formatCoins, formatEuros, goalPercent, isGiftName, kindLabel, priceLabel } from "@/lib/shop";
+import { bySection, comparison, featuredProduct, formatCoins, formatCredits, formatEuros, gamePrices, goalPercent, isGiftName, kindLabel, priceLabel, priceLabels } from "@/lib/shop";
 import { SITE_URL } from "@/lib/site";
 import { cn } from "@/lib/utils";
 import { type Confirmation, ConfirmDialog } from "@/screens/Dialogs";
@@ -68,7 +68,14 @@ const BADGES: Record<ShopBadge, { label: string; color: string }> = {
   sale: { label: "Promo", color: "#ef4444" },
 };
 
-type Services = Pick<typeof api, "shopCatalog" | "shopProduct" | "shopCheckout" | "shopPayCredits">;
+type Services = Pick<typeof api, "shopCatalog" | "shopProduct" | "shopCheckout" | "shopPayCredits" | "shopPayPieces">;
+
+/** Monnaies du jeu payables ici : crédits achetés en euros, pièces gagnées en jeu. */
+type Currency = "credits" | "pieces";
+const CURRENCIES: Record<Currency, { format: (amount: number) => string; Icon: LucideIcon; noun: string; hint: string }> = {
+  credits: { format: formatCredits, Icon: Gem, noun: "crédits", hint: "Tes crédits, achetés en euros" },
+  pieces: { format: formatCoins, Icon: Coins, noun: "pièces", hint: "Tes pièces, gagnées en jeu" },
+};
 
 type Props = {
   /** Même solde et mêmes restrictions que dans la barre du compte. */
@@ -89,9 +96,6 @@ type Props = {
 
 const colorOf = (category: ShopCategory | undefined) => (category?.color && COLORS[category.color]) || "var(--primary)";
 const iconOf = (category: ShopCategory | undefined) => (category?.icon && ICONS[category.icon]) || Package;
-
-/** Payable en pièces : prix en pièces et paiement en pièces ouvert sur le site. */
-const coinsOf = (product: ShopProduct, catalog: ShopCatalog) => (catalog.credits?.enabled && product.credits !== null ? product.credits : null);
 
 function BadgeTag({ badge, className }: { badge: ShopBadge; className?: string }) {
   const { label, color } = BADGES[badge];
@@ -117,14 +121,13 @@ function ProductArt({ product, category, className, iconClass }: { product: Shop
   );
 }
 
-/** Prix principal (euros, sinon pièces) et l'autre moyen de paiement. */
+/** Prix principal (euros, sinon crédits, sinon pièces) et les autres moyens de paiement. */
 function Price({ product, catalog, large }: { product: ShopProduct; catalog: ShopCatalog; large?: boolean }) {
-  const coins = coinsOf(product, catalog);
-  const main = product.euro ? priceLabel(product) : coins !== null ? formatCoins(coins) : priceLabel(product);
+  const [main, ...others] = priceLabels(product, catalog);
   return (
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
       <span className={cn("font-display leading-none tabular-nums", large ? "text-[30px]" : "text-lg")}>{main}</span>
-      {product.euro && coins !== null && <span className="text-xs text-muted-foreground tabular-nums">ou {formatCoins(coins)}</span>}
+      {others.length > 0 && <span className="text-xs text-muted-foreground tabular-nums">ou {others.join(" ou ")}</span>}
     </div>
   );
 }
@@ -206,7 +209,7 @@ function Comparison({ products, catalog, onOpen }: { products: ShopProduct[]; ca
                 <th key={product.id} scope="col" className={cn("px-3 py-2.5 text-center", product.badge === "popular" && "bg-primary/[0.08]")}>
                   <button type="button" onClick={() => onOpen(product)} className="flex w-full flex-col items-center gap-0.5 hover:underline">
                     <span className="font-bold">{product.name}</span>
-                    <span className="text-xs font-normal text-muted-foreground tabular-nums">{product.euro ? priceLabel(product) : formatCoins(coinsOf(product, catalog) ?? 0)}</span>
+                    <span className="text-xs font-normal text-muted-foreground tabular-nums">{priceLabels(product, catalog)[0]}</span>
                   </button>
                 </th>
               ))}
@@ -297,34 +300,39 @@ function Community({ catalog, onOpenPlayer }: { catalog: ShopCatalog; onOpenPlay
   );
 }
 
-function Balance({ account, error }: { account: ShopAccount | null; error: string | null }) {
-  const balance = account?.balance ?? null;
+function Balance({ currency, account, error }: { currency: Currency; account: ShopAccount | null; error: string | null }) {
+  const { format, Icon, hint } = CURRENCIES[currency];
+  const balance = account?.[currency] ?? null;
   return (
     <span
-      title={error ?? (balance === null ? "Solde indisponible pour le moment" : "Tes pièces, gagnées en jeu")}
+      title={error ?? (balance === null ? "Solde indisponible pour le moment" : hint)}
       className="flex h-9 items-center gap-2 rounded-md border border-border bg-sunken px-3 text-[13px] font-semibold tabular-nums"
     >
-      <Coins className="size-4 text-accent" aria-hidden />
-      {account === null && !error ? <Skeleton className="h-3.5 w-16" /> : balance === null ? "—" : formatCoins(balance)}
+      <Icon className="size-4 text-accent" aria-hidden />
+      {account === null && !error ? <Skeleton className="h-3.5 w-16" /> : balance === null ? "—" : format(balance)}
     </span>
   );
 }
 
-/** Achat d'un produit : pour soi ou en cadeau, en euros (Stripe, dans le navigateur) ou en pièces. */
+/** Achat d'un produit : pour soi ou en cadeau, en euros (Stripe, dans le navigateur), en crédits ou en pièces. */
 function Purchase(props: { product: ShopProduct; catalog: ShopCatalog; account: ShopAccount | null; accountError: string | null; services: Services; onOpenLink: (url: string) => void; onNotice: (message: string) => void; onPaid: () => void }) {
   const { product, catalog, account, services } = props;
   const [target, setTarget] = useState<"me" | "gift">("me");
   const [gift, setGift] = useState("");
-  const [busy, setBusy] = useState<"euro" | "coins" | null>(null);
+  const [busy, setBusy] = useState<"euro" | Currency | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirmation | null>(null);
-  const coins = coinsOf(product, catalog);
+  const prices = gamePrices(product, catalog);
   const giftName = gift.trim();
   const forGift = target === "gift";
   const blocked = forGift ? undefined : account?.blocked[product.id];
   const recipientReady = !forGift || isGiftName(giftName);
-  const balance = account?.balance ?? null;
-  const missing = coins !== null && balance !== null && balance < coins ? coins - balance : 0;
+  /** Monnaies du jeu où le produit se paie, avec son prix, le solde et ce qu'il manque. */
+  const payable = (["credits", "pieces"] as const).flatMap((currency) => {
+    const price = prices[currency];
+    const balance = account?.[currency] ?? null;
+    return price === null ? [] : [{ currency, price, balance, missing: balance !== null && balance < price ? price - balance : 0 }];
+  });
   const ready = recipientReady && !blocked && busy === null;
   const recipient = forGift ? giftName : null;
   const whom = forGift ? `pour ${giftName}` : "pour toi";
@@ -343,13 +351,13 @@ function Purchase(props: { product: ShopProduct; catalog: ShopCatalog; account: 
     }
   };
 
-  const payCoins = async () => {
-    if (coins === null) return;
-    setBusy("coins");
+  const pay = async (currency: Currency) => {
+    const { format } = CURRENCIES[currency];
+    setBusy(currency);
     setError(null);
     try {
-      const paid = await services.shopPayCredits(product.id, recipient);
-      props.onNotice(`${paid.productName || product.name} acheté ${whom} : ${formatCoins(paid.credits)} dépensées${paid.remaining !== null ? `, il t'en reste ${formatCoins(paid.remaining).replace(/ pièces?$/, "")}` : ""}.`);
+      const paid = await (currency === "credits" ? services.shopPayCredits(product.id, recipient) : services.shopPayPieces(product.id, recipient));
+      props.onNotice(`${paid.productName || product.name} acheté ${whom} contre ${format(paid.amount)}${paid.remaining !== null ? `, il te reste ${format(paid.remaining)}` : ""}.`);
       props.onPaid();
     } catch (reason) {
       setError(String(reason));
@@ -358,16 +366,17 @@ function Purchase(props: { product: ShopProduct; catalog: ShopCatalog; account: 
     }
   };
 
-  const askCoins = () =>
-    coins !== null &&
+  const ask = ({ currency, price, balance }: (typeof payable)[number]) => {
+    const { format, noun } = CURRENCIES[currency];
     setConfirm({
-      title: `Payer ${formatCoins(coins)} ?`,
-      description: `${product.name} ${whom}. Les pièces sont retirées de ton solde du jeu et l'achat arrive aussitôt en jeu.`,
-      detail: balance !== null ? `Solde après l'achat : ${formatCoins(balance - coins)}` : undefined,
+      title: `Payer ${format(price)} ?`,
+      description: `${product.name} ${whom}. Le montant est retiré de ton solde de ${noun} et l'achat arrive aussitôt en jeu.`,
+      detail: balance !== null ? `Solde après l'achat : ${format(balance - price)}` : undefined,
       confirm: "Payer",
       pay: true,
-      onConfirm: () => void payCoins(),
+      onConfirm: () => void pay(currency),
     });
+  };
 
   return (
     <section aria-label="Acheter" className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5">
@@ -418,13 +427,16 @@ function Purchase(props: { product: ShopProduct; catalog: ShopCatalog; account: 
             Payer {priceLabel(product)}
           </button>
         )}
-        {coins !== null && (
-          <button type="button" onClick={askCoins} disabled={!ready || missing > 0} className={cn(product.euro ? secondaryButton : primaryButton, "h-10")}>
-            {busy === "coins" ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <Coins className="size-4" aria-hidden />}
-            Payer {formatCoins(coins)}
-          </button>
-        )}
-        {!product.euro && coins === null && <p className="text-[13px] text-muted-foreground">Ce produit ne s'achète pas depuis le launcher pour le moment.</p>}
+        {payable.map((option, index) => {
+          const { format, Icon } = CURRENCIES[option.currency];
+          return (
+            <button key={option.currency} type="button" onClick={() => ask(option)} disabled={!ready || option.missing > 0} className={cn(product.euro || index > 0 ? secondaryButton : primaryButton, "h-10")}>
+              {busy === option.currency ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <Icon className="size-4" aria-hidden />}
+              Payer {format(option.price)}
+            </button>
+          );
+        })}
+        {!product.euro && payable.length === 0 && <p className="text-[13px] text-muted-foreground">Ce produit ne s'achète pas depuis le launcher pour le moment.</p>}
       </div>
 
       {error && (
@@ -434,10 +446,17 @@ function Purchase(props: { product: ShopProduct; catalog: ShopCatalog; account: 
       )}
 
       <div className="flex flex-col gap-1 border-t border-border pt-3 text-[11px] leading-snug text-muted-foreground">
-        {coins !== null && (
-          <span className="tabular-nums">
-            {props.accountError ? props.accountError : balance === null ? "Solde de pièces indisponible pour le moment." : `Ton solde : ${formatCoins(balance)}${missing > 0 ? ` · il te manque ${formatCoins(missing)}` : ""}`}
-          </span>
+        {props.accountError && payable.length > 0 ? (
+          <span>{props.accountError}</span>
+        ) : (
+          payable.map(({ currency, balance, missing }) => {
+            const { format, noun } = CURRENCIES[currency];
+            return (
+              <span key={currency} className="tabular-nums">
+                {balance === null ? `Solde de ${noun} indisponible pour le moment.` : `Ton solde : ${format(balance)}${missing > 0 ? ` · il te manque ${format(missing)}` : ""}`}
+              </span>
+            );
+          })
         )}
         {product.euro && <span>Paiement par carte sécurisé par Stripe, dans ton navigateur : le launcher ne voit jamais ta carte.</span>}
       </div>
@@ -532,9 +551,9 @@ function ProductPage(props: { open: OpenProduct; catalog: ShopCatalog; account: 
 /**
  * Boutique du serveur, la même que clovergames.fr/shop : produit à la une, catégories, cartes et
  * tableau comparatif, objectif du mois et derniers achats ; la fiche d'un produit permet de
- * l'acheter pour soi ou de l'offrir. Les euros se paient par Stripe dans le navigateur, les pièces
- * du jeu directement ici. Le solde, partagé avec la barre du compte, se relit après un achat et
- * quand la fenêtre revient au premier plan (après un paiement dans le navigateur).
+ * l'acheter pour soi ou de l'offrir. Les euros se paient par Stripe dans le navigateur, les crédits
+ * et les pièces directement ici. Les soldes, partagés avec la barre du compte, se relisent après un
+ * achat et quand la fenêtre revient au premier plan (après un paiement dans le navigateur).
  */
 export function ShopScreen({ account, accountError, onRefreshAccount, category: categorySlug, product: open, onCategory, onOpenProduct, onOpenPlayer, onOpenLink, onNotice, services = api }: Props) {
   const [catalog, setCatalog] = useState<ShopCatalog | null>(null);
@@ -611,7 +630,8 @@ export function ShopScreen({ account, accountError, onRefreshAccount, category: 
           <p className="text-sm text-muted-foreground">Grades et avantages du serveur, les mêmes que sur clovergames.fr.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {catalog?.credits?.enabled && <Balance account={account} error={accountError} />}
+          {catalog?.credits?.enabled && <Balance currency="credits" account={account} error={accountError} />}
+          {catalog?.pieces?.enabled && <Balance currency="pieces" account={account} error={accountError} />}
           <button type="button" onClick={() => onOpenLink(`${SITE_URL}/shop`)} className={secondaryButton}>
             Voir sur le site
             <ArrowUpRight className="size-4" aria-hidden />

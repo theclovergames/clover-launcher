@@ -12,7 +12,7 @@ import type { ShopAccount } from "../src/types.ts";
 const { window } = new JSDOM("", { pretendToBeVisual: true });
 Object.assign(globalThis, { window, document: window.document, IS_REACT_ACT_ENVIRONMENT: true });
 
-const account = (balance: number): ShopAccount => ({ balance, blocked: {} });
+const account = (credits: number): ShopAccount => ({ credits, pieces: credits * 100, blocked: {} });
 
 function deferred() {
   let resolve!: (value: ShopAccount) => void;
@@ -45,7 +45,7 @@ test("aucune lecture sans compte, le solde zéro est conservé", async (t) => {
   assert.equal(view.current.account, null);
   await view.render("A");
   assert.equal(calls, 1);
-  assert.equal(view.current.account?.balance, 0);
+  assert.equal(view.current.account?.credits, 0);
 });
 
 test("changer de compte masque le solde précédent et ignore sa réponse tardive", async (t) => {
@@ -56,14 +56,14 @@ test("changer de compte masque le solde précédent et ignore sa réponse tardiv
     return request.promise;
   });
   await act(async () => requests[0].resolve(account(100)));
-  assert.equal(view.current.account?.balance, 100);
+  assert.equal(view.current.account?.credits, 100);
   await act(async () => view.current.refresh());
   await view.render("B");
   assert.equal(view.current.account, null);
   await act(async () => requests[1].resolve(account(999)));
   assert.equal(view.current.account, null);
   await act(async () => requests[2].resolve(account(42)));
-  assert.equal(view.current.account?.balance, 42);
+  assert.equal(view.current.account?.credits, 42);
 });
 
 test("une erreur retire le solde précédent et reste disponible pour l'interface", async (t) => {
@@ -87,7 +87,7 @@ test("le rafraîchissement après achat remplace une lecture encore en attente",
   assert.equal(requests.length, 2);
   await act(async () => requests[1].resolve(account(25)));
   await act(async () => requests[0].resolve(account(100)));
-  assert.equal(view.current.account?.balance, 25);
+  assert.equal(view.current.account?.credits, 25);
 });
 
 test("focus, visibilité et minute partagent une seule lecture, suspendue quand la fenêtre est cachée", async (t) => {

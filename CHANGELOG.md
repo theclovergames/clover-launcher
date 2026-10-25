@@ -3,6 +3,16 @@
 Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git du dépôt repart de la
 0.4.4 : ce fichier garde la trace de tout ce qui précède.
 
+## Pas encore publié
+
+### Nouveautés
+
+- **Crédits et pièces** : la boutique compte désormais deux monnaies. Les crédits s'achètent en
+  euros (100 crédits = 1 €), les pièces se gagnent en jeu. Le bouton du compte, l'en-tête de la
+  Boutique et ton Profil affichent les deux soldes. Chaque produit montre son prix en euros, en
+  crédits et en pièces quand il se paie ainsi, et sa fiche propose « Payer N crédits » et
+  « Payer N pièces », avec ton solde et ce qu'il te manque dans chaque monnaie.
+
 ## 0.7.0 (24 octobre 2026)
 
 ### Simplifications

@@ -6,7 +6,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { Instance, InstanceEntry, InstanceInput, InstanceKind, AvailableVersion, ContentEntry, ContentFolder, PlaySession } from "@/types";
 
 import type { Settings, SteamState } from "@/screens/SettingsScreen";
-import type { Availability, ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackUpdate, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, ChangelogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats, ChatMessage, GifPage, Inbox, Thread, LeaderboardBoard, OtherPlayer, RequestSent, ShopAccount, ShopCatalog, ShopProduct, CreditsPaid, Weather } from "@/types";
+import type { Availability, ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackUpdate, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, ChangelogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats, ChatMessage, GifPage, Inbox, Thread, LeaderboardBoard, OtherPlayer, RequestSent, ShopAccount, ShopCatalog, ShopProduct, ShopPaid, Weather } from "@/types";
 
 export type AccountRef = { uuid: string; name: string; skinUrl: string | null };
 
@@ -236,7 +236,8 @@ export const api = {
   shopAccount: () => invoke<ShopAccount>("shop_account"),
   /** Adresse de la page de paiement Stripe, à ouvrir dans le navigateur ; `gift` : pseudo du joueur à qui l'offrir. */
   shopCheckout: (product: string, gift: string | null) => invoke<string>("shop_checkout", { product, gift }),
-  shopPayCredits: (product: string, gift: string | null) => invoke<CreditsPaid>("shop_pay_credits", { product, gift }),
+  shopPayCredits: (product: string, gift: string | null) => invoke<ShopPaid>("shop_pay_credits", { product, gift }),
+  shopPayPieces: (product: string, gift: string | null) => invoke<ShopPaid>("shop_pay_pieces", { product, gift }),
   /** Demande d'ami par pseudo ; `accepted` si ce joueur avait déjà demandé. */
   sendFriendRequest: (name: string) => invoke<RequestSent>("send_friend_request", { name }),
   /** Accepter ou refuser une demande reçue, annuler une demande envoyée. */

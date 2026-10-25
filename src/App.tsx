@@ -1475,7 +1475,8 @@ export default function App() {
           profile && (
             <AccountMenu
               profile={profile}
-              coins={shopAccount?.balance ?? null}
+              credits={shopAccount?.credits ?? null}
+              pieces={shopAccount?.pieces ?? null}
               skin={profile.skin?.url ?? activeAccount?.skinUrl ?? null}
               accounts={accounts}
               onUse={useAccount}
