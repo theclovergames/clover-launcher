@@ -37,7 +37,7 @@ sysinfo = { version = "0.39.6", default-features = false, features = ["system"] 
 ed25519-dalek = "2"
 semver = "1"
 discord-rich-presence = "1.1.0"
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 tauri-plugin-autostart = "2.6.0"
 tauri-plugin-single-instance = "2.5.1"
 tauri-plugin-deep-link = "2"
