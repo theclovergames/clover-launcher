@@ -3,6 +3,21 @@
 Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git du dépôt repart de la
 0.4.4 : ce fichier garde la trace de tout ce qui précède.
 
+## 0.7.3 (30 octobre 2026)
+
+### Nouveautés
+
+- **Pastille des non-lus**, comme sur Discord : l'icône du launcher dans la barre des tâches
+  affiche en rouge le nombre de messages, de demandes d'ami et de notifications non lus (« 9+ »
+  au-delà), et l'icône de la zone de notification prend un point rouge, avec le nombre dans son
+  info-bulle.
+- **Messages instantanés** : un message reçu apparaît aussitôt, dans la liste comme dans la
+  conversation ouverte, au lieu d'arriver au bout de quelques secondes.
+
+### Corrections
+
+- Dans Messages, la pastille d'une conversation non lue est rouge, comme les autres pastilles.
+
 ## 0.7.2 (25 octobre 2026)
 
 ### Nouveautés
