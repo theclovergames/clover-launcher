@@ -106,6 +106,8 @@ type Props = {
   refreshInbox: () => Promise<void>;
   /** Changement local de la liste (lu, envoyé, archivé), sans attendre la relève suivante. */
   updateInbox: (change: (inbox: Inbox) => Inbox) => void;
+  /** Change à chaque évènement du flux du site : le fil ouvert se relit sans attendre. */
+  changes?: number;
   /** Modes du manifeste : nom et Quick Play, pour « Rejoindre ». */
   modes: Mode[];
   /** Jeu en préparation ou déjà lancé : « Rejoindre » ne lance rien. */
@@ -294,7 +296,7 @@ function ConversationRow({ conversation, selected, modes, onOpen, actions }: { c
               </span>
               {muted && <BellOff className="size-3.5 shrink-0 text-muted-foreground" aria-label="Notifications coupées" />}
               {unread > 0 && (
-                <span className={cn(countBadge, "shrink-0", muted ? "bg-secondary text-muted-foreground" : "bg-primary text-primary-foreground")}>
+                <span className={cn(countBadge, "shrink-0", muted && "bg-secondary text-muted-foreground")}>
                   {unread > 99 ? "99+" : unread}
                   <span className="sr-only"> non lu{unread > 1 ? "s" : ""}</span>
                 </span>
@@ -910,8 +912,9 @@ function ThreadPane(props: {
   refreshInbox: Props["refreshInbox"];
   onRemoveFriend: () => void;
   services: MessagesServices;
+  changes: number;
 }) {
-  const { conversation, services, updateInbox, onNotice } = props;
+  const { conversation, services, updateInbox, onNotice, changes } = props;
   const uuid = conversation.friend.uuid;
   const { active, visible } = useWindowState();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -1016,6 +1019,9 @@ function ThreadPane(props: {
     const timer = window.setInterval(() => void poll(), active ? THREAD_POLL_MS : THREAD_BACKGROUND_POLL_MS);
     return () => window.clearInterval(timer);
   }, [active, visible, ready, poll]);
+  useEffect(() => {
+    if (changes > 0 && ready) void poll();
+  }, [changes, ready, poll]);
 
   // Lue jusqu'au dernier message reçu, tant que la fenêtre est au premier plan.
   const lastIncoming = loaded ? lastIncomingId(loaded.messages) : null;
@@ -1554,7 +1560,7 @@ function DividedRow({ divider, children }: { divider: boolean; children: ReactNo
  * clovergames.fr. La liste est relevée toutes les 15 s sur la page, la conversation ouverte toutes
  * les 3 s quand la fenêtre est au premier plan.
  */
-export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox, updateInbox, modes, playBusy, onPlay, onNotice, onOpenPlayer, me, status, onStatus, services = api }: Props) {
+export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox, updateInbox, changes = 0, modes, playBusy, onPlay, onNotice, onOpenPlayer, me, status, onStatus, services = api }: Props) {
   /** UUID de la demande en cours de traitement. */
   const [requestBusy, setRequestBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirmation | null>(null);
@@ -1745,6 +1751,7 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
           refreshInbox={refreshInbox}
           onRemoveFriend={() => removeFriend(conversation)}
           services={services}
+          changes={changes}
         />
       ) : (
         <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 px-10 text-center">

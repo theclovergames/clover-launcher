@@ -2,7 +2,7 @@
  * Appels au cœur Rust (commandes Tauri de `src-tauri/src/lib.rs`), typés pour l'interface.
  * Les erreurs arrivent en texte français, prêtes à afficher.
  */
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { type Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { Instance, InstanceEntry, InstanceInput, InstanceKind, AvailableVersion, ContentEntry, ContentFolder, PlaySession } from "@/types";
 
 import type { Settings, SteamState } from "@/screens/SettingsScreen";
@@ -91,6 +91,7 @@ export const api = {
   trayAction: (action: "open" | "play" | "instances" | "settings" | "quit") => invoke<void>("tray_menu_action", { action }),
   hideTrayMenu: () => invoke<void>("hide_tray_menu"),
   setTrayState: (available: boolean, canPlay: boolean) => invoke<void>("set_tray_state", { available, canPlay }),
+  setUnreadBadge: (count: number) => invoke<void>("set_unread_badge", { count }),
   listInstances: () => invoke<InstanceEntry[]>("list_instances"),
   instanceVersions: () => invoke<AvailableVersion[]>("instance_versions"),
   /** Octets à télécharger avant de jouer à cette version (0 si déjà installée). */
@@ -246,6 +247,8 @@ export const api = {
   removeFriend: (friend: string) => invoke<void>("remove_friend", { friend }),
   /** Conversations avec les amis du compte actif (`messages.rs`), pour la page Messages et sa pastille. */
   messageConversations: () => invoke<Inbox>("message_conversations"),
+  watchMessages: (watchId: number, onChange: Channel<null>) => invoke<void>("watch_messages", { watchId, onChange }),
+  stopWatchingMessages: (watchId: number) => invoke<void>("stop_watching_messages", { watchId }),
   /** Statut choisi dans Messages, redit chaque minute (`set_availability`). */
   setAvailability: (availability: Availability) => invoke<void>("set_availability", { availability }),
   /** Page d'une conversation : les 50 derniers messages, ceux d'avant `before` ou d'après `after` ; `since` ajoute les modifiés. */

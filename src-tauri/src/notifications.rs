@@ -144,11 +144,27 @@ pub(crate) async fn authorized_response(
     session: &auth::Session,
     send: impl Fn(&reqwest::Client, &str, &str) -> reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, String> {
+    authorized_until(tokens, session, Some(TIMEOUT), send).await
+}
+
+/// Sans `timeout`, la réponse peut durer (flux d'évènements) : seul le délai de lecture du client
+/// coupe une connexion muette.
+pub(crate) async fn authorized_until(
+    tokens: &SiteTokens,
+    session: &auth::Session,
+    timeout: Option<Duration>,
+    send: impl Fn(&reqwest::Client, &str, &str) -> reqwest::RequestBuilder,
+) -> Result<reqwest::Response, String> {
     let http = download::client();
     let base = site::base();
     for _ in 0..2 {
         let token = token(tokens, &http, &base, session).await?;
-        let response = send(&http, &base, &token).timeout(TIMEOUT).send().await.map_err(failure)?;
+        let request = send(&http, &base, &token);
+        let request = match timeout {
+            Some(timeout) => request.timeout(timeout),
+            None => request,
+        };
+        let response = request.send().await.map_err(failure)?;
         if response.status() != reqwest::StatusCode::UNAUTHORIZED {
             return Ok(response);
         }

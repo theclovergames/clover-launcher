@@ -1,3 +1,4 @@
+import { Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -692,6 +693,27 @@ export default function App() {
     };
   }, [signedIn, profile?.uuid, refreshInbox]);
 
+  // Flux du site : un message ou une demande d'ami relit la boîte, et le fil ouvert, aussitôt.
+  // Les relèves ci-dessus restent le filet si le flux tombe.
+  const [inboxChanges, setInboxChanges] = useState(0);
+  useEffect(() => {
+    if (!signedIn) return;
+    // Unique d'un rechargement à l'autre : une écoute restée côté Rust s'efface devant la nouvelle.
+    const watchId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+    let stopped = false;
+    const channel = new Channel<null>();
+    channel.onmessage = () => {
+      if (stopped) return;
+      void refreshInbox();
+      setInboxChanges((count) => count + 1);
+    };
+    api.watchMessages(watchId, channel).catch((reason) => console.error("[messages]", reason));
+    return () => {
+      stopped = true;
+      api.stopWatchingMessages(watchId).catch(() => {});
+    };
+  }, [signedIn, profile?.uuid, refreshInbox]);
+
   // L'alerte d'un message s'efface d'elle-même au bout de 8 s.
   useEffect(() => {
     if (!messageToast) return;
@@ -885,6 +907,12 @@ export default function App() {
       void unlisten.then((stop) => stop());
     };
   }, [trayAvailable, trayReady, selectedInstance, navigate, startGame]);
+
+  // Pastille de la barre des tâches et de la zone de notification, comme celle de Discord.
+  const pendingCount = unreadCount(inbox?.conversations ?? []) + (inbox?.requests.incoming.length ?? 0) + notifications.filter((item) => !item.read).length;
+  useEffect(() => {
+    api.setUnreadBadge(pendingCount).catch((reason) => console.error("[pastille]", reason));
+  }, [pendingCount]);
 
   const defaultMods = useMemo(() => (catalogue?.mods ?? []).filter((mod) => mod.default && !mod.hidden && mod.available).map((mod) => mod.id), [catalogue]);
   // Le catalogue est celui de l'instance dont on ouvre la page, pas de l'instance sélectionnée.
@@ -1782,6 +1810,7 @@ export default function App() {
               inboxError={inboxError}
               refreshInbox={refreshInbox}
               updateInbox={updateInbox}
+              changes={inboxChanges}
               modes={(catalogue?.modes ?? []).map((mode) => ({ id: mode.id, name: mode.name, quickPlay: Boolean(mode.host) }))}
               playBusy={playFor("clover").kind !== "ready" || Boolean(launching)}
               onPlay={(mode) => startGame("clover", () => selectInstance("clover").then(() => api.play(mode)))}

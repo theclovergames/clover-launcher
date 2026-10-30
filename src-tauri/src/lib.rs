@@ -1,4 +1,5 @@
 mod auth;
+mod badge;
 mod crash;
 mod discover;
 mod game;
@@ -1138,6 +1139,7 @@ pub fn run() {
             }
             app.manage(history);
             app.manage(games);
+            app.manage(messages::InboxWatch::default());
 
             // Navigation and play reuse the main window's actions; left click still opens it.
             let open = MenuItem::with_id(app, "open", "Ouvrir le Clover Launcher", true, None::<&str>)?;
@@ -1246,6 +1248,7 @@ pub fn run() {
             tray_state,
             tray_menu_action,
             hide_tray_menu,
+            badge::set_unread_badge,
             restore_session,
             login,
             use_account,
@@ -1267,6 +1270,8 @@ pub fn run() {
             notifications::mark_notifications_read,
             notifications::system_notification,
             messages::message_conversations,
+            messages::watch_messages,
+            messages::stop_watching_messages,
             messages::set_availability,
             messages::message_thread,
             messages::send_message,

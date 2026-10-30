@@ -3,12 +3,16 @@
 //! site reste ici, comme pour la cloche : l'interface ne reçoit que des conversations déjà filtrées
 //! (pseudos valides, textes bornés, GIF hébergés par Giphy seulement) et des erreurs en français.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use tauri::ipc::Channel;
 use tauri::State;
 
-use crate::notifications::{authorized_response, session, SiteTokens};
+use crate::notifications::{authorized_response, authorized_until, session, SiteTokens};
 use crate::profile::is_player_name;
 use crate::site::{items, lenient};
 use crate::CurrentSession;
@@ -634,6 +638,97 @@ pub async fn message_conversations(current: State<'_, CurrentSession>, tokens: S
     Ok(inbox(decode(&body)?))
 }
 
+/// Écoute en cours : chaque `watch_messages` prend la place de la précédente, qui s'arrête.
+#[derive(Default)]
+pub struct InboxWatch(AtomicU64);
+
+/// Reconnexion après la fermeture normale du flux (toutes les ~5 min côté site).
+const EVENTS_RETRY: Duration = Duration::from_secs(2);
+/// Site injoignable : le sondage de l'interface prend le relais entre deux essais.
+const EVENTS_OFFLINE_RETRY: Duration = Duration::from_secs(15);
+/// Site sans flux (version plus ancienne) ou base du plugin indisponible.
+const EVENTS_UNAVAILABLE_RETRY: Duration = Duration::from_secs(60);
+
+/// Évènements complets du tampon SSE, `(nom, id)` ; une fin incomplète attend le morceau suivant.
+fn sse_events(buffer: &mut String) -> Vec<(String, Option<String>)> {
+    let mut events = Vec::new();
+    while let Some(end) = buffer.find("\n\n") {
+        let block: String = buffer.drain(..end + 2).collect();
+        let mut name = "message".to_owned();
+        let mut id = None;
+        for line in block.lines() {
+            if let Some(value) = line.strip_prefix("event:") {
+                name = value.trim().to_owned();
+            } else if let Some(value) = line.strip_prefix("id:") {
+                id = Some(value.trim().to_owned());
+            }
+        }
+        if block.lines().any(|line| !line.is_empty() && !line.starts_with(':')) {
+            events.push((name, id));
+        }
+    }
+    events
+}
+
+/// Une connexion au flux : `on_change` à chaque changement de la boîte, jusqu'à sa fermeture.
+/// L'erreur est le délai avant le prochain essai.
+async fn stream_changes(tokens: &SiteTokens, session: &crate::auth::Session, last_id: &mut Option<String>, on_change: &Channel<()>, watching: impl Fn() -> bool) -> Result<(), Duration> {
+    let since = last_id.clone();
+    let mut response = authorized_until(tokens, session, None, |http, base, token| {
+        let request = http.get(format!("{base}/api/launcher/messages/events")).bearer_auth(token).header(CONTRACT.0, CONTRACT.1);
+        match &since {
+            Some(id) => request.header("Last-Event-ID", id),
+            None => request,
+        }
+    })
+    .await
+    .map_err(|_| EVENTS_OFFLINE_RETRY)?;
+    if !response.status().is_success() {
+        return Err(EVENTS_UNAVAILABLE_RETRY);
+    }
+    let mut buffer = String::new();
+    let mut followed = false;
+    while let Some(chunk) = response.chunk().await.map_err(|_| EVENTS_RETRY)? {
+        if !watching() {
+            return Ok(());
+        }
+        buffer.push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n"));
+        for (name, id) in sse_events(&mut buffer) {
+            if id.is_some() {
+                followed = true;
+                *last_id = id;
+            }
+            if name == "change" {
+                let _ = on_change.send(());
+            }
+        }
+    }
+    // Fermé sans la moindre empreinte : base du plugin indisponible, inutile d'insister.
+    if followed { Ok(()) } else { Err(EVENTS_UNAVAILABLE_RETRY) }
+}
+
+/// Changements de la boîte en direct (`/api/launcher/messages/events`, relevés chaque seconde par
+/// le site) : l'interface relit liste et fil aussitôt au lieu d'attendre son sondage, qui reste
+/// le filet si le flux tombe. Rend la main quand une autre écoute prend la place ou sans compte.
+#[tauri::command]
+pub async fn watch_messages(watch_id: u64, on_change: Channel<()>, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>, watch: State<'_, InboxWatch>) -> Result<(), String> {
+    watch.0.store(watch_id, Ordering::SeqCst);
+    let watching = || watch.0.load(Ordering::SeqCst) == watch_id;
+    let mut last_id = None;
+    while watching() {
+        let Ok(session) = session(&current).await else { break };
+        let wait = stream_changes(&tokens, &session, &mut last_id, &on_change, watching).await.err().unwrap_or(EVENTS_RETRY);
+        tokio::time::sleep(wait).await;
+    }
+    Ok(())
+}
+
+/// Arrête l'écoute `watch_id` si c'est encore elle qui tourne (prise au prochain évènement du flux).
+#[tauri::command]
+pub fn stop_watching_messages(watch_id: u64, watch: State<'_, InboxWatch>) {
+    let _ = watch.0.compare_exchange(watch_id, 0, Ordering::SeqCst, Ordering::SeqCst);
+}
+
 /// Une page de la conversation avec `friend` : les 50 derniers messages, ceux d'avant `before` ou
 /// d'après `after` ; `since` ajoute ceux modifiés ou supprimés depuis.
 #[tauri::command]
@@ -1057,5 +1152,15 @@ mod tests {
         assert_eq!(clean("a\u{202e}b\u{200d}c\td", 10, false), "ab\u{200d}c d");
         assert_eq!(clean("l1\nl2", 10, true), "l1\nl2");
         assert_eq!(clean("l1\nl2", 3, false), "l1 ");
+    }
+
+    #[test]
+    fn sse_events_split_complete_blocks() {
+        let mut buffer = "retry: 2000\n\nevent: ready\nid: a1\ndata: a1\n\n: ping\n\nevent: change\nid: b2\nda".to_owned();
+        assert_eq!(sse_events(&mut buffer), vec![("message".to_owned(), None), ("ready".to_owned(), Some("a1".to_owned()))]);
+        assert_eq!(buffer, "event: change\nid: b2\nda");
+        buffer.push_str("ta: b2\n\n");
+        assert_eq!(sse_events(&mut buffer), vec![("change".to_owned(), Some("b2".to_owned()))]);
+        assert!(buffer.is_empty());
     }
 }
