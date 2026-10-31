@@ -649,30 +649,49 @@ const EVENTS_OFFLINE_RETRY: Duration = Duration::from_secs(15);
 /// Site sans flux (version plus ancienne) ou base du plugin indisponible.
 const EVENTS_UNAVAILABLE_RETRY: Duration = Duration::from_secs(60);
 
-/// Évènements complets du tampon SSE, `(nom, id)` ; une fin incomplète attend le morceau suivant.
-fn sse_events(buffer: &mut String) -> Vec<(String, Option<String>)> {
+/// Évènement du flux transmis à l'interface.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum InboxEvent {
+    /// La boîte a changé : relire la liste et le fil ouvert.
+    Change,
+    /// UUID des amis qui écrivent au joueur en ce moment (vide : plus personne).
+    Typing { friends: Vec<String> },
+}
+
+/// UUID valides de l'évènement `typing` (séparés par des virgules).
+fn typing_friends(data: &str) -> Vec<String> {
+    data.split(',').map(|uuid| uuid.trim().to_ascii_lowercase()).filter(|uuid| is_uuid(uuid)).collect()
+}
+
+/// Évènements complets du tampon SSE, `(nom, id, données)` ; une fin incomplète attend le morceau
+/// suivant.
+fn sse_events(buffer: &mut String) -> Vec<(String, Option<String>, String)> {
     let mut events = Vec::new();
     while let Some(end) = buffer.find("\n\n") {
         let block: String = buffer.drain(..end + 2).collect();
         let mut name = "message".to_owned();
         let mut id = None;
+        let mut data = String::new();
         for line in block.lines() {
             if let Some(value) = line.strip_prefix("event:") {
                 name = value.trim().to_owned();
             } else if let Some(value) = line.strip_prefix("id:") {
                 id = Some(value.trim().to_owned());
+            } else if let Some(value) = line.strip_prefix("data:") {
+                data.push_str(value.trim());
             }
         }
         if block.lines().any(|line| !line.is_empty() && !line.starts_with(':')) {
-            events.push((name, id));
+            events.push((name, id, data));
         }
     }
     events
 }
 
-/// Une connexion au flux : `on_change` à chaque changement de la boîte, jusqu'à sa fermeture.
-/// L'erreur est le délai avant le prochain essai.
-async fn stream_changes(tokens: &SiteTokens, session: &crate::auth::Session, last_id: &mut Option<String>, on_change: &Channel<()>, watching: impl Fn() -> bool) -> Result<(), Duration> {
+/// Une connexion au flux : `on_event` à chaque changement de la boîte ou de qui écrit, jusqu'à sa
+/// fermeture. L'erreur est le délai avant le prochain essai.
+async fn stream_changes(tokens: &SiteTokens, session: &crate::auth::Session, last_id: &mut Option<String>, on_event: &Channel<InboxEvent>, watching: impl Fn() -> bool) -> Result<(), Duration> {
     let since = last_id.clone();
     let mut response = authorized_until(tokens, session, None, |http, base, token| {
         let request = http.get(format!("{base}/api/launcher/messages/events")).bearer_auth(token).header(CONTRACT.0, CONTRACT.1);
@@ -693,13 +712,19 @@ async fn stream_changes(tokens: &SiteTokens, session: &crate::auth::Session, las
             return Ok(());
         }
         buffer.push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n"));
-        for (name, id) in sse_events(&mut buffer) {
+        for (name, id, data) in sse_events(&mut buffer) {
             if id.is_some() {
                 followed = true;
                 *last_id = id;
             }
-            if name == "change" {
-                let _ = on_change.send(());
+            match name.as_str() {
+                "change" => {
+                    let _ = on_event.send(InboxEvent::Change);
+                }
+                "typing" => {
+                    let _ = on_event.send(InboxEvent::Typing { friends: typing_friends(&data) });
+                }
+                _ => {}
             }
         }
     }
@@ -709,15 +734,18 @@ async fn stream_changes(tokens: &SiteTokens, session: &crate::auth::Session, las
 
 /// Changements de la boîte en direct (`/api/launcher/messages/events`, relevés chaque seconde par
 /// le site) : l'interface relit liste et fil aussitôt au lieu d'attendre son sondage, qui reste
-/// le filet si le flux tombe. Rend la main quand une autre écoute prend la place ou sans compte.
+/// le filet si le flux tombe, et sait qui est en train d'écrire. Rend la main quand une autre
+/// écoute prend la place ou sans compte.
 #[tauri::command]
-pub async fn watch_messages(watch_id: u64, on_change: Channel<()>, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>, watch: State<'_, InboxWatch>) -> Result<(), String> {
+pub async fn watch_messages(watch_id: u64, on_event: Channel<InboxEvent>, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>, watch: State<'_, InboxWatch>) -> Result<(), String> {
     watch.0.store(watch_id, Ordering::SeqCst);
     let watching = || watch.0.load(Ordering::SeqCst) == watch_id;
     let mut last_id = None;
     while watching() {
         let Ok(session) = session(&current).await else { break };
-        let wait = stream_changes(&tokens, &session, &mut last_id, &on_change, watching).await.err().unwrap_or(EVENTS_RETRY);
+        let wait = stream_changes(&tokens, &session, &mut last_id, &on_event, watching).await.err().unwrap_or(EVENTS_RETRY);
+        // Flux coupé : plus de nouvelles de qui écrit, rien ne doit rester affiché.
+        let _ = on_event.send(InboxEvent::Typing { friends: Vec::new() });
         tokio::time::sleep(wait).await;
     }
     Ok(())
@@ -823,6 +851,16 @@ pub async fn set_availability(availability: String, current: State<'_, CurrentSe
     }
     let payload = serde_json::json!({ "availability": availability });
     site_request(&current, &tokens, "Statut pas encore disponible.", |http, base| http.post(format!("{base}/api/launcher/availability")).json(&payload)).await?;
+    Ok(())
+}
+
+/// « En train d'écrire » à `friend`, redit au plus toutes les 3 s pendant la frappe ; `false`
+/// l'efface (message envoyé, champ vidé), sinon le site l'oublie après 6 s.
+#[tauri::command]
+pub async fn send_typing(friend: String, typing: bool, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<(), String> {
+    let friend = friend_id(&friend)?;
+    let payload = serde_json::json!({ "typing": typing });
+    request(&current, &tokens, |http, base| http.post(format!("{base}/api/launcher/messages/{friend}/typing")).json(&payload)).await?;
     Ok(())
 }
 
@@ -1157,10 +1195,16 @@ mod tests {
     #[test]
     fn sse_events_split_complete_blocks() {
         let mut buffer = "retry: 2000\n\nevent: ready\nid: a1\ndata: a1\n\n: ping\n\nevent: change\nid: b2\nda".to_owned();
-        assert_eq!(sse_events(&mut buffer), vec![("message".to_owned(), None), ("ready".to_owned(), Some("a1".to_owned()))]);
+        assert_eq!(sse_events(&mut buffer), vec![("message".to_owned(), None, String::new()), ("ready".to_owned(), Some("a1".to_owned()), "a1".to_owned())]);
         assert_eq!(buffer, "event: change\nid: b2\nda");
-        buffer.push_str("ta: b2\n\n");
-        assert_eq!(sse_events(&mut buffer), vec![("change".to_owned(), Some("b2".to_owned()))]);
+        buffer.push_str("ta: b2\n\nevent: typing\ndata: \n\n");
+        assert_eq!(sse_events(&mut buffer), vec![("change".to_owned(), Some("b2".to_owned()), "b2".to_owned()), ("typing".to_owned(), None, String::new())]);
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn typing_friends_keep_valid_uuids() {
+        assert_eq!(typing_friends("0F8FAD5B-D9CB-469F-A165-70867728950E,nope,"), vec!["0f8fad5b-d9cb-469f-a165-70867728950e".to_owned()]);
+        assert!(typing_friends("").is_empty());
     }
 }

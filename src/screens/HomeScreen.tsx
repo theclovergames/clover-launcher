@@ -11,6 +11,7 @@ import { type OtherServer } from "@/components/OtherServers";
 import { PlayButton } from "@/components/PlayButton";
 import { BELOW_FEET, nameOverhang, StandingSkin } from "@/components/SkinViewer";
 import { VersionPicker } from "@/components/VersionPicker";
+import { LauncherRewardsCard } from "@/components/LauncherRewardsCard";
 import { VoteCard } from "@/components/VoteCard";
 import { shownStatus } from "@/lib/availability";
 import { secondaryButton } from "@/lib/buttons";
@@ -263,6 +264,7 @@ export function HomeScreen({ playerName, look, scene = "forest", skyWeather, sky
           <div className="contents min-[1600px]:flex min-[1600px]:min-w-0 min-[1600px]:flex-1 min-[1600px]:flex-col min-[1600px]:gap-2">
             <NewsList news={news} minecraft={minecraftNews} onOpen={onReadNews} onOpenMinecraft={onReadMinecraft} onAll={onOpenNews} className="tile min-h-32 flex-1 p-4" />
             <VoteCard onVote={onVote} />
+            <LauncherRewardsCard />
           </div>
         </div>
       </div>
