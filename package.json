@@ -41,7 +41,7 @@
     "@vitejs/plugin-react": "^6.0.2",
     "jsdom": "^30.1.3",
     "typescript": "~6.0.3",
-    "vite": "^8.0.16"
+    "vite": "^8.3.4"
   },
   "overrides": {
     "@tailwindcss/typography": {
