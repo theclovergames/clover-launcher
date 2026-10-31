@@ -3,6 +3,23 @@
 Ce qui a changé d'une version à l'autre du Clover Launcher. L'historique git du dépôt repart de la
 0.4.4 : ce fichier garde la trace de tout ce qui précède.
 
+## 0.7.4 (31 octobre 2026)
+
+### Nouveautés
+
+- **« En train d'écrire »** : dans Messages, tu vois quand ton ami est en train de t'écrire.
+- **Récompenses du launcher**, données automatiquement quand tu joues sur le serveur avec le
+  launcher : un cadeau de bienvenue (100 crédits, et le grade VIP pendant 7 jours si tu n'as pas
+  encore de grade), puis 500 pièces chaque jour, avec une clé cosmétique au 7e jour d'affilée. Une
+  carte de l'Accueil montre ce que tu as déjà reçu et ta série de jours.
+- La carte de vote indique désormais qu'un vote rapporte des pièces, et une clé cosmétique tous
+  les 10 votes.
+
+### Corrections
+
+- Le décor de l'Accueil n'a plus de vache, de mouton ni de cochon, et les abeilles volent
+  vraiment.
+
 ## 0.7.3 (30 octobre 2026)
 
 ### Nouveautés
