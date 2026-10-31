@@ -212,6 +212,13 @@
   .sky-bob {
     animation: sky-bob 3.2s ease-in-out infinite alternate;
   }
+  /* Abeilles : aller-retour en zigzag vers `--bee-dir` (1 à droite, -1 à gauche), demi-tour à mi-chemin. */
+  .sky-bee {
+    animation: sky-bee 9s ease-in-out infinite;
+  }
+  .sky-bee-turn {
+    animation: sky-bee-turn 9s steps(1, end) infinite;
+  }
   /* Pluie et neige : la tuile glisse d'une hauteur (`--fall`), et de biais pour la neige (`--drift`). */
   .sky-fall {
     animation: sky-fall linear infinite;
@@ -248,6 +255,8 @@
     .sky-bat-wing,
     .sky-allay-wing,
     .sky-bob,
+    .sky-bee,
+    .sky-bee-turn,
     .sky-fall,
     .sky-glow,
     .sky-firefly,
@@ -268,6 +277,8 @@
 .reduce-motion .sky-bat-wing,
 .reduce-motion .sky-allay-wing,
 .reduce-motion .sky-bob,
+.reduce-motion .sky-bee,
+.reduce-motion .sky-bee-turn,
 .reduce-motion .sky-fall,
 .reduce-motion .sky-glow,
 .reduce-motion .sky-firefly,
@@ -395,6 +406,19 @@
   to {
     transform: translateY(4px);
   }
+}
+@keyframes sky-bee {
+  0%, 100% { transform: translate(0, 0); }
+  12% { transform: translate(calc(var(--bee-dir) * 30px), -12px); }
+  25% { transform: translate(calc(var(--bee-dir) * 62px), 2px); }
+  37% { transform: translate(calc(var(--bee-dir) * 96px), -16px); }
+  50% { transform: translate(calc(var(--bee-dir) * 130px), -4px); }
+  62% { transform: translate(calc(var(--bee-dir) * 98px), -22px); }
+  75% { transform: translate(calc(var(--bee-dir) * 64px), -6px); }
+  87% { transform: translate(calc(var(--bee-dir) * 28px), -18px); }
+}
+@keyframes sky-bee-turn {
+  50% { transform: scaleX(-1); }
 }
 
 /* Contour du jeu : 2 px quasi noirs, liseré intérieur décalé. */
