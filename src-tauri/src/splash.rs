@@ -85,7 +85,7 @@ pub async fn startup(app: AppHandle) {
     let pending = app.state::<crate::update::PendingUpdate>();
     match tokio::time::timeout(CHECK_TIMEOUT, crate::update::check(&app, &pending)).await {
         // Sans réglage ou pendant une partie, l'interface la proposera.
-        Ok(Ok(Some(_))) if auto && !app.state::<crate::game::games::Games>().any_running() => {
+        Ok(Ok(Some(_))) if auto && !crate::game_busy(&app) => {
             if let Err(error) = crate::update::install(&app, &pending).await {
                 eprintln!("[update] {error}");
             }

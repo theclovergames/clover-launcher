@@ -137,9 +137,11 @@ pub(crate) async fn install_version(
                 generated.push(path);
             } else {
                 // fabric-loader et les anciennes bibliothèques de Forge sont publiés sans empreinte
-                // dans le profil : la lire sur le dépôt Maven, quand il la donne.
+                // dans le profil : la lire sur le dépôt Maven, quand il la donne. Déjà sur le disque,
+                // la bibliothèque a été vérifiée à son téléchargement : pas de requête à chaque lancement.
                 let sha1 = match resolved.sha1 {
                     Some(sha1) => Some(sha1),
+                    None if path.is_file() => None,
                     None => maven_sha1(http, &resolved.url).await.ok(),
                 };
                 downloads.push(Download { url: resolved.url, path, checksum: sha1.map(Checksum::Sha1), size: resolved.size, executable: false });

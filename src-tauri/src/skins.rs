@@ -63,12 +63,21 @@ pub fn library(root: &Path) -> Vec<SkinEntry> {
         .collect()
 }
 
+/// Lecture et réécriture de l'index d'un seul tenant : deux modifications en même temps (ajout
+/// pendant un renommage) feraient perdre l'une des deux.
+static INDEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_index() -> std::sync::MutexGuard<'static, ()> {
+    INDEX.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Ajoute un skin à la bibliothèque. Le même fichier ajouté deux fois n'apparaît qu'une fois.
 pub fn add(root: &Path, bytes: &[u8], name: &str, model: &str) -> Result<SkinEntry> {
     validate(bytes)?;
     let id = Sha1::digest(bytes).iter().take(8).map(|byte| format!("{byte:02x}")).collect::<String>();
     std::fs::create_dir_all(root.join("skins"))?;
     std::fs::write(skin_file(root, &id), bytes)?;
+    let _index = lock_index();
     let mut index = read_index(root);
     let name = clean_name(name);
     index.retain(|entry| entry.id != id);
@@ -80,6 +89,7 @@ pub fn add(root: &Path, bytes: &[u8], name: &str, model: &str) -> Result<SkinEnt
 /// Renomme un skin de la bibliothèque et rend le nom retenu, nettoyé comme à l'ajout.
 pub fn rename(root: &Path, id: &str, name: &str) -> Result<String> {
     let name = clean_name(name);
+    let _index = lock_index();
     let mut index = read_index(root);
     if let Some(entry) = index.iter_mut().find(|entry| entry.id == id) {
         entry.name = name.clone();
@@ -90,6 +100,7 @@ pub fn rename(root: &Path, id: &str, name: &str) -> Result<String> {
 
 /// Bras (`classic` ou `slim`) avec lesquels un skin de la bibliothèque sera porté.
 pub fn set_model(root: &Path, id: &str, model: &str) -> Result<()> {
+    let _index = lock_index();
     let mut index = read_index(root);
     if let Some(entry) = index.iter_mut().find(|entry| entry.id == id) {
         entry.model = model.into();
@@ -99,6 +110,7 @@ pub fn set_model(root: &Path, id: &str, model: &str) -> Result<()> {
 }
 
 pub fn remove(root: &Path, id: &str) -> Result<()> {
+    let _index = lock_index();
     let mut index = read_index(root);
     let before = index.len();
     index.retain(|entry| entry.id != id);

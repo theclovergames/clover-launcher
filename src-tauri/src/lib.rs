@@ -95,6 +95,17 @@ impl CurrentSession {
 #[derive(Default)]
 struct LaunchGate(Mutex<()>);
 
+/// Un changement de compte à la fois : sans lui, deux bascules simultanées peuvent laisser le
+/// compte actif enregistré différent de la session en mémoire.
+#[derive(Default)]
+struct AccountSwitch(Mutex<()>);
+
+/// Partie ouverte (par ce launcher ou un précédent) ou lancement en cours : pas de mise à jour du
+/// launcher, qui le fermerait en plein suivi de la partie.
+fn game_busy(app: &AppHandle) -> bool {
+    app.state::<game::games::Games>().any_running() || app.state::<LaunchGate>().0.try_lock().is_err() || instances::managed_game_running(&app.state::<AppState>().root)
+}
+
 struct TrayMenu {
     _menu: Menu<tauri::Wry>,
     play: MenuItem<tauri::Wry>,
@@ -216,7 +227,8 @@ fn get_stored(state: State<'_, AppState>) -> store::Stored {
 
 /// Rouvre la session du compte actif (et reprend le compte de la toute première version).
 #[tauri::command]
-async fn restore_session(state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>) -> Result<Option<auth::Profile>, String> {
+async fn restore_session(state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>, switch: State<'_, AccountSwitch>) -> Result<Option<auth::Profile>, String> {
+    let _switch = switch.0.lock().await;
     let active = state.snapshot().active_account;
     let session = match active {
         Some(uuid) => auth::restore(&uuid).await,
@@ -235,8 +247,10 @@ async fn restore_session(state: State<'_, AppState>, current: State<'_, CurrentS
 
 /// Ajoute un compte. Le premier ajouté devient le compte actif.
 #[tauri::command]
-async fn login(app: AppHandle, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>) -> Result<auth::Profile, String> {
+async fn login(app: AppHandle, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>, switch: State<'_, AccountSwitch>) -> Result<auth::Profile, String> {
     let session = auth::login(&app).await.inspect_err(|e| eprintln!("[auth] échec de la connexion : {e}")).map_err(|e| e.to_string())?;
+    // Après la fenêtre de connexion, qui peut rester ouverte longtemps : seule l'activation est gardée.
+    let _switch = switch.0.lock().await;
     let profile = session.profile.clone();
     eprintln!("[auth] connecté : {} ({})", profile.name, profile.uuid);
     let active = state.update(|stored| {
@@ -250,7 +264,8 @@ async fn login(app: AppHandle, state: State<'_, AppState>, current: State<'_, Cu
 }
 
 #[tauri::command]
-async fn use_account(uuid: String, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>) -> Result<auth::Profile, String> {
+async fn use_account(uuid: String, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>, switch: State<'_, AccountSwitch>) -> Result<auth::Profile, String> {
+    let _switch = switch.0.lock().await;
     let session = auth::restore(&uuid).await.map_err(|e| e.to_string())?.ok_or("Ce compte doit se reconnecter.")?;
     state.update(|stored| stored.active_account = Some(uuid))?;
     let profile = session.profile.clone();
@@ -260,7 +275,8 @@ async fn use_account(uuid: String, state: State<'_, AppState>, current: State<'_
 
 /// Retire un compte ; renvoie le profil du compte actif qui le remplace, s'il y en a un.
 #[tauri::command]
-async fn remove_account(uuid: String, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>) -> Result<Option<auth::Profile>, String> {
+async fn remove_account(uuid: String, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>, switch: State<'_, AccountSwitch>) -> Result<Option<auth::Profile>, String> {
+    let _switch = switch.0.lock().await;
     auth::logout(&uuid).map_err(|e| e.to_string())?;
     let active = state.update(|stored| {
         stored.remove_account(&uuid);
@@ -278,6 +294,7 @@ async fn remove_account(uuid: String, state: State<'_, AppState>, current: State
 /// Enregistre les réglages et applique ceux qui agissent hors de l'interface.
 #[tauri::command]
 async fn save_settings(settings: store::Settings, app: AppHandle, state: State<'_, AppState>, presence: State<'_, Presence>) -> Result<(), String> {
+    game::launch::validate_java_args(&settings.java_args)?;
     let previous = state.update(|stored| std::mem::replace(&mut stored.settings, settings.clone()))?;
     crash::set(settings.crash_reports, settings.beta_channel);
     if previous.discord_presence != settings.discord_presence {
@@ -512,8 +529,8 @@ async fn check_update(app: AppHandle, pending: State<'_, update::PendingUpdate>)
 /// Installe la version trouvée par `check_update` puis relance le launcher. Pas pendant une
 /// partie : le launcher fermé, la console et le suivi des serveurs rejoints s'arrêteraient.
 #[tauri::command]
-async fn install_update(app: AppHandle, pending: State<'_, update::PendingUpdate>, games: State<'_, game::games::Games>) -> Result<(), String> {
-    if games.any_running() {
+async fn install_update(app: AppHandle, pending: State<'_, update::PendingUpdate>) -> Result<(), String> {
+    if game_busy(&app) {
         return Err("Ferme Minecraft avant de mettre à jour le launcher.".into());
     }
     update::install(&app, &pending).await.inspect_err(|e| eprintln!("[update] {e}"))
@@ -1065,6 +1082,7 @@ pub fn run() {
         )
         .manage(CurrentSession::default())
         .manage(LaunchGate::default())
+        .manage(AccountSwitch::default())
         .manage(shortcut::LaunchRequest::from_env())
         .manage(import::Detected::default())
         .manage(Presence::default())
