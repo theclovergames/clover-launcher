@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use futures_util::FutureExt;
 use serde::Serialize;
 use tokio::sync::Notify;
 
@@ -21,6 +22,9 @@ pub struct Game {
 
 impl Game {
     pub fn start(&self, pid: Option<u32>, game_dir: PathBuf) {
+        // Une fermeture forcée demandée pendant la fin de la partie précédente (sortie encore lue)
+        // reste en attente dans `kill` : elle tuerait celle-ci dès son départ.
+        let _ = self.kill.notified().now_or_never();
         self.console.start();
         *self.process.lock().expect("partie") = Some((pid, game_dir));
     }
@@ -131,5 +135,15 @@ mod tests {
         assert!(games.any_running());
         games.get("fabric").finish(None);
         assert!(!games.any_running());
+    }
+
+    #[test]
+    fn a_new_game_forgets_a_late_force_close() {
+        let game = Game::default();
+        game.kill();
+        game.start(Some(1), PathBuf::from("/clover/game"));
+        assert!(game.killed().now_or_never().is_none());
+        game.kill();
+        assert!(game.killed().now_or_never().is_some());
     }
 }

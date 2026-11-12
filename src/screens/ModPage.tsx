@@ -1,11 +1,11 @@
 import { Download, ExternalLink, LoaderCircle, RotateCcw } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { LoaderBadges, loaderLabel } from "@/components/LoaderBadges";
 import { ModIcon } from "@/components/ModIcon";
 import { secondaryButton } from "@/lib/buttons";
 import { minecraftRange } from "@/lib/game-versions";
-import { openLink } from "@/lib/safe-html";
+import { openLink, safeHtml } from "@/lib/safe-html";
 import { cn } from "@/lib/utils";
 import type { ModrinthKind, ModrinthProject } from "@/types";
 
@@ -61,6 +61,7 @@ export function ModPage({ project, name, icon, version, summary, notice, actions
   }, [project, load, attempt]);
 
   const page = state.kind === "ready" ? state.page : null;
+  const descriptionHtml = useMemo(() => (page?.descriptionHtml ? safeHtml(page.descriptionHtml) : ""), [page]);
 
   return (
     <div className="flex flex-col">
@@ -108,15 +109,15 @@ export function ModPage({ project, name, icon, version, summary, notice, actions
           {page && page.gallery.length > 0 && <Gallery images={page.gallery} />}
         </section>
 
-        {page?.descriptionHtml && (
+        {descriptionHtml && (
           <section aria-labelledby="mod-description" className="flex flex-col gap-3">
             <h2 id="mod-description" className="font-display text-xl">
               Description
             </h2>
             <div
               className={cn(prose, "select-text")}
-              // HTML nettoyé côté Rust (`modrinth::description_html`).
-              dangerouslySetInnerHTML={{ __html: page.descriptionHtml }}
+              // HTML nettoyé côté Rust (`modrinth::description_html`), puis filtré ici par liste blanche.
+              dangerouslySetInnerHTML={{ __html: descriptionHtml }}
               onClick={(event) => openLink(event, onOpenLink)}
               onAuxClick={(event) => openLink(event, onOpenLink)}
             />

@@ -593,9 +593,7 @@ pub fn update_instance(id: String, name: String, memory_mb: Option<u64>, optimiz
         return Err("Mémoire invalide : entre 1 et 64 Go.".into());
     }
     let java_args = java_args.trim();
-    if java_args.len() > 2000 {
-        return Err("Arguments Java trop longs.".into());
-    }
+    crate::game::launch::validate_java_args(java_args)?;
     let java_args = (!java_args.is_empty()).then(|| java_args.to_owned());
     state.update(|stored| apply_settings(stored, &id, name.trim(), memory_mb, optimized_java, java_args))?
 }

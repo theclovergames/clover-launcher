@@ -80,9 +80,10 @@ fn executable(runtime: &Path) -> PathBuf {
     }
 }
 
-/// Taille du runtime `component` à télécharger ; 0 s'il est déjà là.
+/// Taille du runtime `component` à télécharger ; 0 s'il est déjà là (son exécutable, pas seulement
+/// son dossier : une installation coupée en laisse un incomplet).
 pub async fn download_size(http: &reqwest::Client, runtimes: &Path, component: &str) -> Result<u64> {
-    if runtimes.join(component).is_dir() {
+    if executable(&runtimes.join(component)).is_file() {
         return Ok(0);
     }
     let platform = platform().ok_or_else(|| GameError::UnsupportedPlatform(format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)))?;

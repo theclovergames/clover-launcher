@@ -72,6 +72,21 @@ pub fn java_arguments(optimized: bool, launcher: &str, instance: &str) -> Vec<St
     optimized.iter().copied().map(str::to_owned).chain(chosen).collect()
 }
 
+/// Options de la JVM qui lancent un autre programme ou chargent du code natif : refusées dans les
+/// arguments saisis par le joueur (réglages du launcher et des instances).
+const FORBIDDEN_JAVA_ARGS: &[&str] = &["-xx:onerror", "-xx:onoutofmemoryerror", "-javaagent", "-agentpath", "-agentlib"];
+
+/// Vérifie des arguments Java saisis par le joueur avant de les enregistrer.
+pub fn validate_java_args(arguments: &str) -> std::result::Result<(), String> {
+    if arguments.len() > 2000 {
+        return Err("Arguments Java trop longs (2000 caractères au plus).".into());
+    }
+    match split_arguments(arguments).iter().find(|argument| FORBIDDEN_JAVA_ARGS.iter().any(|forbidden| argument.to_ascii_lowercase().starts_with(forbidden))) {
+        Some(argument) => Err(format!("Argument Java refusé : {argument}")),
+        None => Ok(()),
+    }
+}
+
 /// Où Quick Play fait entrer le jeu dès son ouverture, au lieu du menu.
 pub enum QuickPlay {
     /// Serveur, par son adresse.
@@ -255,6 +270,16 @@ fn substitute(argument: &str, variables: &[(&str, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refuses_dangerous_java_arguments() {
+        assert!(validate_java_args("-Xmx4G -XX:+UseZGC -Dfoo=\"a b\"").is_ok());
+        assert!(validate_java_args("").is_ok());
+        for bad in ["-XX:OnError=calc.exe", "-xx:onoutofmemoryerror=\"cmd /c x\"", "-javaagent:a.jar", "-AgentPath:x.dll", "-agentlib:jdwp=y", "-Xmx2G \"-XX:OnError=x y\""] {
+            assert!(validate_java_args(bad).is_err(), "{bad}");
+        }
+        assert!(validate_java_args(&"a".repeat(2001)).is_err());
+    }
 
     #[test]
     fn personal_games_open_the_menu_and_clover_keeps_quick_play() {
