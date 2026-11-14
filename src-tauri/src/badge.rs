@@ -1,5 +1,7 @@
 //! Pastille des non-lus, comme Discord : chiffre en surimpression sur l'icône de la barre des
 //! tâches (Windows), point rouge sur l'icône de la zone de notification.
+// La surimpression chiffrée n'existe que sous Windows : ailleurs, seuls les tests s'en servent.
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use tauri::image::Image;
 use tauri::{AppHandle, Manager};
@@ -143,7 +145,7 @@ mod tests {
 
     #[test]
     fn tray_icon_keeps_size_and_marks_corner() {
-        let base = Image::new_owned(vec![0, 128, 0, 255].repeat(32 * 32), 32, 32);
+        let base = Image::new_owned([0, 128, 0, 255].repeat(32 * 32), 32, 32);
         let marked = tray_icon(&base);
         assert_eq!((marked.width(), marked.height()), (32, 32));
         assert_eq!(pixel(&marked, 0, 0), [0, 128, 0, 255]);

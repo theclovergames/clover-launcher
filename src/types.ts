@@ -392,6 +392,9 @@ export type ModeStats =
   | { id: "practice"; rank: number | null; stats: PracticeStats }
   | { id: "skypvp" | "pvpsoup"; rank: number | null; stats: ArenaStats };
 
+/** Récompenses du launcher du compte actif : cadeau de bienvenue, puis série de jours joués (une clef tous les `keyEvery` jours). */
+export type LauncherRewards = { welcome: { received: boolean; vip: boolean }; today: { received: boolean; streak: number }; keyEvery: number };
+
 /** Statistiques Clover Games du compte actif ; chaque bloc vaut `null` si sa source est indisponible. */
 export type PlayerStats = {
   linked: boolean;
@@ -467,6 +470,8 @@ export type Conversation = { friend: ChatFriend; last: MessagePreview | null; un
 export type FriendRequest = { uuid: string; name: string; at: number; expiresAt: number };
 /** `now` : heure du site ; `gifs` : recherche de GIF disponible ; `requests` : demandes d'amis en attente. */
 export type Inbox = { now: number; unread: number; gifs: boolean; conversations: Conversation[]; requests: { incoming: FriendRequest[]; outgoing: FriendRequest[] } };
+/** Évènement du flux des messages (`watch_messages`) : boîte changée, ou amis en train d'écrire. */
+export type InboxEvent = { kind: "change" } | { kind: "typing"; friends: string[] };
 /** Une page de conversation ; `updates` : messages modifiés ou supprimés depuis la page précédente. */
 export type Thread = {
   now: number;

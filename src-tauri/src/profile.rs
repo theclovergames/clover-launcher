@@ -197,6 +197,40 @@ pub async fn player_stats(current: State<'_, CurrentSession>, tokens: State<'_, 
     Ok(numbers_only(stats))
 }
 
+/// Récompenses du launcher du compte actif (`/api/launcher/rewards`), versées par le plugin au
+/// premier signal du mod de la journée : cadeau de bienvenue, puis récompense du jour en série.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherRewards {
+    pub welcome: WelcomeReward,
+    pub today: DailyReward,
+    /// Une clef tous les `key_every` jours de série.
+    pub key_every: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WelcomeReward {
+    pub received: bool,
+    pub vip: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DailyReward {
+    pub received: bool,
+    pub streak: u32,
+}
+
+#[tauri::command]
+pub async fn launcher_rewards(current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<LauncherRewards, String> {
+    let session = session(&current).await?;
+    let response = authorized(&tokens, &session, |http, base, token| http.get(format!("{base}/api/launcher/rewards")).bearer_auth(token)).await?;
+    let rewards: LauncherRewards = response.json().await.map_err(|_| "Réponse du site illisible.".to_owned())?;
+    if rewards.key_every == 0 {
+        return Err("Réponse du site illisible.".into());
+    }
+    Ok(rewards)
+}
+
 /// Lien entre le compte actif et un autre joueur.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

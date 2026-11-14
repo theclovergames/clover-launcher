@@ -81,7 +81,7 @@ export function VoteCard({ onVote }: { onVote: () => void }) {
               </svg>
             ))}
             <span className="absolute right-3 bottom-3 -rotate-[4deg] rounded-[3px] border-2 border-[var(--mc-outline)] bg-accent px-1.5 py-0.5 text-[11px] font-extrabold whitespace-nowrap text-accent-foreground">
-              10 clefs à gagner !
+              1 clef tous les 10 votes !
             </span>
           </div>
           <div className="relative flex items-center justify-between gap-3">
@@ -99,7 +99,7 @@ export function VoteCard({ onVote }: { onVote: () => void }) {
           </div>
           <div className="relative flex max-w-[58%] flex-col items-start gap-1.5">
             <p className="text-[15px] leading-tight font-bold">{free}, et ça rapporte</p>
-            <p className="text-xs leading-relaxed text-muted-foreground">Tes votes débloquent des paliers : pièces, XP et clefs cosmétiques.</p>
+            <p className="text-xs leading-relaxed text-muted-foreground">Chaque vote rapporte des pièces, une clef cosmétique tous les 10 votes, et débloque des paliers.</p>
             <button type="button" onClick={onVote} className={cn(primaryButton, "mt-1.5 h-8 px-3")}>
               <Vote className="size-4" aria-hidden />
               Voter

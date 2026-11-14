@@ -85,6 +85,8 @@ const STICK_PX = 64;
 const OLDER_PX = 160;
 /** Hauteur maximale du champ avant qu'il défile. */
 const COMPOSER_MAX_PX = 160;
+/** « En train d'écrire » redit au site au plus toutes les 3 s pendant la frappe (oublié après 6 s). */
+const TYPING_EVERY_MS = 3_000;
 /** Largeur d'un GIF dans la conversation (rendu `fixed_width` de Giphy). */
 const GIF_WIDTH_PX = 240;
 
@@ -92,7 +94,7 @@ type Mode = { id: string; name: string; quickPlay: boolean };
 
 export type MessagesServices = Pick<
   typeof api,
-  "messageThread" | "sendMessage" | "sendGif" | "editMessage" | "reactMessage" | "deleteMessage" | "markMessagesRead" | "setConversationState" | "reportMessage" | "searchGifs" | "sendFriendRequest" | "answerFriendRequest" | "removeFriend"
+  "messageThread" | "sendMessage" | "sendGif" | "editMessage" | "reactMessage" | "deleteMessage" | "markMessagesRead" | "sendTyping" | "setConversationState" | "reportMessage" | "searchGifs" | "sendFriendRequest" | "answerFriendRequest" | "removeFriend"
 >;
 
 type Props = {
@@ -108,6 +110,8 @@ type Props = {
   updateInbox: (change: (inbox: Inbox) => Inbox) => void;
   /** Change à chaque évènement du flux du site : le fil ouvert se relit sans attendre. */
   changes?: number;
+  /** UUID des amis en train d'écrire au joueur (flux du site). */
+  typing?: string[];
   /** Modes du manifeste : nom et Quick Play, pour « Rejoindre ». */
   modes: Mode[];
   /** Jeu en préparation ou déjà lancé : « Rejoindre » ne lance rien. */
@@ -913,8 +917,10 @@ function ThreadPane(props: {
   onRemoveFriend: () => void;
   services: MessagesServices;
   changes: number;
+  /** L'ami est en train d'écrire. */
+  typing: boolean;
 }) {
-  const { conversation, services, updateInbox, onNotice, changes } = props;
+  const { conversation, services, updateInbox, onNotice, changes, typing } = props;
   const uuid = conversation.friend.uuid;
   const { active, visible } = useWindowState();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -1101,6 +1107,21 @@ function ThreadPane(props: {
     textarea.current?.focus();
   }, []);
 
+  /** Dernier « en train d'écrire » envoyé à l'ami (0 : aucun en cours). */
+  const typingSent = useRef(0);
+  const stopTyping = useCallback(() => {
+    if (!typingSent.current) return;
+    typingSent.current = 0;
+    services.sendTyping(uuid, false).catch(() => {});
+  }, [services, uuid]);
+  useEffect(() => stopTyping, [stopTyping]);
+  const signalTyping = (text: string) => {
+    if (!text.trim()) return stopTyping();
+    if (Date.now() - typingSent.current < TYPING_EVERY_MS) return;
+    typingSent.current = Date.now();
+    services.sendTyping(uuid, true).catch(() => {});
+  };
+
   const deliver = async (item: Pending) => {
     setPending((list) => list.map((entry) => (entry.local === item.local ? { ...entry, state: "sending", error: undefined } : entry)));
     try {
@@ -1158,6 +1179,7 @@ function ThreadPane(props: {
     const body = draft.trim();
     if (!editing) {
       setDraft("");
+      stopTyping();
       send({ kind: "text", body });
       return;
     }
@@ -1493,6 +1515,7 @@ function ThreadPane(props: {
               onChange={(event) => {
                 setDraft(event.target.value);
                 setComposeError(null);
+                if (!editing) signalTyping(event.target.value);
               }}
               onKeyDown={onKeyDown}
               rows={1}
@@ -1518,7 +1541,23 @@ function ThreadPane(props: {
             </button>
           </div>
           <p id="messages-composer-help" className={cn("px-1 text-[11px]", composeError || tooLong ? "text-destructive" : "text-muted-foreground")} role={composeError ? "alert" : undefined}>
-            {composeError ?? (tooLong ? `Message trop long : ${BODY_MAX} caractères au plus.` : "Entrée pour envoyer, Maj+Entrée pour aller à la ligne.")}
+            {composeError ??
+              (tooLong ? (
+                `Message trop long : ${BODY_MAX} caractères au plus.`
+              ) : typing ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-flex gap-0.5" aria-hidden>
+                    {[0, 150, 300].map((delay) => (
+                      <span key={delay} className="size-1 rounded-full bg-current motion-safe:animate-bounce" style={{ animationDelay: `${delay}ms` }} />
+                    ))}
+                  </span>
+                  <span>
+                    <span className="font-bold text-foreground">{name}</span> écrit…
+                  </span>
+                </span>
+              ) : (
+                "Entrée pour envoyer, Maj+Entrée pour aller à la ligne."
+              ))}
           </p>
         </form>
       ) : (
@@ -1560,7 +1599,7 @@ function DividedRow({ divider, children }: { divider: boolean; children: ReactNo
  * clovergames.fr. La liste est relevée toutes les 15 s sur la page, la conversation ouverte toutes
  * les 3 s quand la fenêtre est au premier plan.
  */
-export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox, updateInbox, changes = 0, modes, playBusy, onPlay, onNotice, onOpenPlayer, me, status, onStatus, services = api }: Props) {
+export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox, updateInbox, changes = 0, typing = [], modes, playBusy, onPlay, onNotice, onOpenPlayer, me, status, onStatus, services = api }: Props) {
   /** UUID de la demande en cours de traitement. */
   const [requestBusy, setRequestBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirmation | null>(null);
@@ -1752,6 +1791,7 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
           onRemoveFriend={() => removeFriend(conversation)}
           services={services}
           changes={changes}
+          typing={typing.some((uuid) => plain(uuid) === plain(conversation.friend.uuid))}
         />
       ) : (
         <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 px-10 text-center">

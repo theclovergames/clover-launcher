@@ -6,7 +6,7 @@ import { type Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { Instance, InstanceEntry, InstanceInput, InstanceKind, AvailableVersion, ContentEntry, ContentFolder, PlaySession } from "@/types";
 
 import type { Settings, SteamState } from "@/screens/SettingsScreen";
-import type { Availability, ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackUpdate, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, ChangelogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats, ChatMessage, GifPage, Inbox, Thread, LeaderboardBoard, OtherPlayer, RequestSent, ShopAccount, ShopCatalog, ShopProduct, ShopPaid, Weather } from "@/types";
+import type { Availability, ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackUpdate, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, ChangelogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats, ChatMessage, GifPage, Inbox, InboxEvent, LauncherRewards, Thread, LeaderboardBoard, OtherPlayer, RequestSent, ShopAccount, ShopCatalog, ShopProduct, ShopPaid, Weather } from "@/types";
 
 export type AccountRef = { uuid: string; name: string; skinUrl: string | null };
 
@@ -227,6 +227,8 @@ export const api = {
   nameChangeInfo: () => invoke<NameChange>("name_change_info"),
   /** Statistiques Clover Games du compte actif (`/api/launcher/profile` du site). */
   playerStats: () => invoke<PlayerStats>("player_stats"),
+  /** Récompenses du launcher du compte actif : cadeau de bienvenue et série du jour (`/api/launcher/rewards`). */
+  launcherRewards: () => invoke<LauncherRewards>("launcher_rewards"),
   /** Profil d'un autre joueur, par son pseudo, et son lien avec le compte actif ; `null` s'il n'est jamais venu sur le serveur. */
   playerProfile: (name: string) => invoke<OtherPlayer | null>("player_profile", { name }),
   /** Tableaux du classement du site (100 premiers de chacun). */
@@ -247,7 +249,7 @@ export const api = {
   removeFriend: (friend: string) => invoke<void>("remove_friend", { friend }),
   /** Conversations avec les amis du compte actif (`messages.rs`), pour la page Messages et sa pastille. */
   messageConversations: () => invoke<Inbox>("message_conversations"),
-  watchMessages: (watchId: number, onChange: Channel<null>) => invoke<void>("watch_messages", { watchId, onChange }),
+  watchMessages: (watchId: number, onEvent: Channel<InboxEvent>) => invoke<void>("watch_messages", { watchId, onEvent }),
   stopWatchingMessages: (watchId: number) => invoke<void>("stop_watching_messages", { watchId }),
   /** Statut choisi dans Messages, redit chaque minute (`set_availability`). */
   setAvailability: (availability: Availability) => invoke<void>("set_availability", { availability }),
@@ -263,6 +265,8 @@ export const api = {
   /** `forAll` : supprimé pour l'ami aussi (ses propres messages seulement). */
   deleteMessage: (friend: string, id: number, forAll: boolean) => invoke<void>("delete_message", { friend, id, forAll }),
   markMessagesRead: (friend: string, upTo: number) => invoke<void>("mark_messages_read", { friend, upTo }),
+  /** « En train d'écrire » à `friend`, redit au plus toutes les 3 s pendant la frappe ; `false` l'efface. */
+  sendTyping: (friend: string, typing: boolean) => invoke<void>("send_typing", { friend, typing }),
   /** Archiver, couper les notifications, ou vider la conversation (pour soi). */
   setConversationState: (friend: string, state: { archived?: boolean; muted?: boolean; clear?: boolean }) =>
     invoke<void>("conversation_state", { friend, archived: state.archived ?? null, muted: state.muted ?? null, clear: state.clear ?? null }),

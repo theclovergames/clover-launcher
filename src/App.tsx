@@ -46,7 +46,7 @@ import { MessagesScreen } from "@/screens/MessagesScreen";
 import { LeaderboardScreen } from "@/screens/LeaderboardScreen";
 import { PlayerScreen } from "@/screens/PlayerScreen";
 import { ShopScreen } from "@/screens/ShopScreen";
-import type { Cape, ConsoleSnapshot, DetectedInstance, GameExited, ImportItem, ImportResult, ImportScan, Inbox, LauncherNotification, InstanceEntry, InstanceInput, MinecraftNewsItem, ModInfo, PersonalMod, SearchFilters, PlaySession, PlayState, Profile, Progress, SavedSkin, SkinLook, SkinModel } from "@/types";
+import type { Cape, ConsoleSnapshot, DetectedInstance, GameExited, ImportItem, ImportResult, ImportScan, Inbox, InboxEvent, LauncherNotification, InstanceEntry, InstanceInput, MinecraftNewsItem, ModInfo, PersonalMod, SearchFilters, PlaySession, PlayState, Profile, Progress, SavedSkin, SkinLook, SkinModel } from "@/types";
 
 /** Paquet du Microsoft Store : le Store gère les mises à jour du launcher. */
 const STORE_HIDDEN: HiddenSetting[] = ["autoUpdate"];
@@ -693,23 +693,26 @@ export default function App() {
     };
   }, [signedIn, profile?.uuid, refreshInbox]);
 
-  // Flux du site : un message ou une demande d'ami relit la boîte, et le fil ouvert, aussitôt.
-  // Les relèves ci-dessus restent le filet si le flux tombe.
+  // Flux du site : un message ou une demande d'ami relit la boîte, et le fil ouvert, aussitôt ; il
+  // dit aussi quels amis écrivent. Les relèves ci-dessus restent le filet si le flux tombe.
   const [inboxChanges, setInboxChanges] = useState(0);
+  const [typingFriends, setTypingFriends] = useState<string[]>([]);
   useEffect(() => {
     if (!signedIn) return;
     // Unique d'un rechargement à l'autre : une écoute restée côté Rust s'efface devant la nouvelle.
     const watchId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
     let stopped = false;
-    const channel = new Channel<null>();
-    channel.onmessage = () => {
+    const channel = new Channel<InboxEvent>();
+    channel.onmessage = (event) => {
       if (stopped) return;
+      if (event.kind === "typing") return setTypingFriends(event.friends);
       void refreshInbox();
       setInboxChanges((count) => count + 1);
     };
     api.watchMessages(watchId, channel).catch((reason) => console.error("[messages]", reason));
     return () => {
       stopped = true;
+      setTypingFriends([]);
       api.stopWatchingMessages(watchId).catch(() => {});
     };
   }, [signedIn, profile?.uuid, refreshInbox]);
@@ -1811,6 +1814,7 @@ export default function App() {
               refreshInbox={refreshInbox}
               updateInbox={updateInbox}
               changes={inboxChanges}
+              typing={typingFriends}
               modes={(catalogue?.modes ?? []).map((mode) => ({ id: mode.id, name: mode.name, quickPlay: Boolean(mode.host) }))}
               playBusy={playFor("clover").kind !== "ready" || Boolean(launching)}
               onPlay={(mode) => startGame("clover", () => selectInstance("clover").then(() => api.play(mode)))}

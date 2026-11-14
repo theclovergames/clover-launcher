@@ -172,63 +172,6 @@ const HUSK = { mob: "husk", speed: 0.23 } satisfies MobSprite;
 const SKELETON = { mob: "skeleton", speed: 0.25 } satisfies MobSprite;
 const CREEPER = { mob: "creeper", speed: 0.25 } satisfies MobSprite;
 const SPIDER = { mob: "spider", speed: 0.3 } satisfies MobSprite;
-/** Cochon de profil : rose, groin plus clair et ses narines, quatre pattes. */
-const PIG_BODY = [
-  "..........Ppppppp",
-  "..........Ppppppp",
-  "pppppppppppppwkpp",
-  "ppppppppppppppsss",
-  "ppppppppppppppnsn",
-  "ppppppppppppppsss",
-  "PPPPPPPPPPPPPPPP.",
-];
-const PIG = {
-  frames: [
-    [...PIG_BODY, ".pp..pp...pp..pp.", ".pp..pp...pp..pp.", ".hh..hh...hh..hh."],
-    [...PIG_BODY, "..pp.pp....pp.pp.", "..pp.pp....pp.pp.", "..hh.hh....hh.hh."],
-  ],
-  palette: { p: "#e7a2a0", P: "#ce8588", s: "#efbcb3", n: "#ac7372", w: "#f6e9dd", k: "#3f2d2d", h: "#9a6665" },
-  speed: 0.25,
-};
-
-/** Vache de profil : robe brune tachée de blanc, cornes claires, mufle, pis rose. */
-const COW_BODY = [
-  "...............h..h.",
-  "..............cccwcc",
-  "ccwwwcccccccccccwkcc",
-  "cwwwwccccwwwccccccnn",
-  "ccwwcccccwwwccccccnn",
-  "cccccccccwwccccccc..",
-  "ccccccccccccccccc...",
-  "CCCCCCCCCuuCCCCC....",
-];
-const COW = {
-  frames: [
-    [...COW_BODY, ".cc..cc.....cc..cc..", ".cc..cc.....cc..cc..", ".kk..kk.....kk..kk.."],
-    [...COW_BODY, "..cc.cc......cc.cc..", "..cc.cc......cc.cc..", "..kk.kk......kk.kk.."],
-  ],
-  palette: { c: "#5b4637", C: "#403126", w: "#e9e4d7", h: "#c4c0b2", n: "#a69689", k: "#2c2724", u: "#d69b9e" },
-  speed: 0.2,
-};
-
-/** Mouton de profil : laine blanche, tête et pattes couleur peau. */
-const SHEEP_BODY = [
-  "...........wwwww..",
-  "..wwwwwwwwwwwffff.",
-  ".wwwwwwwwwwwwfwkf.",
-  "wwwwwwwwwwwwwffmm.",
-  "wwwwwwwwwwwwwwfmm.",
-  "wwWWWWWWWWWWWWww..",
-  "WWWWWWWWWWWWWWW...",
-];
-const SHEEP = {
-  frames: [
-    [...SHEEP_BODY, ".ff..ff...ff..ff..", ".ff..ff...ff..ff..", ".hh..hh...hh..hh.."],
-    [...SHEEP_BODY, "..ff.ff....ff.ff..", "..ff.ff....ff.ff..", "..hh.hh....hh.hh.."],
-  ],
-  palette: { w: "#eae7dc", W: "#d1cdbf", f: "#a28d7c", m: "#c7b3a1", k: "#34302b", h: "#75685b" },
-  speed: 0.23,
-};
 
 /**
  * Ghast de face, comme en jeu : corps blanc moucheté de gris, yeux clos et traînées de larmes, petite
@@ -526,8 +469,8 @@ const GRASS = {
 const STONE = { rows: ["ssSssssHssssSsss", "SssssSssssSssssH"], palette: { s: "#6e6b61", S: "#5c5a52", H: "#848174" } };
 
 /**
- * Le rythme des pas suit l'attribut de déplacement du jeu : araignée 0,3, squelette et cochon 0,25,
- * zombie et mouton 0,23, vache 0,2… La distance parcourue reste indépendante de la taille du ciel.
+ * Le rythme des pas suit l'attribut de déplacement du jeu : araignée et lapin 0,3, squelette 0,25,
+ * zombie 0,23, dromadaire 0,16… La distance parcourue reste indépendante de la taille du ciel.
  */
 const pace = (speed: number) => 0.184 / speed;
 
@@ -668,19 +611,13 @@ function Roamers({ day = [], night = [], permanent = [], dark, floor }: { day?: 
   </div>;
 }
 
-const FOREST_DAY: Roamer[] = [
-  { sprite: SHEEP },
-  { sprite: PIG },
-  { sprite: COW, back: true },
-];
 const FOREST_NIGHT: Roamer[] = [
   { sprite: ZOMBIE },
   { sprite: SKELETON, back: true },
   { sprite: SPIDER },
   { sprite: CREEPER },
 ];
-const VILLAGE_ANIMALS: Roamer[] = [{ sprite: PIG, back: true }];
-const VILLAGE_DAY: Roamer[] = [...VILLAGE_ANIMALS, { sprite: { ...FARMER, speed: 0.25 } }, { sprite: { ...NITWIT, speed: 0.25 }, back: true }];
+const VILLAGE_DAY: Roamer[] = [{ sprite: { ...FARMER, speed: 0.25 } }, { sprite: { ...NITWIT, speed: 0.25 }, back: true }];
 const VILLAGE_CHICKENS: Roamer[] = [
   { sprite: { ...CHICKEN, speed: 0.25 }, stationary: true, period: 1.6 },
   { sprite: { ...CHICKEN, speed: 0.25 }, stationary: true, period: 2, back: true },
@@ -702,7 +639,7 @@ const DESERT_NIGHT: Roamer[] = [
   { sprite: CREEPER },
 ];
 
-/** Lisière de forêt : chênes et bouleaux, fleurs dans l'herbe ; le jour abeilles et animaux, la nuit les monstres. */
+/** Lisière de forêt : chênes et bouleaux, fleurs dans l'herbe ; le jour des abeilles qui butinent d'un bout à l'autre, la nuit les monstres. */
 function Forest({ out, dark }: { out: boolean; dark: boolean }) {
   return (
     <>
@@ -736,11 +673,13 @@ function Forest({ out, dark }: { out: boolean; dark: boolean }) {
           { x: "22%", bottom: "17%" },
           { x: "78%", bottom: "19%" },
         ].map((bee, index) => (
-          <Placed key={bee.x} x={bee.x} bottom={bee.bottom} className="sky-bob" style={{ animationDelay: `${-index * 1.3}s` }}>
-            <Sprite {...BEE} unit={2} period={0.16} flip={index === 1} />
+          <Placed key={bee.x} x={bee.x} bottom={bee.bottom} className="sky-bee" style={{ "--bee-dir": index === 1 ? -1 : 1, animationDelay: `${-index * 3.7}s` } as CSSProperties}>
+            <div className="sky-bee-turn" style={{ animationDelay: `${-index * 3.7}s` }}>
+              <Sprite {...BEE} unit={2} period={0.16} flip={index === 1} />
+            </div>
           </Placed>
         ))}
-      <Roamers day={FOREST_DAY} night={FOREST_NIGHT} dark={dark} floor="calc(12% - 2px)" />
+      <Roamers night={FOREST_NIGHT} dark={dark} floor="calc(12% - 2px)" />
     </>
   );
 }
@@ -789,7 +728,7 @@ function Smoke({ x, bottom }: { x: string; bottom: string }) {
   );
 }
 
-/** Village des plaines : maisons, champ de blé, poules ; le jour villageois et cochon, la nuit zombies, squelette et creeper. */
+/** Village des plaines : maisons, champ de blé, poules ; le jour les villageois, la nuit zombies, squelette et creeper. */
 function Village({ out, dark }: { out: boolean; dark: boolean }) {
   return (
     <>
@@ -803,7 +742,7 @@ function Village({ out, dark }: { out: boolean; dark: boolean }) {
           {house.smoke && <Smoke x="75%" bottom="100%" />}
         </Placed>
       ))}
-      <Roamers permanent={VILLAGE_CHICKENS} day={out ? VILLAGE_DAY : VILLAGE_ANIMALS} night={VILLAGE_NIGHT} dark={dark} floor={VILLAGE_FLOOR} />
+      <Roamers permanent={VILLAGE_CHICKENS} day={out ? VILLAGE_DAY : undefined} night={VILLAGE_NIGHT} dark={dark} floor={VILLAGE_FLOOR} />
     </>
   );
 }
@@ -1563,9 +1502,6 @@ export const SKY_SPRITES = {
   Squelette: SKELETON,
   Creeper: CREEPER,
   Araignée: SPIDER,
-  Cochon: PIG,
-  Vache: COW,
-  Mouton: SHEEP,
   Ghast: GHAST,
   "Ghast en colère": GHAST_ANGRY,
   Arpenteur: STRIDER,

@@ -139,14 +139,27 @@ pub async fn ensure_with_progress(http: &reqwest::Client, download: &Download, o
     if is_installed(download).await? {
         return Ok(());
     }
-    let mut last_error = None;
-    for _ in 0..ATTEMPTS {
+    let mut attempt = 0;
+    loop {
         match fetch(http, download, on_bytes).await {
             Ok(()) => return Ok(()),
-            Err(error) => last_error = Some(error),
+            Err(error) if attempt + 1 < ATTEMPTS && retryable(&error) => {
+                tokio::time::sleep(std::time::Duration::from_millis(500 << attempt)).await;
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
         }
     }
-    Err(last_error.expect("au moins une tentative"))
+}
+
+/// Une coupure, un délai dépassé, une erreur du serveur (5xx) ou un fichier arrivé abîmé valent une
+/// nouvelle tentative ; une réponse 4xx (fichier absent, accès refusé) ne changera pas.
+fn retryable(error: &GameError) -> bool {
+    match error {
+        GameError::Network(error) => error.status().map_or(error.is_connect() || error.is_timeout() || error.is_body(), |status| status.is_server_error()),
+        GameError::Corrupted(_) => true,
+        _ => false,
+    }
 }
 
 async fn is_installed(download: &Download) -> Result<bool> {
