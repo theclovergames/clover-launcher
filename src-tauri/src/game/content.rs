@@ -252,7 +252,8 @@ pub fn copy_overrides(archive: &Path, folders: &[&str], game: &Path, mods: &Path
         let prefix = format!("{folder}/");
         for index in 0..zip.len() {
             let mut entry = zip.by_index(index).map_err(|e| GameError::Corrupted(e.to_string()))?;
-            let Some(name) = entry.name().strip_prefix(prefix.as_str()).map(str::to_owned) else { continue };
+            let name = entry.name().map_err(|e| GameError::Corrupted(e.to_string()))?;
+            let Some(name) = name.strip_prefix(prefix.as_str()).map(str::to_owned) else { continue };
             if entry.is_dir() || name.is_empty() {
                 continue;
             }

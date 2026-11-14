@@ -154,7 +154,7 @@ fn read_jar(reader: impl Read + Seek) -> Option<Jar> {
         // plusieurs lignes), pas le JSON strict : remplacés par des espaces, sans effet ailleurs.
         return serde_json::from_str(&text.replace(|c: char| c.is_ascii_control(), " ")).ok().map(Jar::Fabric);
     }
-    let names: HashSet<&str> = archive.file_names().collect();
+    let names: HashSet<std::borrow::Cow<str>> = archive.file_names().filter_map(|name| name.ok()).collect();
     let loader = if names.contains("quilt.mod.json") {
         "Quilt"
     } else if names.contains("META-INF/neoforge.mods.toml") {

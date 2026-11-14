@@ -385,7 +385,8 @@ fn extract_natives(archives: &[(PathBuf, Vec<String>)], dir: &Path) -> Result<()
             .map_err(|_| GameError::InvalidVersion("archive de bibliothèques natives illisible".into()))?;
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index).map_err(|_| GameError::InvalidVersion("bibliothèque native illisible".into()))?;
-            if entry.is_dir() || entry.name().starts_with("META-INF/") || excluded.iter().any(|prefix| entry.name().starts_with(prefix)) { continue; }
+            let name = entry.name().map_err(|_| GameError::InvalidVersion("chemin de bibliothèque native invalide".into()))?.into_owned();
+            if entry.is_dir() || name.starts_with("META-INF/") || excluded.iter().any(|prefix| name.starts_with(prefix)) { continue; }
             let relative = entry.enclosed_name().ok_or_else(|| GameError::InvalidVersion("chemin de bibliothèque native invalide".into()))?;
             let target = dir.join(relative);
             // Déjà extraite : sous Windows, une DLL chargée par un jeu ouvert ne peut pas être réécrite.
