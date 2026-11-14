@@ -901,7 +901,6 @@ async fn play(
     app: AppHandle,
     state: State<'_, AppState>,
     current: State<'_, CurrentSession>,
-    presence: State<'_, Presence>,
     mode: Option<String>,
     server: Option<String>,
     world: Option<String>,
@@ -938,7 +937,6 @@ async fn play(
         }
         (None, None) => mode.map_or(game::Destination::Menu, game::Destination::Mode),
     };
-    let clover = instance.kind == instances::Kind::Clover && matches!(destination, game::Destination::Menu | game::Destination::Mode(_));
     let settings = stored.settings;
     let options = game::LaunchOptions {
         memory_mb: instance.memory_mb.or_else(|| (!settings.memory_auto).then(|| u64::from(settings.memory_gb) * 1024)),
@@ -983,7 +981,6 @@ async fn play(
         if instance.id == instances::BUILTIN { stored.clover_last_played = Some(instances::now()); }
         if let Some(entry) = stored.instances.iter_mut().find(|entry| entry.id == instance.id) { entry.last_played = Some(instances::now()); }
     });
-    presence.set_state(presence::State::playing_now(clover)).await;
 
     if let Some(window) = app.get_webview_window("main") {
         match settings.on_launch.as_str() {

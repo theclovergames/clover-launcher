@@ -13,6 +13,19 @@ pub fn start(pid: u32, minecraft: &str) {
     let _ = (pid, minecraft);
 }
 
+/// Une partie est-elle ouverte dans la fenêtre du jeu ? Depuis Minecraft 1.15, le jeu suffixe son
+/// titre en partie (« - Solo », « - Multijoueur (serveur tiers) ») et l'enlève au menu ; le titre
+/// de Clover garde ce suffixe. `None` sans fenêtre lisible (hors Windows, jeu en démarrage).
+pub fn in_world(pid: u32) -> Option<bool> {
+    #[cfg(windows)]
+    return native::in_world(pid);
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
 /// Demande au jeu de se fermer comme par la croix de sa fenêtre : il sauvegarde le monde ouvert
 /// puis quitte. Sous macOS et Linux, signal de fin (`SIGTERM`). `Ok(false)` si aucune fenêtre du
 /// jeu n'est encore ouverte.
@@ -50,6 +63,46 @@ mod native {
     };
 
     const HELPER_ARG: &str = "--minecraft-window-title";
+    /// Séparateur du suffixe d'état, écrit tel quel par `Minecraft.createTitle` dans toutes les langues.
+    const STATE_SEPARATOR: &str = " - ";
+
+    /// Titre à poser à la place de `current` : celui de Clover (`prefix`), suivi de l'état écrit par
+    /// le jeu s'il y en a un. `None` s'il est déjà posé.
+    fn clover_title(prefix: &str, current: &str) -> Option<String> {
+        if current.starts_with(prefix) {
+            return None;
+        }
+        Some(match current.split_once(STATE_SEPARATOR) {
+            Some((_, state)) => format!("{prefix}{STATE_SEPARATOR}{state}"),
+            None => prefix.to_owned(),
+        })
+    }
+
+    fn window_text(window: HWND) -> String {
+        let mut text = [0u16; 512];
+        // Fenêtre d'un autre processus : Windows rend le titre gardé, sans attendre le jeu.
+        let length = unsafe { GetWindowTextW(window, text.as_mut_ptr(), text.len() as i32) };
+        String::from_utf16_lossy(&text[..length.max(0) as usize])
+    }
+
+    struct WorldQuery {
+        pid: u32,
+        in_world: Option<bool>,
+    }
+
+    pub(super) fn in_world(pid: u32) -> Option<bool> {
+        let mut query = WorldQuery { pid, in_world: None };
+        unsafe { EnumWindows(Some(read_window), &mut query as *mut WorldQuery as LPARAM); }
+        query.in_world
+    }
+
+    unsafe extern "system" fn read_window(window: HWND, data: LPARAM) -> i32 {
+        // EnumWindows est synchrone : la requête reste vivante pendant tous ses callbacks.
+        let query = unsafe { &mut *(data as *mut WorldQuery) };
+        if !is_game_window(window, query.pid) { return 1; }
+        query.in_world = Some(window_text(window).contains(STATE_SEPARATOR));
+        0
+    }
 
     struct Process(HANDLE);
 
@@ -117,7 +170,7 @@ mod native {
 
     struct WindowTitle {
         pid: u32,
-        title: Vec<u16>,
+        prefix: String,
     }
 
     fn monitor(pid: u32, created: u64, minecraft: &str) -> io::Result<()> {
@@ -126,10 +179,10 @@ mod native {
         if process.created()? != created || !process.is_java() {
             return Ok(());
         }
-        let title = format!("Minecraft {minecraft} | Clover {}", env!("CARGO_PKG_VERSION"));
-        let context = WindowTitle { pid, title: title.encode_utf16().chain([0]).collect() };
+        let context = WindowTitle { pid, prefix: format!("Minecraft {minecraft} | Clover {}", env!("CARGO_PKG_VERSION")) };
         // Minecraft réécrit son titre en rejoignant/quittant un monde. Ne réappliquer que s'il
-        // a changé ; l'attente porte sur le processus d'origine et s'arrête dès sa fermeture.
+        // a changé, en gardant son état (`in_world`) ; l'attente porte sur le processus d'origine
+        // et s'arrête dès sa fermeture.
         while unsafe { WaitForSingleObject(process.0, 500) } == WAIT_TIMEOUT {
             unsafe { EnumWindows(Some(update_window), &context as *const WindowTitle as LPARAM); }
         }
@@ -178,11 +231,10 @@ mod native {
         // EnumWindows est synchrone : le contexte reste vivant pendant tous ses callbacks.
         let context = unsafe { &*(data as *const WindowTitle) };
         if !is_game_window(window, context.pid) { return 1; }
-        let mut current = vec![0u16; context.title.len() + 1];
-        let length = unsafe { GetWindowTextW(window, current.as_mut_ptr(), current.len() as i32) };
-        if current[..length.max(0) as usize] != context.title[..context.title.len() - 1] {
+        if let Some(title) = clover_title(&context.prefix, &window_text(window)) {
+            let title: Vec<u16> = title.encode_utf16().chain([0]).collect();
             // Un jeu occupé ou bloqué ne doit pas immobiliser le suivi des fenêtres.
-            unsafe { SendMessageTimeoutW(window, WM_SETTEXT, 0, context.title.as_ptr() as LPARAM, SMTO_ABORTIFHUNG, 250, std::ptr::null_mut()); }
+            unsafe { SendMessageTimeoutW(window, WM_SETTEXT, 0, title.as_ptr() as LPARAM, SMTO_ABORTIFHUNG, 250, std::ptr::null_mut()); }
         }
         1
     }
@@ -195,6 +247,16 @@ mod native {
         fn recognises_the_window_of_every_minecraft_generation() {
             assert!(["SDL_app", "GLFW30", "LWJGL"].into_iter().all(is_game_class));
             assert!(!is_game_class("SunAwtFrame"));
+        }
+
+        #[test]
+        fn keeps_the_state_written_by_the_game() {
+            let prefix = "Minecraft 26.3 | Clover 0.4.7";
+            assert_eq!(clover_title(prefix, "Minecraft* 26.3").as_deref(), Some(prefix));
+            assert_eq!(clover_title(prefix, "Minecraft* 26.3 - Multijoueur (serveur tiers)").as_deref(), Some("Minecraft 26.3 | Clover 0.4.7 - Multijoueur (serveur tiers)"));
+            assert_eq!(clover_title(prefix, "Minecraft 26.3 | Clover 0.4.7 - Solo"), None);
+            assert_eq!(clover_title(prefix, prefix), None);
+            assert!(!prefix.contains(STATE_SEPARATOR));
         }
 
         #[test]
