@@ -1,5 +1,5 @@
-import { ArrowRight, Check, Cpu, FolderInput, LoaderCircle, Puzzle, Star, Users } from "lucide-react";
-import type { ReactNode } from "react";
+import { ArrowRight, Check, Copy, Cpu, FolderInput, LoaderCircle, Puzzle, Star, Users } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import { HeroBackdrop } from "@/components/Backdrop";
 import { PlayerHead } from "@/components/PlayerHead";
@@ -11,8 +11,28 @@ import { versionImage } from "@/lib/version-art";
 import type { Account } from "@/screens/SettingsScreen";
 import type { DetectedInstance, ImportItem, ImportScan } from "@/types";
 
-/** Connexion : un échec s'affiche sous le bouton Microsoft. */
-export type LoginState = { kind: "idle" } | { kind: "waiting" } | { kind: "error"; message: string };
+/** Connexion : un échec s'affiche sous le bouton Microsoft. `url` arrive une fois le navigateur sollicité. */
+export type LoginState = { kind: "idle" } | { kind: "waiting"; url?: string; opened?: boolean } | { kind: "error"; message: string };
+
+/** Lien de connexion à copier quand le navigateur ne s'ouvre pas (Linux sans navigateur par défaut…). */
+function LoginLink({ url, opened }: { url: string; opened: boolean }) {
+  const [copied, setCopied] = useState<boolean | null>(null);
+  const copy = () =>
+    navigator.clipboard.writeText(url).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  return (
+    <div className="flex flex-col items-center gap-2 text-center text-xs text-muted-foreground">
+      <p>{opened ? "Le navigateur ne s'est pas ouvert ? Copie le lien et colle-le dans ton navigateur." : "Ton navigateur ne s'est pas ouvert : copie ce lien et colle-le dans ton navigateur."}</p>
+      <button type="button" onClick={() => void copy()} className={secondaryButton}>
+        {copied ? <Check className="size-4" aria-hidden /> : <Copy className="size-4" aria-hidden />}
+        {copied ? "Lien copié" : "Copier le lien"}
+      </button>
+      {copied === false && <p className="w-full truncate rounded-md border border-border bg-sunken px-3 py-2 font-mono select-text">{url}</p>}
+    </div>
+  );
+}
 
 /** Premier lancement : trois étapes, dans cet ordre. */
 export const ALL_STEPS = ["Comptes", "Importer", "Terminé"] as const;
@@ -153,7 +173,12 @@ export function OnboardingAccounts({ standalone = false, steps, accounts, login,
         </button>
 
         <div className="min-h-10" aria-live="polite">
-          {login.kind === "waiting" && <p className="text-center text-xs text-muted-foreground">Termine la connexion dans l'onglet qui vient de s'ouvrir, puis reviens ici.</p>}
+          {login.kind === "waiting" && (
+            <div className="flex flex-col gap-3">
+              {login.opened !== false && <p className="text-center text-xs text-muted-foreground">Termine la connexion dans l'onglet qui vient de s'ouvrir, puis reviens ici.</p>}
+              {login.url && <LoginLink url={login.url} opened={login.opened !== false} />}
+            </div>
+          )}
           {login.kind === "error" && (
             <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-[13px] leading-snug text-error">
               {login.message}

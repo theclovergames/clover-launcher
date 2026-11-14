@@ -58,6 +58,10 @@ sentry = { version = "0.49", default-features = false, features = ["backtrace", 
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_Packaging_Appx", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 windows = { version = "0.61", features = ["ApplicationModel", "ApplicationModel_Activation", "Foundation", "Win32_Graphics_Dxgi"] }
 
+# Lanceurs du navigateur (auth.rs), déjà tirée par tauri-plugin-opener.
+[target.'cfg(target_os = "linux")'.dependencies]
+open = "5"
+
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1
