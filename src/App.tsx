@@ -792,6 +792,7 @@ export default function App() {
   // ── Comptes ──
   const addAccount = async () => {
     setLogin({ kind: "waiting" });
+    const stop = await listen<{ url: string; opened: boolean }>("login-url", ({ payload }) => setLogin({ kind: "waiting", ...payload }));
     try {
       const added = await api.login();
       await refreshStored();
@@ -799,6 +800,8 @@ export default function App() {
       setLogin({ kind: "idle" });
     } catch (reason) {
       setLogin({ kind: "error", message: String(reason) });
+    } finally {
+      stop();
     }
   };
 

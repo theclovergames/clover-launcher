@@ -13,7 +13,8 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -144,9 +145,9 @@ pub async fn login(app: &AppHandle) -> Result<Session> {
         .append_pair("code_challenge_method", "S256")
         .append_pair("state", &state)
         .append_pair("prompt", "select_account");
-    app.opener()
-        .open_url(url.as_str(), None::<&str>)
-        .map_err(|e| AuthError::Io(std::io::Error::other(e.to_string())))?;
+    // Le lien part aussi à l'interface : si rien ne s'ouvre, le joueur peut le copier.
+    let opened = open_browser(app, url.as_str()).await;
+    let _ = app.emit("login-url", json!({ "url": url.as_str(), "opened": opened }));
 
     let code = tokio::time::timeout(LOGIN_TIMEOUT, wait_for_code(&listener, &state))
         .await
@@ -162,6 +163,59 @@ pub async fn login(app: &AppHandle) -> Result<Session> {
     ])
     .await?;
     open_session(tokens).await
+}
+
+/// Ouvre la page de connexion dans le navigateur ; `false` si aucun n'a pu être lancé.
+#[cfg(not(target_os = "linux"))]
+async fn open_browser(app: &AppHandle, url: &str) -> bool {
+    app.opener().open_url(url, None::<&str>).inspect_err(|e| eprintln!("[auth] navigateur non ouvert : {e}")).is_ok()
+}
+
+/// Linux : le plugin lance `xdg-open` sans attendre son code de sortie (échec muet quand aucun
+/// navigateur n'est réglé) et lui passe l'environnement de l'AppImage (GTK, GIO, `XDG_DATA_DIRS`
+/// pointés vers ses bibliothèques), qui fait échouer le navigateur. On essaie chaque lanceur avec
+/// un environnement nettoyé, jusqu'au premier qui réussit.
+#[cfg(target_os = "linux")]
+async fn open_browser(_app: &AppHandle, url: &str) -> bool {
+    use std::process::Stdio;
+    let appdir = std::env::var("APPDIR").ok().filter(|dir| dir.starts_with('/') && dir.len() > 1);
+    for mut command in open::commands(url) {
+        if let Some(appdir) = &appdir {
+            for (key, value) in std::env::vars_os() {
+                let Some(value) = value.to_str() else { continue };
+                match without_appdir(value, appdir) {
+                    Some(kept) if kept == value => {}
+                    Some(kept) => {
+                        command.env(key, kept);
+                    }
+                    None => {
+                        command.env_remove(key);
+                    }
+                }
+            }
+        }
+        command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        let Ok(mut child) = tokio::process::Command::from(command).spawn() else { continue };
+        // Lanceur toujours actif après 5 s : il attend la fermeture du navigateur, donc ouvert.
+        match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+            Ok(Ok(status)) if !status.success() => eprintln!("[auth] lanceur en échec : {status}"),
+            Ok(Err(error)) => eprintln!("[auth] lanceur en échec : {error}"),
+            _ => return true,
+        }
+    }
+    false
+}
+
+/// Valeur de variable (liste séparée par `:`) sans les chemins de l'AppImage ; `None` s'il ne
+/// reste rien.
+#[cfg(any(target_os = "linux", test))]
+fn without_appdir(value: &str, appdir: &str) -> Option<String> {
+    let inside = |entry: &str| entry == appdir || entry.starts_with(&format!("{}/", appdir.trim_end_matches('/')));
+    if !value.split(':').any(inside) {
+        return Some(value.to_owned());
+    }
+    let kept: Vec<&str> = value.split(':').filter(|entry| !entry.is_empty() && !inside(entry)).collect();
+    (!kept.is_empty()).then(|| kept.join(":"))
 }
 
 /// Rouvre la session d'un compte : jeton Minecraft encore valable, sinon renouvellement à partir
@@ -561,6 +615,18 @@ fn xsts_message(code: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strips_appimage_paths_from_environment() {
+        let appdir = "/tmp/.mount_CloverXyz";
+        assert_eq!(without_appdir("/usr/share:/usr/local/share", appdir).as_deref(), Some("/usr/share:/usr/local/share"));
+        assert_eq!(without_appdir("/tmp/.mount_CloverXyz/usr/share:/usr/share", appdir).as_deref(), Some("/usr/share"));
+        assert_eq!(without_appdir("/tmp/.mount_CloverXyz/usr/lib/gtk-3.0", appdir), None);
+        assert_eq!(without_appdir("/tmp/.mount_CloverXyz", appdir), None);
+        // Préfixe commun sans être dans le dossier : gardé.
+        assert_eq!(without_appdir("/tmp/.mount_CloverXyzOther/bin", appdir).as_deref(), Some("/tmp/.mount_CloverXyzOther/bin"));
+        assert_eq!(without_appdir("x11", appdir).as_deref(), Some("x11"));
+    }
 
     /// Retour de Microsoft sur la redirection loopback : seul un `state` identique rend le code.
     #[tokio::test]
