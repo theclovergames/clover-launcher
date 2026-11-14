@@ -10,7 +10,7 @@ import { SearchField } from "@/components/SearchField";
 import { Tabs } from "@/components/Tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { primaryButton, secondaryButton } from "@/lib/buttons";
+import { countBadge, primaryButton, secondaryButton } from "@/lib/buttons";
 import { CATEGORIES, CONTENT_KINDS, type ContentKind, installKey, KIND_ORDER, kindAllowed, LOADER_FILTERS, sortsFor } from "@/lib/content-kinds";
 import { opensWorldsDirectly, preferredModpackVersion } from "@/lib/game-versions";
 import { modLoader } from "@/lib/instances";
@@ -569,7 +569,7 @@ function Filters({ kind, filters, onChange, instanceLoader, minecraft, onClearMi
             <button type="button" className={cn(secondaryButton, "h-8")}>
               <SlidersHorizontal className="size-3.5" aria-hidden />
               Catégories
-              {others.length > 0 && <span className="rounded-full bg-accent px-1.5 font-pixel text-[11px] text-accent-foreground">{others.length}</span>}
+              {others.length > 0 && <span className={cn(countBadge, "bg-accent text-accent-foreground")}>{others.length}</span>}
             </button>
           </PopoverTrigger>
           <PopoverContent align="start" className="max-h-[min(420px,70vh)] w-80 overflow-y-auto">

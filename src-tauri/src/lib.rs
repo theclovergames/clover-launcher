@@ -1,17 +1,21 @@
 mod auth;
+mod badge;
 mod crash;
 mod discover;
 mod game;
 mod history;
 mod import;
 mod instances;
+mod leaderboard;
 mod location;
 mod machine;
+mod messages;
 mod msix;
 mod notifications;
 mod player_name;
 mod profile;
 mod presence;
+mod shop;
 mod shortcut;
 mod site;
 mod skins;
@@ -21,6 +25,7 @@ mod steam;
 mod storage;
 mod store;
 mod update;
+mod weather;
 #[cfg(windows)]
 mod tray_popup;
 
@@ -46,11 +51,60 @@ use tokio::sync::Mutex;
 const MINIMIZED_ARG: &str = "--minimized";
 
 /// Session du compte actif. Le jeton Minecraft reste côté Rust ; l'interface ne voit que le profil.
+/// Le second verrou fait passer un seul renouvellement du jeton à la fois et garde l'heure du
+/// dernier échec.
 #[derive(Default)]
-struct CurrentSession(Mutex<Option<auth::Session>>);
+struct CurrentSession(Mutex<Option<auth::Session>>, Mutex<Option<std::time::Instant>>);
+
+/// Délai avant de retenter un renouvellement manqué : `login_with_xbox` répond vite HTTP 429.
+const RENEW_RETRY: std::time::Duration = std::time::Duration::from_secs(300);
+
+impl CurrentSession {
+    /// Session du compte actif, jeton Minecraft renouvelé s'il arrive à expiration : un launcher
+    /// resté ouvert plus d'un jour ne lance pas le jeu avec un jeton périmé. Si le renouvellement
+    /// échoue (hors ligne), la session en mémoire sert telle quelle.
+    pub(crate) async fn fresh(&self) -> Option<auth::Session> {
+        let session = self.0.lock().await.clone()?;
+        if session.is_fresh() {
+            return Some(session);
+        }
+        let mut failed = self.1.lock().await;
+        // Renouvelée par un autre appel pendant l'attente du verrou, ou compte changé.
+        let session = self.0.lock().await.clone()?;
+        if session.is_fresh() || failed.is_some_and(|at| at.elapsed() < RENEW_RETRY) {
+            return Some(session);
+        }
+        match auth::restore(&session.profile.uuid).await {
+            Ok(Some(renewed)) => {
+                *failed = None;
+                let mut current = self.0.lock().await;
+                if current.as_ref().is_some_and(|s| s.profile.uuid == renewed.profile.uuid) {
+                    *current = Some(renewed.clone());
+                }
+                Some(renewed)
+            }
+            outcome => {
+                eprintln!("[auth] jeton non renouvelé : {}", outcome.err().map_or("le compte doit se reconnecter".to_owned(), |e| e.to_string()));
+                *failed = Some(std::time::Instant::now());
+                Some(session)
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 struct LaunchGate(Mutex<()>);
+
+/// Un changement de compte à la fois : sans lui, deux bascules simultanées peuvent laisser le
+/// compte actif enregistré différent de la session en mémoire.
+#[derive(Default)]
+struct AccountSwitch(Mutex<()>);
+
+/// Partie ouverte (par ce launcher ou un précédent) ou lancement en cours : pas de mise à jour du
+/// launcher, qui le fermerait en plein suivi de la partie.
+fn game_busy(app: &AppHandle) -> bool {
+    app.state::<game::games::Games>().any_running() || app.state::<LaunchGate>().0.try_lock().is_err() || instances::managed_game_running(&app.state::<AppState>().root)
+}
 
 struct TrayMenu {
     _menu: Menu<tauri::Wry>,
@@ -173,7 +227,8 @@ fn get_stored(state: State<'_, AppState>) -> store::Stored {
 
 /// Rouvre la session du compte actif (et reprend le compte de la toute première version).
 #[tauri::command]
-async fn restore_session(state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>) -> Result<Option<auth::Profile>, String> {
+async fn restore_session(state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>, switch: State<'_, AccountSwitch>) -> Result<Option<auth::Profile>, String> {
+    let _switch = switch.0.lock().await;
     let active = state.snapshot().active_account;
     let session = match active {
         Some(uuid) => auth::restore(&uuid).await,
@@ -192,8 +247,10 @@ async fn restore_session(state: State<'_, AppState>, current: State<'_, CurrentS
 
 /// Ajoute un compte. Le premier ajouté devient le compte actif.
 #[tauri::command]
-async fn login(app: AppHandle, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>) -> Result<auth::Profile, String> {
+async fn login(app: AppHandle, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>, switch: State<'_, AccountSwitch>) -> Result<auth::Profile, String> {
     let session = auth::login(&app).await.inspect_err(|e| eprintln!("[auth] échec de la connexion : {e}")).map_err(|e| e.to_string())?;
+    // Après la fenêtre de connexion, qui peut rester ouverte longtemps : seule l'activation est gardée.
+    let _switch = switch.0.lock().await;
     let profile = session.profile.clone();
     eprintln!("[auth] connecté : {} ({})", profile.name, profile.uuid);
     let active = state.update(|stored| {
@@ -207,7 +264,8 @@ async fn login(app: AppHandle, state: State<'_, AppState>, current: State<'_, Cu
 }
 
 #[tauri::command]
-async fn use_account(uuid: String, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>) -> Result<auth::Profile, String> {
+async fn use_account(uuid: String, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>, switch: State<'_, AccountSwitch>) -> Result<auth::Profile, String> {
+    let _switch = switch.0.lock().await;
     let session = auth::restore(&uuid).await.map_err(|e| e.to_string())?.ok_or("Ce compte doit se reconnecter.")?;
     state.update(|stored| stored.active_account = Some(uuid))?;
     let profile = session.profile.clone();
@@ -217,7 +275,8 @@ async fn use_account(uuid: String, state: State<'_, AppState>, current: State<'_
 
 /// Retire un compte ; renvoie le profil du compte actif qui le remplace, s'il y en a un.
 #[tauri::command]
-async fn remove_account(uuid: String, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>) -> Result<Option<auth::Profile>, String> {
+async fn remove_account(uuid: String, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>, switch: State<'_, AccountSwitch>) -> Result<Option<auth::Profile>, String> {
+    let _switch = switch.0.lock().await;
     auth::logout(&uuid).map_err(|e| e.to_string())?;
     let active = state.update(|stored| {
         stored.remove_account(&uuid);
@@ -235,6 +294,7 @@ async fn remove_account(uuid: String, state: State<'_, AppState>, current: State
 /// Enregistre les réglages et applique ceux qui agissent hors de l'interface.
 #[tauri::command]
 async fn save_settings(settings: store::Settings, app: AppHandle, state: State<'_, AppState>, presence: State<'_, Presence>) -> Result<(), String> {
+    game::launch::validate_java_args(&settings.java_args)?;
     let previous = state.update(|stored| std::mem::replace(&mut stored.settings, settings.clone()))?;
     crash::set(settings.crash_reports, settings.beta_channel);
     if previous.discord_presence != settings.discord_presence {
@@ -298,7 +358,7 @@ async fn site_feed() -> site::Feed {
     site::feed().await
 }
 
-/// Page Actualités : blog de Clover Games et annonces officielles de Minecraft.
+/// Page Actualités : blog, changelog et annonces officielles de Minecraft.
 #[tauri::command]
 async fn news_page() -> site::NewsPage {
     site::news_page().await
@@ -308,6 +368,12 @@ async fn news_page() -> site::NewsPage {
 #[tauri::command]
 async fn blog_article(slug: String) -> Result<site::BlogArticle, String> {
     site::blog_article(&slug).await
+}
+
+/// Note complète du changelog de Clover Games.
+#[tauri::command]
+async fn changelog_article(slug: String) -> Result<site::ChangelogArticle, String> {
+    site::changelog_article(&slug).await
 }
 
 /// Note de version Minecraft complète.
@@ -463,8 +529,8 @@ async fn check_update(app: AppHandle, pending: State<'_, update::PendingUpdate>)
 /// Installe la version trouvée par `check_update` puis relance le launcher. Pas pendant une
 /// partie : le launcher fermé, la console et le suivi des serveurs rejoints s'arrêteraient.
 #[tauri::command]
-async fn install_update(app: AppHandle, pending: State<'_, update::PendingUpdate>, games: State<'_, game::games::Games>) -> Result<(), String> {
-    if games.any_running() {
+async fn install_update(app: AppHandle, pending: State<'_, update::PendingUpdate>) -> Result<(), String> {
+    if game_busy(&app) {
         return Err("Ferme Minecraft avant de mettre à jour le launcher.".into());
     }
     update::install(&app, &pending).await.inspect_err(|e| eprintln!("[update] {e}"))
@@ -787,38 +853,43 @@ async fn apply_skin(
     state: State<'_, AppState>,
     current: State<'_, CurrentSession>,
 ) -> Result<auth::Profile, String> {
-    let mut guard = current.0.lock().await;
-    let session = guard.as_ref().ok_or("Aucun compte connecté.")?;
-    let updated = skins::apply(session, &texture, &model, cape.as_deref()).await.map_err(|e| e.to_string())?;
+    // Pas de verrou pendant l'envoi : un réseau lent ne bloque pas « Jouer » ni le site.
+    let session = current.fresh().await.ok_or("Aucun compte connecté.")?;
+    let updated = skins::apply(&session, &texture, &model, cape.as_deref()).await.map_err(|e| e.to_string())?;
     let profile = updated.profile.clone();
     state.update(|stored| stored.upsert_account(account_ref(&profile)))?;
-    *guard = Some(updated);
+    let mut guard = current.0.lock().await;
+    if guard.as_ref().is_some_and(|s| s.profile.uuid == profile.uuid) {
+        *guard = Some(updated);
+    }
     Ok(profile)
 }
 
 /// Pseudo du compte actif : changement possible maintenant, sinon date du dernier.
 #[tauri::command]
 async fn name_change_info(current: State<'_, CurrentSession>) -> Result<player_name::NameChange, String> {
-    let session = current.0.lock().await.clone().ok_or("Aucun compte connecté.")?;
+    let session = current.fresh().await.ok_or("Aucun compte connecté.")?;
     player_name::change_info(&session).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn name_availability(name: String, current: State<'_, CurrentSession>) -> Result<player_name::Availability, String> {
-    let session = current.0.lock().await.clone().ok_or("Aucun compte connecté.")?;
+    let session = current.fresh().await.ok_or("Aucun compte connecté.")?;
     player_name::availability(&session, &name).await.map_err(|e| e.to_string())
 }
 
 /// Change le pseudo du compte actif ; un jeu déjà ouvert garde l'ancien jusqu'à sa relance.
 #[tauri::command]
 async fn change_name(name: String, state: State<'_, AppState>, current: State<'_, CurrentSession>, presence: State<'_, Presence>) -> Result<auth::Profile, String> {
-    let mut guard = current.0.lock().await;
-    let session = guard.as_ref().ok_or("Aucun compte connecté.")?;
-    let updated = player_name::change(session, &name).await.map_err(|e| e.to_string())?;
+    let session = current.fresh().await.ok_or("Aucun compte connecté.")?;
+    let updated = player_name::change(&session, &name).await.map_err(|e| e.to_string())?;
     let profile = updated.profile.clone();
     eprintln!("[auth] pseudo changé : {} ({})", profile.name, profile.uuid);
     state.update(|stored| stored.upsert_account(account_ref(&profile)))?;
-    *guard = Some(updated);
+    let mut guard = current.0.lock().await;
+    if guard.as_ref().is_some_and(|s| s.profile.uuid == profile.uuid) {
+        *guard = Some(updated);
+    }
     drop(guard);
     presence.set_player(Some(presence::Player { uuid: profile.uuid.clone(), name: profile.name.clone() })).await;
     Ok(profile)
@@ -837,7 +908,7 @@ async fn play(
 ) -> Result<(), game::GameError> {
     let gate = app.state::<LaunchGate>();
     let _guard = gate.0.try_lock().map_err(|_| game::GameError::AlreadyRunning)?;
-    let session = current.0.lock().await.clone().ok_or(game::GameError::NotSignedIn)?;
+    let session = current.fresh().await.ok_or(game::GameError::NotSignedIn)?;
     let stored = state.snapshot();
     let instance = instances::resolve(&stored, instance_id.as_deref())?;
     // Plusieurs instances jouent ensemble, jamais deux dans le même dossier de jeu.
@@ -1008,6 +1079,7 @@ pub fn run() {
         )
         .manage(CurrentSession::default())
         .manage(LaunchGate::default())
+        .manage(AccountSwitch::default())
         .manage(shortcut::LaunchRequest::from_env())
         .manage(import::Detected::default())
         .manage(Presence::default())
@@ -1082,6 +1154,7 @@ pub fn run() {
             }
             app.manage(history);
             app.manage(games);
+            app.manage(messages::InboxWatch::default());
 
             // Navigation and play reuse the main window's actions; left click still opens it.
             let open = MenuItem::with_id(app, "open", "Ouvrir le Clover Launcher", true, None::<&str>)?;
@@ -1190,6 +1263,7 @@ pub fn run() {
             tray_state,
             tray_menu_action,
             hide_tray_menu,
+            badge::set_unread_badge,
             restore_session,
             login,
             use_account,
@@ -1200,11 +1274,39 @@ pub fn run() {
             reset_recommended,
             notifications::notifications,
             profile::player_stats,
+            profile::launcher_rewards,
+            profile::player_profile,
+            leaderboard::leaderboard,
+            shop::shop_catalog,
+            shop::shop_product,
+            shop::shop_account,
+            shop::shop_checkout,
+            shop::shop_pay_credits,
+            shop::shop_pay_pieces,
             notifications::mark_notifications_read,
             notifications::system_notification,
+            messages::message_conversations,
+            messages::watch_messages,
+            messages::stop_watching_messages,
+            messages::set_availability,
+            messages::message_thread,
+            messages::send_message,
+            messages::send_gif,
+            messages::edit_message,
+            messages::react_message,
+            messages::delete_message,
+            messages::send_typing,
+            messages::mark_messages_read,
+            messages::conversation_state,
+            messages::report_message,
+            messages::search_gifs,
+            messages::send_friend_request,
+            messages::answer_friend_request,
+            messages::remove_friend,
             location::pick_game_dir,
             location::move_game_dir,
             steam::steam_status,
+            weather::weather,
             steam::steam_add,
             steam::steam_remove,
             get_catalogue,
@@ -1212,6 +1314,7 @@ pub fn run() {
             site_feed,
             news_page,
             blog_article,
+            changelog_article,
             minecraft_article,
             system_info,
             storage_usage,
@@ -1255,6 +1358,8 @@ pub fn run() {
             instances::list_instances,
             instances::install_modpack,
             instances::modpack_versions,
+            instances::modpack_update,
+            instances::update_modpack,
             instances::import_modpack_file,
             install_modrinth_content,
             instances::instance_content,

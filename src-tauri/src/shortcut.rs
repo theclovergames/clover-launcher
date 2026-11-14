@@ -112,13 +112,27 @@ pub(crate) fn file_name(name: &str) -> String {
     clean.trim().trim_end_matches('.').to_owned()
 }
 
+/// Chaîne PowerShell entre apostrophes. PowerShell prend aussi `‘ ’ ‚ ‛` pour des apostrophes :
+/// chacune est doublée, sinon un nom comme « L’Aventure » fermerait la chaîne.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn powershell_quote(text: &str) -> String {
+    let mut quoted = String::from("'");
+    for c in text.chars() {
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            quoted.push(c);
+        }
+        quoted.push(c);
+    }
+    quoted.push('\'');
+    quoted
+}
+
 #[cfg(windows)]
 fn write(desktop: &Path, name: &str, executable: &Path, id: &str, title: &str) -> std::io::Result<PathBuf> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let path = desktop.join(format!("{name}.lnk"));
-    // Chaînes PowerShell entre apostrophes : seule l'apostrophe se double.
-    let quote = |text: &str| format!("'{}'", text.replace('\'', "''"));
+    let quote = powershell_quote;
     let directory = executable.parent().unwrap_or(executable);
     let script = format!(
         "$s = (New-Object -ComObject WScript.Shell).CreateShortcut({}); $s.TargetPath = {}; $s.Arguments = {}; $s.WorkingDirectory = {}; $s.IconLocation = {}; $s.Description = {}; $s.Save()",
@@ -171,6 +185,23 @@ fn desktop_entry(title: &str, executable: &Path, id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn powershell_quote_doubles_every_single_quote() {
+        assert_eq!(powershell_quote("L’Aventure"), "'L’’Aventure'");
+        assert_eq!(powershell_quote("x’;Start-Process calc;’"), "'x’’;Start-Process calc;’’'");
+        assert_eq!(powershell_quote("a'b‘c‚d‛e"), "'a''b‘‘c‚‚d‛‛e'");
+    }
+
+    /// PowerShell relit le nom tel quel, sans exécuter ce qui suit une apostrophe.
+    #[cfg(windows)]
+    #[test]
+    fn powershell_reads_back_quoted_names() {
+        let name = "L’Aventure ‘x’;Write-Output piège;‚‛'";
+        let command = format!("[Console]::OutputEncoding = [Text.Encoding]::UTF8; Write-Output {}", powershell_quote(name));
+        let output = std::process::Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &command]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), name);
+    }
 
     #[test]
     fn reads_only_a_well_formed_instance_request() {

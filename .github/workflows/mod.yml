@@ -23,12 +23,13 @@ jobs:
         with:
           distribution: temurin
           java-version: 25
-      - run: ./gradlew build --no-daemon
-      - name: Empreinte du jar
+      # Toutes les versions de Minecraft, copiées dans src-tauri/client-mods/ (embarquées par le launcher).
+      - run: ./gradlew launcherJars --no-daemon
+      - name: Empreinte des jar
         run: |
-          cd build/libs
+          cd ../src-tauri/client-mods
           for jar in *.jar; do sha512sum "$jar" | tee "$jar.sha512"; done
       - uses: actions/upload-artifact@v5
         with:
           name: cloverclient
-          path: mod/build/libs/*
+          path: src-tauri/client-mods/*

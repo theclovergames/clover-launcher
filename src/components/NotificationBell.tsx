@@ -1,6 +1,7 @@
 import { Bell, CloudOff, Crown, Gift, Link2, type LucideIcon, Megaphone, ShoppingBag, Star, Trophy, Vote } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { countBadge, iconButton } from "@/lib/buttons";
 import { cn } from "@/lib/utils";
 import type { LauncherNotification, NotificationKind } from "@/types";
 
@@ -49,11 +50,11 @@ export function NotificationBell({ items, onOpen, onReadAll, error, defaultOpen 
           type="button"
           aria-label={unread > 0 ? `Notifications, ${unread} non lue${unread > 1 ? "s" : ""}` : "Notifications"}
           title="Notifications"
-          className="relative grid size-9 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground data-[state=open]:bg-secondary data-[state=open]:text-accent"
+          className={cn(iconButton, "data-[state=open]:text-accent")}
         >
           <Bell className="size-[18px]" aria-hidden />
           {unread > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 grid h-[17px] min-w-[17px] place-items-center rounded-full border-2 border-sunken bg-destructive px-1 font-pixel text-[10px] leading-none text-white">
+            <span className={cn(countBadge, "absolute -top-2 -right-2")}>
               {unread > 9 ? "9+" : unread}
             </span>
           )}

@@ -3,9 +3,11 @@ import type { ReactNode } from "react";
 
 import { HeroBackdrop } from "@/components/Backdrop";
 import { PlayerHead } from "@/components/PlayerHead";
+import { Tabs } from "@/components/Tabs";
 import { Switch } from "@/components/ui/switch";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
 import { cn } from "@/lib/utils";
+import { versionImage } from "@/lib/version-art";
 import type { Account } from "@/screens/SettingsScreen";
 import type { DetectedInstance, ImportItem, ImportScan } from "@/types";
 
@@ -186,11 +188,25 @@ export const DEFAULT_IMPORT: Record<ImportItem, boolean> = {
   worlds: false,
 };
 
+/** Ce que devient une installation importée : une nouvelle instance, ou un complément de Clover Games. */
+export type ImportMode = "instance" | "clover";
+
+/**
+ * Choix d'office : un modpack ou une instance moddée devient une nouvelle instance, le reste
+ * (vanilla, loader non repris) rejoint Clover Games. `fromInstances` : import ouvert depuis les
+ * Instances, où l'on vient chercher une instance.
+ */
+export function defaultImportMode(instance: DetectedInstance, fromInstances: boolean): ImportMode {
+  if (fromInstances) return "instance";
+  return !unsupported(instance) && instance.loader !== null && instance.loaderMods.length > 0 ? "instance" : "clover";
+}
+
 type ImportProps = {
-  /** Depuis les paramètres : pas de suivi d'étapes, « Fermer » ramène au launcher. */
+  /** Depuis les paramètres ou les Instances : pas de suivi d'étapes, « Fermer » ramène au launcher. */
   standalone?: boolean;
-  /** `instance` (depuis les Instances) : chaque installation devient une nouvelle instance. */
-  target?: "clover" | "instance";
+  /** Ce que devient l'installation choisie. */
+  mode: ImportMode;
+  onMode: (mode: ImportMode) => void;
   /** `null` pendant la recherche. */
   instances: DetectedInstance[] | null;
   /** Avancement de la recherche, animé tant que `instances` est `null`. */
@@ -201,14 +217,15 @@ type ImportProps = {
   onChoice: (item: ImportItem, value: boolean) => void;
   /** Instance en cours de copie et avancement de 0 à 1. */
   importing: { id: string; ratio: number } | null;
-  imported: string[];
+  /** Installations déjà importées, et comment. */
+  imported: { id: string; mode: ImportMode }[];
   onImport: () => void;
   onBack: () => void;
   onContinue: () => void;
 };
 
 export function OnboardingImport(props: ImportProps) {
-  const { standalone = false, target = "clover", selectedId, imported, importing } = props;
+  const { standalone = false, selectedId, imported, importing } = props;
   const instances = props.instances ?? [];
   const selected = instances.find((instance) => instance.id === selectedId) ?? null;
   const launchers = [...new Set(instances.map((instance) => instance.launcher))];
@@ -219,7 +236,7 @@ export function OnboardingImport(props: ImportProps) {
       footer={
         standalone ? (
           <>
-            <p className="text-xs text-muted-foreground">{target === "instance" ? "Chaque installation devient une instance, dans son propre dossier." : "Copié dans l'instance Clover Games."}</p>
+            <span />
             <button type="button" onClick={props.onContinue} disabled={importing !== null} className={primaryButton}>
               Fermer
             </button>
@@ -238,12 +255,12 @@ export function OnboardingImport(props: ImportProps) {
       }
     >
       <div className="flex flex-col gap-2">
-        <h1 className="font-display text-[26px] leading-none">{target === "instance" ? "Importer une instance" : "Reprendre tes réglages"}</h1>
+        <h1 className="font-display text-[26px] leading-none">Importer d'un autre launcher</h1>
         <p className="text-sm leading-relaxed text-muted-foreground" aria-live="polite">
           {props.instances === null
             ? "Recherche des autres launchers Minecraft sur cet ordinateur…"
             : instances.length > 0
-            ? `${instances.length} installation${instances.length > 1 ? "s" : ""} trouvée${instances.length > 1 ? "s" : ""} sur cet ordinateur. Choisis-en une, puis ce que tu veux reprendre${target === "instance" ? " dans sa nouvelle instance" : ""}. Tout est copié : les autres launchers ne sont pas modifiés.`
+            ? `${instances.length} installation${instances.length > 1 ? "s" : ""} trouvée${instances.length > 1 ? "s" : ""} sur cet ordinateur. Un modpack ou une instance moddée devient une nouvelle instance ; tes réglages, packs et serveurs peuvent aussi rejoindre Clover Games. Tout est copié : les autres launchers ne sont pas modifiés.`
             : `Aucun autre launcher Minecraft trouvé sur cet ordinateur.${standalone ? "" : " Tu peux passer cette étape."}`}
         </p>
       </div>
@@ -265,7 +282,7 @@ export function OnboardingImport(props: ImportProps) {
                     .filter((instance) => instance.launcher === launcher)
                     .map((instance) => {
                       const active = instance.id === selectedId;
-                      const done = imported.includes(instance.id);
+                      const done = imported.find((entry) => entry.id === instance.id);
                       return (
                         <li key={instance.id}>
                           <button
@@ -277,6 +294,7 @@ export function OnboardingImport(props: ImportProps) {
                               active ? "border-accent bg-accent/10" : "border-border bg-[#17150f] hover:bg-secondary",
                             )}
                           >
+                            <InstallationArt instance={instance} className="size-8 rounded-md" />
                             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                               <span className="truncate text-sm font-semibold">{instance.name}</span>
                               <span className="text-[11px] text-muted-foreground">
@@ -287,7 +305,7 @@ export function OnboardingImport(props: ImportProps) {
                             {done && (
                               <span className="flex animate-in items-center gap-1 text-[11px] font-bold text-primary duration-200 zoom-in-50">
                                 <Check className="size-3.5" strokeWidth={3} aria-hidden />
-                                {target === "instance" ? "Créée" : "Importé"}
+                                {done.mode === "instance" ? "Créée" : "Importé"}
                               </span>
                             )}
                           </button>
@@ -447,6 +465,11 @@ function ImportSearch({ scan }: { scan: ImportScan }) {
   );
 }
 
+/** Logo du modpack de l'installation, sinon l'art de sa version de Minecraft, comme dans les Instances. */
+function InstallationArt({ instance, className }: { instance: DetectedInstance; className: string }) {
+  return <img src={instance.icon ?? versionImage(instance.minecraft ?? "")} alt="" draggable={false} className={cn("shrink-0 object-cover", className)} />;
+}
+
 /** Loaders des instances Clover : une installation sous un autre (Quilt) n'en devient pas une. */
 const INSTANCE_LOADERS = ["Fabric", "Quilt", "Forge", "NeoForge"];
 
@@ -457,11 +480,11 @@ function unsupported(instance: DetectedInstance): string | null {
   return null;
 }
 
-function ImportDetails({ instance, target = "clover", choices, onChoice, importing, imported, onImport }: ImportProps & { instance: DetectedInstance }) {
+function ImportDetails({ instance, mode, onMode, choices, onChoice, importing, imported, onImport }: ImportProps & { instance: DetectedInstance }) {
   const busy = importing?.id === instance.id;
-  const done = imported.includes(instance.id);
+  const done = imported.some((entry) => entry.id === instance.id && entry.mode === mode);
   const items = ITEMS.filter((item) => item.count(instance) > 0);
-  const asInstance = target === "instance";
+  const asInstance = mode === "instance";
   const blocked = asInstance ? unsupported(instance) : null;
   // Une nouvelle instance se crée même sans rien copier.
   const nothing =
@@ -473,6 +496,7 @@ function ImportDetails({ instance, target = "clover", choices, onChoice, importi
   return (
     <div className="flex flex-col gap-3.5">
       <div className="flex items-start gap-4">
+        <InstallationArt instance={instance} className="size-12 rounded-lg" />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <h2 className="text-base font-bold">{instance.name}</h2>
           <p className="truncate font-mono text-[11px] text-muted-foreground select-text" title={instance.path}>
@@ -504,12 +528,22 @@ function ImportDetails({ instance, target = "clover", choices, onChoice, importi
         )}
       </div>
 
-      {asInstance && (
-        <p className={cn("text-xs leading-snug", blocked ? "text-error" : "text-muted-foreground")}>
-          {blocked ??
-            `Nouvelle instance ${instance.loader ?? "Vanilla"} ${instance.minecraft}, dans un dossier séparé${instance.loader ? `, avec ${instance.loaderVersion ? `${instance.loader} ${instance.loaderVersion}` : `la version conseillée de ${instance.loader}`}` : ""}.`}
-        </p>
-      )}
+      <Tabs<ImportMode>
+        label="Importer comme"
+        value={mode}
+        onChange={onMode}
+        items={[
+          { id: "instance", label: "Nouvelle instance" },
+          { id: "clover", label: "Dans Clover Games" },
+        ]}
+      />
+
+      <p className={cn("text-xs leading-snug", blocked ? "text-error" : "text-muted-foreground")}>
+        {asInstance
+          ? (blocked ??
+            `Nouvelle instance ${instance.loader ?? "Vanilla"} ${instance.minecraft}, dans un dossier séparé${instance.loader ? `, avec ${instance.loaderVersion ? `${instance.loader} ${instance.loaderVersion}` : `la version conseillée de ${instance.loader}`}` : ""}, et le logo du modpack s'il en a un.`)
+          : `Ajouté à l'instance Clover Games, celle du serveur.${instance.content.options && choices.options ? " Ses réglages et touches actuels sont remplacés, une copie est gardée." : ""}`}
+      </p>
 
       <ul className="flex flex-col gap-2">
         {items.map((item) => (

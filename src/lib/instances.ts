@@ -17,9 +17,13 @@ export const ownLoader = (kind: InstanceKind | undefined): kind is "fabric" | "q
 /** Loader qui charge les mods d'une instance : Fabric pour Clover, aucun pour Vanilla. */
 export const modLoader = (kind: InstanceKind): string | null => (ownLoader(kind) ? KINDS[kind].label : kind === "clover" ? "Fabric" : null);
 
+/** Loader et sa version : « Fabric 0.19.5 », Clover compris ; sinon le type, « Vanilla ». */
+export const loaderSummary = (entry: InstanceEntry): string =>
+  entry.loader ? `${modLoader(entry.kind) ?? KINDS[entry.kind].label} ${entry.loader}` : KINDS[entry.kind].label;
+
 /** Ligne de détail : « 1.21.11 · Fabric 0.19.5 ». */
 export function instanceSummary(entry: InstanceEntry): string {
-  return `${entry.minecraft ?? "…"} · ${KINDS[entry.kind].label}${entry.loader ? ` ${entry.loader}` : ""}`;
+  return `${entry.minecraft ?? "…"} · ${loaderSummary(entry)}`;
 }
 
 /** Instance faite pour Clover Games (version et mods du serveur) ; les cartes des modes la lancent toujours. */

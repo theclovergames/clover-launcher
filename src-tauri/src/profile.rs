@@ -1,23 +1,29 @@
-//! Statistiques Clover Games du compte actif pour la page Profil, via `/api/launcher/profile` et la
-//! session du launcher sur le site (`notifications::authorized`). Réponse réduite aux champs
-//! affichés ; un bloc absent ou mal formé reste vide sans casser les autres.
+//! Statistiques Clover Games pour la page Profil (compte actif, `/api/launcher/profile`) et la page
+//! d'un autre joueur (`/api/launcher/players/{pseudo}`), via la session du launcher sur le site
+//! (`notifications::authorized`). Réponse réduite aux champs affichés ; un bloc absent ou mal formé
+//! reste vide sans casser les autres.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::messages::{decode, failure, is_contract_error, is_uuid, site_response};
 use crate::notifications::{authorized, session, SiteTokens};
+use crate::site::lenient;
 use crate::CurrentSession;
-
-/// Accepte un bloc mal formé comme absent : une évolution du site ne vide pas toute la page.
-fn lenient<'de, D: Deserializer<'de>, T: Deserialize<'de>>(deserializer: D) -> Result<Option<T>, D::Error> {
-    Ok(Option::<T>::deserialize(serde_json::Value::deserialize(deserializer)?).ok().flatten())
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Grade {
     pub label: String,
     pub color: String,
+}
+
+/// Grade en jeu : groupe LuckPerms principal, dont l'identifiant choisit le badge livré avec le launcher.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Rank {
+    pub id: String,
+    pub label: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -122,9 +128,15 @@ pub struct PlayerStats {
     #[serde(default, deserialize_with = "lenient")]
     pub grade: Option<Grade>,
     #[serde(default, deserialize_with = "lenient")]
+    pub rank: Option<Rank>,
+    #[serde(default, deserialize_with = "lenient")]
     pub level: Option<Level>,
+    /// Pièces, gagnées en jeu.
     #[serde(default, deserialize_with = "lenient")]
     pub coins: Option<i64>,
+    /// Crédits, achetés en euros ; absent des sites d'avant les deux monnaies.
+    #[serde(default, deserialize_with = "lenient")]
+    pub credits: Option<i64>,
     #[serde(default, deserialize_with = "lenient")]
     pub votes: Option<Votes>,
     #[serde(default, deserialize_with = "lenient")]
@@ -141,7 +153,7 @@ pub struct PlayerStats {
     pub friends: Option<Vec<Friend>>,
 }
 
-fn is_player_name(name: &str) -> bool {
+pub(crate) fn is_player_name(name: &str) -> bool {
     (3..=16).contains(&name.len()) && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
@@ -157,6 +169,15 @@ fn numbers_only(mut stats: PlayerStats) -> PlayerStats {
     if let Some(modes) = &mut stats.modes {
         for mode in modes {
             mode.stats.retain(|_, value| value.is_number() || value.is_null());
+        }
+    }
+    // L'identifiant entre dans le chemin du badge : minuscules, chiffres, `_`, `+` et `-` seulement.
+    if let Some(rank) = &mut stats.rank {
+        let valid_id = (1..=32).contains(&rank.id.len()) && rank.id.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_+-".contains(&byte));
+        if valid_id {
+            rank.label = rank.label.chars().take(32).collect();
+        } else {
+            stats.rank = None;
         }
     }
     if let Some(grade) = &stats.grade {
@@ -176,6 +197,93 @@ pub async fn player_stats(current: State<'_, CurrentSession>, tokens: State<'_, 
     Ok(numbers_only(stats))
 }
 
+/// Récompenses du launcher du compte actif (`/api/launcher/rewards`), versées par le plugin au
+/// premier signal du mod de la journée : cadeau de bienvenue, puis récompense du jour en série.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherRewards {
+    pub welcome: WelcomeReward,
+    pub today: DailyReward,
+    /// Une clef tous les `key_every` jours de série.
+    pub key_every: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WelcomeReward {
+    pub received: bool,
+    pub vip: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DailyReward {
+    pub received: bool,
+    pub streak: u32,
+}
+
+#[tauri::command]
+pub async fn launcher_rewards(current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<LauncherRewards, String> {
+    let session = session(&current).await?;
+    let response = authorized(&tokens, &session, |http, base, token| http.get(format!("{base}/api/launcher/rewards")).bearer_auth(token)).await?;
+    let rewards: LauncherRewards = response.json().await.map_err(|_| "Réponse du site illisible.".to_owned())?;
+    if rewards.key_every == 0 {
+        return Err("Réponse du site illisible.".into());
+    }
+    Ok(rewards)
+}
+
+/// Lien entre le compte actif et un autre joueur.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Relation {
+    #[serde(rename = "self")]
+    Myself,
+    Friend,
+    /// Demande envoyée, en attente.
+    Outgoing,
+    /// Demande reçue, en attente.
+    Incoming,
+    #[serde(other)]
+    None,
+}
+
+/// Profil public d'un joueur : ses statistiques (sans pièces ni amis, présence réservée à ses amis,
+/// filtré par le site) et le lien avec le compte actif.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtherPlayer {
+    pub uuid: String,
+    pub name: String,
+    pub relation: Relation,
+    /// Il accepte les demandes d'amis, et aucune n'est en cours.
+    #[serde(default)]
+    pub can_request: bool,
+    pub stats: PlayerStats,
+}
+
+fn other_player(mut player: OtherPlayer) -> Result<OtherPlayer, String> {
+    player.uuid = player.uuid.to_ascii_lowercase();
+    if !is_uuid(&player.uuid) || !is_player_name(&player.name) {
+        return Err("Réponse du site illisible.".into());
+    }
+    player.stats = numbers_only(player.stats);
+    Ok(player)
+}
+
+/// Profil d'un joueur par son pseudo ; `None` s'il n'est jamais venu sur le serveur.
+#[tauri::command]
+pub async fn player_profile(name: String, current: State<'_, CurrentSession>, tokens: State<'_, SiteTokens>) -> Result<Option<OtherPlayer>, String> {
+    let name = name.trim();
+    if !is_player_name(name) {
+        return Ok(None);
+    }
+    let (status, body) = site_response(&current, &tokens, |http, base| http.get(format!("{base}/api/launcher/players/{name}"))).await?;
+    match status {
+        200..=299 => other_player(decode(&body)?).map(Some),
+        404 if is_contract_error(&body) => Ok(None),
+        _ => Err(failure(status, &body, "Les profils des joueurs ne sont pas encore disponibles dans le launcher.")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,7 +293,7 @@ mod tests {
         let stats: PlayerStats = serde_json::from_str(
             r##"{"schema":1,"linked":true,"grade":{"label":"Gérant","color":"#eab308"},
             "level":{"level":27,"totalXp":216135,"into":3719,"needed":20675,"rank":1},
-            "coins":374,"votes":{"total":34,"month":0},"streak":{"current":4,"best":13},
+            "coins":374,"credits":499,"votes":{"total":34,"month":0},"streak":{"current":4,"best":13},
             "presence":{"firstSeen":1783836549150,"lastSeen":1791292461123,"lastServer":"Lobby","online":null},
             "playtime":{"total":348127,"longest":84092,"joins":909,"servers":[{"id":"Lobby","seconds":180609}]},
             "modes":[{"id":"practice","rank":1,"stats":{"rating":1005,"peakRating":null,"wins":47,"label":"<b>x</b>"}}],
@@ -194,6 +302,7 @@ mod tests {
         .unwrap();
         let stats = numbers_only(stats);
         assert!(stats.linked);
+        assert_eq!((stats.coins, stats.credits), (Some(374), Some(499)));
         assert_eq!(stats.level.as_ref().unwrap().rank, Some(1));
         assert_eq!(stats.playtime.as_ref().unwrap().servers[0].id, "Lobby");
         let mode = &stats.modes.as_ref().unwrap()[0];
@@ -217,6 +326,33 @@ mod tests {
         let stats: PlayerStats = serde_json::from_str(r#"{"linked":false,"grade":{"label":"X","color":"red"},"level":"oops","coins":12}"#).unwrap();
         let stats = numbers_only(stats);
         assert!(stats.level.is_none() && stats.grade.is_none());
-        assert_eq!(stats.coins, Some(12));
+        assert_eq!((stats.coins, stats.credits), (Some(12), None));
+    }
+
+    #[test]
+    fn keeps_only_safe_rank_ids() {
+        let rank = |json: &str| numbers_only(serde_json::from_str::<PlayerStats>(json).unwrap()).rank;
+        assert_eq!(rank(r#"{"rank":{"id":"gerant","label":"Gérant"}}"#).unwrap().label, "Gérant");
+        assert!(rank(r#"{"rank":{"id":"../x","label":"X"}}"#).is_none());
+        assert!(rank(r#"{"rank":{"id":"Légende","label":"X"}}"#).is_none());
+        assert!(rank(r#"{"rank":"oops"}"#).is_none());
+    }
+
+    #[test]
+    fn reads_another_player() {
+        let player: OtherPlayer = serde_json::from_str(
+            r#"{"schema":1,"uuid":"0F3C2B9E-6A1D-4F7E-9B2A-1C3D5E7F9A0B","name":"Kanname","relation":"incoming","canRequest":false,
+            "stats":{"linked":false,"coins":null,"friends":null,"modes":[{"id":"skypvp","rank":4,"stats":{"kills":10,"name":"x"}}]}}"#,
+        )
+        .unwrap();
+        let player = other_player(player).unwrap();
+        assert_eq!(player.uuid, "0f3c2b9e-6a1d-4f7e-9b2a-1c3d5e7f9a0b");
+        assert_eq!(player.relation, Relation::Incoming);
+        assert!(!player.stats.modes.as_ref().unwrap()[0].stats.contains_key("name"));
+        let relation = |json: &str| serde_json::from_str::<Relation>(json).unwrap();
+        assert_eq!(relation(r#""self""#), Relation::Myself);
+        assert_eq!(relation(r#""blocked""#), Relation::None);
+        let bad: OtherPlayer = serde_json::from_str(r#"{"uuid":"x","name":"Kanname","relation":"none","stats":{}}"#).unwrap();
+        assert!(other_player(bad).is_err());
     }
 }

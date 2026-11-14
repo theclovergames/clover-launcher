@@ -1,4 +1,4 @@
-import { Check, FolderInput, FolderOpen, Globe, PackageOpen, PackageSearch, Pin, Plus, Puzzle, Settings2, Trash2 } from "lucide-react";
+import { Check, ChevronDown, FolderInput, FolderOpen, Globe, PackageOpen, PackageSearch, Pin, Plus, Puzzle, Settings2, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { GameButton } from "@/components/GameButton";
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
 import { primaryButton, secondaryButton } from "@/lib/buttons";
-import { groupVersions, versionFamily } from "@/lib/game-versions";
+import { groupVersions, versionFamily, type VersionFamily } from "@/lib/game-versions";
 import { instanceSummary } from "@/lib/instances";
 import { cn } from "@/lib/utils";
 import { versionImage } from "@/lib/version-art";
@@ -46,6 +46,8 @@ type Props = {
   /** Onglet Paramètres de la page d'une instance (réglages propres à l'instance). */
   renderSettings?: (entry: InstanceEntry) => ReactNode;
   onOpenFolder: (id: string, folder: "game" | ContentFolder, world?: string) => void;
+  /** Console de l'instance, ouverte depuis sa page. */
+  onOpenConsole: (id: string) => void;
   /** Dossier de l'instance à la corbeille, puis l'instance retirée de la liste. */
   onDelete: (id: string) => void;
   /** Onglet Mods de la page d'une instance (toutes sauf Vanilla). */
@@ -66,7 +68,9 @@ type Props = {
   onShortcut?: (id: string) => void;
   /** Ouvre Découvrir sur `kind`, pour `instance` ; `world` : monde visé par des datapacks. */
   onSearch: (kind: ContentKind, instance?: string, world?: string) => void;
-  services?: Pick<typeof api, "instanceVersions" | "playHistory" | "instanceContent" | "setContentEnabled" | "trashContent" | "showContent" | "renameWorld">;
+  services?: Pick<typeof api, "instanceVersions" | "playHistory" | "instanceContent" | "setContentEnabled" | "trashContent" | "showContent" | "renameWorld" | "modpackUpdate">;
+  /** Installe une version plus récente du modpack de l'instance. */
+  onUpdateModpack: (id: string, version: string) => Promise<void>;
   /** Noms donnés aux serveurs rejoints, et leur renommage (page d'une instance). */
   serverNames?: Record<string, string>;
   onRenameServer?: (address: string, name: string) => Promise<void>;
@@ -134,8 +138,10 @@ export function InstancesScreen(props: Props) {
           onPlay={() => props.onPlay(page.id)}
           onPlayWorld={(world) => props.onPlayWorld(page.id, world)}
           onExport={page.kind === "clover" ? undefined : () => setExporting(page)}
+          onUpdateModpack={page.kind === "clover" || page.kind === "vanilla" ? undefined : (version) => props.onUpdateModpack(page.id, version)}
           onStop={(force) => props.onStop(page.id, force)}
           onOpenFolder={(folder, world) => props.onOpenFolder(page.id, folder, world)}
+          onOpenConsole={() => props.onOpenConsole(page.id)}
           onDelete={page.kind === "clover" ? undefined : () => askDelete(page)}
           mods={page.kind === "vanilla" ? undefined : props.renderMods?.(page)}
           contentRevision={props.contentRevision}
@@ -259,14 +265,125 @@ type Actions = Props & {
   onEdit: (entry: InstanceEntry) => void;
 };
 
+/** Choix « Snapshots » de la vue par version, gardé d'une ouverture à l'autre. */
+const SNAPSHOTS_KEY = "clover.instances-snapshots";
+
+function storedSnapshots() {
+  try {
+    return localStorage.getItem(SNAPSHOTS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Depuis la 1.16 (et les versions 26) : la grille principale ; les plus anciennes ont la leur, repliée. */
+const recent = (family: string) => /^\d/.test(family) && family.localeCompare("1.16", "en", { numeric: true }) >= 0;
+
 /**
  * Une carte illustrée par famille de versions. Un clic choisit la dernière instance jouée de la
  * famille, que la barre du bas lance ; une version sans instance ouvre sa création. Le « + » d'une
  * carte qui a déjà ses instances en crée une autre de la même version.
  */
-function Simple({ instances, current, viewing, running, playFor, menu, onSelect, onCreate, services = api }: Actions) {
+function FamilyCard({ family, instances, active, running, playFor, menu, onSelect, onCreate }: Pick<Actions, "instances" | "running" | "playFor" | "menu" | "onSelect" | "onCreate"> & { family: VersionFamily; active: boolean }) {
+  const members = instances.filter((entry) => entry.minecraft && versionFamily(entry.minecraft) === family.id);
+  const clover = members.some((entry) => entry.kind === "clover");
+  // La plus récemment jouée de la famille, pour qu'un clic reprenne là où on s'était arrêté.
+  const pick = [...members].sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))[0];
+  // Versions de la famille, celles qui ont une instance d'abord ; deux affichées, le reste en « +N ».
+  const used = new Set(members.map((entry) => entry.minecraft));
+  const shownVersions = [...family.versions].sort((a, b) => Number(used.has(b)) - Number(used.has(a))).slice(0, 2);
+  const card = (
+    <li className="relative">
+      <button
+        type="button"
+        aria-pressed={active}
+        onClick={() => (pick ? onSelect(pick.id) : onCreate(family.versions[0]))}
+        className={cn(
+          "group relative flex h-full w-full flex-col overflow-hidden rounded-lg border-2 bg-card text-left transition-colors duration-300 hover:bg-card-hover",
+          active ? "border-primary" : "border-border hover:border-[#e9e3d4]/30",
+        )}
+      >
+        <span className="relative block aspect-[16/10] overflow-hidden">
+          <img src={versionImage(family.id)} alt="" loading="lazy" className="size-full object-cover transition-transform duration-300 motion-safe:group-hover:scale-[1.04]" />
+          {family.versions.length > 1 && (
+            <span className="absolute bottom-2 left-2 flex items-center gap-1" title={family.versions.join(", ")}>
+              {shownVersions.map((version) => (
+                <span key={version} className={cn("rounded px-1.5 py-0.5 font-pixel text-[10px] leading-none", used.has(version) ? "bg-primary text-primary-foreground" : "bg-[#14120f]/85 text-white/90")}>
+                  {version}
+                </span>
+              ))}
+              {family.versions.length > 2 && <span className="rounded bg-[#14120f]/85 px-1.5 py-0.5 font-pixel text-[10px] leading-none text-white/70">+{family.versions.length - 2}</span>}
+            </span>
+          )}
+        </span>
+        {members.some((entry) => running.includes(entry.id)) && <RunningBadge className="absolute top-2 left-2 bg-[#14120f]/85 px-2 py-0.5 text-[10px]" />}
+        {active && (
+          <span className="absolute top-2 right-2 grid size-7 place-items-center rounded-md bg-primary text-primary-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-300">
+            <Check className="size-4" strokeWidth={3} aria-hidden />
+          </span>
+        )}
+        <span className={cn("flex h-8 items-end justify-between gap-2 px-3.5", pick && "pr-12")}>
+          <span className="font-pixel text-lg leading-none">{family.id}</span>
+          {clover ? (
+            <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">Serveur</span>
+          ) : (
+            family.snapshot && <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-bold text-muted-foreground">Snapshot</span>
+          )}
+        </span>
+        <span className={cn("truncate px-3.5 pt-1 pb-3.5 text-xs text-muted-foreground", pick && "pr-12")}>
+          {members.length > 0 ? (
+            members.length === 1 ? members[0].name : `${members.length} instances`
+          ) : (
+            <span className="flex items-center gap-1.5 font-semibold text-accent opacity-80 group-hover:opacity-100">
+              <Plus className="size-3.5" aria-hidden />
+              Créer une instance
+            </span>
+          )}
+        </span>
+      </button>
+      {/* À côté de la carte, pas dedans : un bouton ne peut pas en contenir un autre. */}
+      {pick && (
+        <button
+          type="button"
+          onClick={() => onCreate(family.versions[0])}
+          title={`Nouvelle instance en ${family.id}`}
+          aria-label={`Nouvelle instance en ${family.id}`}
+          className="absolute right-2.5 bottom-2.5 grid size-8 place-items-center rounded-md border border-border bg-sunken text-accent transition-colors hover:border-accent/60 hover:bg-card-hover"
+        >
+          <Plus className="size-4" strokeWidth={2.5} aria-hidden />
+        </button>
+      )}
+    </li>
+  );
+  // Clic droit : l'instance qu'un clic reprendrait.
+  return pick ? (
+    <InstanceMenu entry={pick} play={playFor(pick.id)} actions={menu}>
+      {card}
+    </InstanceMenu>
+  ) : (
+    card
+  );
+}
+
+/**
+ * Toutes les versions de Minecraft, par famille : les récentes dans la grille principale, puis,
+ * repliées, celles de la 1.15 à la 1.0 et celles d'avant (Bêta, Alpha), chacune dans sa grille.
+ * Elles s'ouvrent d'office quand l'instance choisie y est.
+ */
+function Simple(props: Actions) {
+  const { instances, current, viewing, services = api } = props;
   const [versions, setVersions] = useState<AvailableVersion[]>([]);
   const [failed, setFailed] = useState(false);
+  const [older, setOlder] = useState(false);
+  const [snapshots, setSnapshots] = useState(storedSnapshots);
+  const showSnapshots = (next: boolean) => {
+    setSnapshots(next);
+    try {
+      localStorage.setItem(SNAPSHOTS_KEY, next ? "1" : "0");
+    } catch {
+      // Préférence de confort : sans stockage, elle vaut pour cette session.
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -279,93 +396,55 @@ function Simple({ instances, current, viewing, running, playFor, menu, onSelect,
     };
   }, [services]);
 
-  const families = groupVersions(versions, instances.flatMap((entry) => (entry.minecraft ? [entry.minecraft] : [])), false);
+  const families = groupVersions(versions, instances.flatMap((entry) => (entry.minecraft ? [entry.minecraft] : [])), snapshots);
   const activeFamily = viewing ? versionFamily(viewing) : current?.minecraft && versionFamily(current.minecraft);
+  const sections = [
+    { title: "De la 1.15 à la 1.0", families: families.filter((family) => /^\d/.test(family.id) && !recent(family.id)) },
+    { title: "Avant la 1.0", families: families.filter((family) => !/^\d/.test(family.id)) },
+  ].filter((section) => section.families.length > 0);
+  const olderCount = sections.reduce((sum, section) => sum + section.families.length, 0);
+  const olderOpen = older || sections.some((section) => section.families.some((family) => family.id === activeFamily));
+  const grid = (list: VersionFamily[], label: string) => (
+    <ul aria-label={label} className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
+      {list.map((family) => (
+        <FamilyCard key={family.id} {...props} family={family} active={family.id === activeFamily} />
+      ))}
+    </ul>
+  );
 
   return (
     <>
-      <p className="mt-4 text-sm text-muted-foreground">
-        {failed ? "Liste des versions indisponible : seules tes instances sont affichées." : "Choisis la version à lancer. Le « + » d'une carte crée une autre instance de cette version."}
-      </p>
-      <ul aria-label="Versions de Minecraft" className="mt-5 grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
-        {families.map((family) => {
-          const members = instances.filter((entry) => entry.minecraft && versionFamily(entry.minecraft) === family.id);
-          const active = family.id === activeFamily;
-          const clover = members.some((entry) => entry.kind === "clover");
-          // La plus récemment jouée de la famille, pour qu'un clic reprenne là où on s'était arrêté.
-          const pick = [...members].sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))[0];
-          // Versions de la famille, celles qui ont une instance d'abord ; deux affichées, le reste en « +N ».
-          const used = new Set(members.map((entry) => entry.minecraft));
-          const shownVersions = [...family.versions].sort((a, b) => Number(used.has(b)) - Number(used.has(a))).slice(0, 2);
-          const card = (
-            <li key={family.id} className="relative">
-              <button
-                type="button"
-                aria-pressed={active}
-                onClick={() => (pick ? onSelect(pick.id) : onCreate(family.versions[0]))}
-                className={cn(
-                  "group relative flex h-full w-full flex-col overflow-hidden rounded-lg border-2 bg-card text-left transition-colors duration-300 hover:bg-card-hover",
-                  active ? "border-primary" : "border-border hover:border-[#e9e3d4]/30",
-                )}
-              >
-                <span className="relative block aspect-[16/10] overflow-hidden">
-                  <img src={versionImage(family.id)} alt="" className="size-full object-cover transition-transform duration-300 motion-safe:group-hover:scale-[1.04]" />
-                  {family.versions.length > 1 && (
-                    <span className="absolute bottom-2 left-2 flex items-center gap-1" title={family.versions.join(", ")}>
-                      {shownVersions.map((version) => (
-                        <span key={version} className={cn("rounded px-1.5 py-0.5 font-pixel text-[10px] leading-none", used.has(version) ? "bg-primary text-primary-foreground" : "bg-[#14120f]/85 text-white/90")}>
-                          {version}
-                        </span>
-                      ))}
-                      {family.versions.length > 2 && <span className="rounded bg-[#14120f]/85 px-1.5 py-0.5 font-pixel text-[10px] leading-none text-white/70">+{family.versions.length - 2}</span>}
-                    </span>
-                  )}
-                </span>
-                {members.some((entry) => running.includes(entry.id)) && <RunningBadge className="absolute top-2 left-2 bg-[#14120f]/85 px-2 py-0.5 text-[10px]" />}
-                {active && (
-                  <span className="absolute top-2 right-2 grid size-7 place-items-center rounded-md bg-primary text-primary-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-300">
-                    <Check className="size-4" strokeWidth={3} aria-hidden />
-                  </span>
-                )}
-                <span className={cn("flex h-8 items-end justify-between gap-2 px-3.5", pick && "pr-12")}>
-                  <span className="font-pixel text-lg leading-none">{family.id}</span>
-                  {clover && <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">Serveur</span>}
-                </span>
-                <span className={cn("truncate px-3.5 pt-1 pb-3.5 text-xs text-muted-foreground", pick && "pr-12")}>
-                  {members.length > 0 ? (
-                    members.length === 1 ? members[0].name : `${members.length} instances`
-                  ) : (
-                    <span className="flex items-center gap-1.5 font-semibold text-accent opacity-80 group-hover:opacity-100">
-                      <Plus className="size-3.5" aria-hidden />
-                      Créer une instance
-                    </span>
-                  )}
-                </span>
-              </button>
-              {/* À côté de la carte, pas dedans : un bouton ne peut pas en contenir un autre. */}
-              {pick && (
-                <button
-                  type="button"
-                  onClick={() => onCreate(family.versions[0])}
-                  title={`Nouvelle instance en ${family.id}`}
-                  aria-label={`Nouvelle instance en ${family.id}`}
-                  className="absolute right-2.5 bottom-2.5 grid size-8 place-items-center rounded-md border border-border bg-sunken text-accent transition-colors hover:border-accent/60 hover:bg-card-hover"
-                >
-                  <Plus className="size-4" strokeWidth={2.5} aria-hidden />
-                </button>
-              )}
-            </li>
-          );
-          // Clic droit : l'instance qu'un clic reprendrait.
-          return pick ? (
-            <InstanceMenu key={family.id} entry={pick} play={playFor(pick.id)} actions={menu}>
-              {card}
-            </InstanceMenu>
-          ) : (
-            card
-          );
-        })}
-      </ul>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+        <p className="text-sm text-muted-foreground">
+          {failed ? "Liste des versions indisponible : seules tes instances sont affichées." : "Choisis la version à lancer. Le « + » d'une carte crée une autre instance de cette version."}
+        </p>
+        <label className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground" title="Versions en test de Mojang : snapshots, préversions et candidates">
+          <Switch checked={snapshots} onCheckedChange={showSnapshots} aria-label="Afficher les snapshots" className="scale-90" />
+          Snapshots
+        </label>
+      </div>
+      <div className="mt-5">{grid(families.filter((family) => recent(family.id)), "Versions récentes de Minecraft")}</div>
+      {olderCount > 0 && (
+        <div className="mt-8 flex flex-col gap-5">
+          <button
+            type="button"
+            aria-expanded={olderOpen}
+            onClick={() => setOlder(!olderOpen)}
+            className="flex items-center gap-2 self-start font-display text-xl transition-colors hover:text-primary"
+          >
+            Anciennes versions
+            <span className="font-sans text-sm font-semibold text-muted-foreground tabular-nums">{olderCount}</span>
+            <ChevronDown className={cn("size-5 text-muted-foreground transition-transform", olderOpen && "rotate-180")} aria-hidden />
+          </button>
+          {olderOpen &&
+            sections.map((section) => (
+              <section key={section.title} aria-label={section.title} className="flex flex-col gap-3">
+                <h3 className="text-xs font-semibold text-muted-foreground">{section.title}</h3>
+                {grid(section.families, section.title)}
+              </section>
+            ))}
+        </div>
+      )}
     </>
   );
 }

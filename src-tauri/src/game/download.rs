@@ -75,7 +75,8 @@ impl Hasher {
 
     fn matches(self, checksum: &Checksum) -> bool {
         match checksum {
-            Checksum::Sha1(expected) | Checksum::Sha512(expected) => self.finish() == *expected,
+            // Mojang et Modrinth écrivent en minuscules, un `.mrpack` d'ailleurs peut être en majuscules.
+            Checksum::Sha1(expected) | Checksum::Sha512(expected) => self.finish().eq_ignore_ascii_case(expected),
         }
     }
 }
@@ -85,15 +86,24 @@ pub(crate) fn sha512(path: &Path) -> std::io::Result<String> {
     Ok(Hasher::Sha512(Sha512::new()).read_file(path)?.finish())
 }
 
+/// SHA-1 d'un fichier, en hexadécimal minuscule, calculé en flux.
+pub(crate) fn sha1(path: &Path) -> std::io::Result<String> {
+    Ok(Hasher::Sha1(Sha1::new()).read_file(path)?.finish())
+}
+
 /// `sha512` hors du fil d'exécution asynchrone.
 pub(crate) async fn sha512_async(path: &Path) -> std::io::Result<String> {
     let path = path.to_owned();
     tokio::task::spawn_blocking(move || sha512(&path)).await.map_err(std::io::Error::other)?
 }
 
+/// Une connexion figée (Wi-Fi qui décroche) échoue au lieu d'attendre sans fin et de garder
+/// « Jouer » bloqué ; le délai de lecture repart à chaque morceau reçu, un gros fichier passe.
 pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(concat!("CloverLauncher/", env!("CARGO_PKG_VERSION"), " (+https://clovergames.fr)"))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(30))
         .build()
         .expect("client HTTP valide")
 }
@@ -129,14 +139,27 @@ pub async fn ensure_with_progress(http: &reqwest::Client, download: &Download, o
     if is_installed(download).await? {
         return Ok(());
     }
-    let mut last_error = None;
-    for _ in 0..ATTEMPTS {
+    let mut attempt = 0;
+    loop {
         match fetch(http, download, on_bytes).await {
             Ok(()) => return Ok(()),
-            Err(error) => last_error = Some(error),
+            Err(error) if attempt + 1 < ATTEMPTS && retryable(&error) => {
+                tokio::time::sleep(std::time::Duration::from_millis(500 << attempt)).await;
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
         }
     }
-    Err(last_error.expect("au moins une tentative"))
+}
+
+/// Une coupure, un délai dépassé, une erreur du serveur (5xx) ou un fichier arrivé abîmé valent une
+/// nouvelle tentative ; une réponse 4xx (fichier absent, accès refusé) ne changera pas.
+fn retryable(error: &GameError) -> bool {
+    match error {
+        GameError::Network(error) => error.status().map_or(error.is_connect() || error.is_timeout() || error.is_body(), |status| status.is_server_error()),
+        GameError::Corrupted(_) => true,
+        _ => false,
+    }
 }
 
 async fn is_installed(download: &Download) -> Result<bool> {
@@ -195,7 +218,7 @@ async fn fetch(http: &reqwest::Client, download: &Download, on_bytes: &(dyn Fn(u
     Ok(())
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

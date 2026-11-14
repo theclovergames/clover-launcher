@@ -3,11 +3,12 @@ import test from "node:test";
 import { back, canGoBack, type Names, openFromCrumb, type Route, trail } from "../src/lib/routes.ts";
 
 const names: Names = {
-  tab: (tab) => ({ instances: "Instances", discover: "Découvrir", home: "Accueil" })[tab as string] ?? tab,
+  tab: (tab) => ({ instances: "Instances", discover: "Découvrir", home: "Accueil", messages: "Messages", profile: "Profil", shop: "Boutique", news: "Actualités" })[tab as string] ?? tab,
   instance: (id) => (id === "x" ? "Survie 1.21" : id),
   section: (section) => (section === "shaderpacks" ? "Shaders" : section === "mods" ? "Mods" : section),
   kind: (kind) => (kind === "shader" ? "Shaders" : kind),
   mod: (mod) => mod.id,
+  friend: (uuid) => (uuid === "f1" ? "Kanname" : "Ami"),
 };
 
 test("le retour ramène à l'onglet d'où l'on vient", () => {
@@ -51,4 +52,39 @@ test("un maillon du fil d'Ariane dépile la pile jusqu'à sa page", () => {
   assert.deepEqual(openFromCrumb(stack, instances), [{ tab: "home" }, instances]);
   const other: Route = { tab: "discover", kind: "mod" };
   assert.deepEqual(openFromCrumb(stack, other), [...stack.slice(0, -1), other]);
+});
+
+test("une conversation ouverte depuis le Profil y ramène, la liste à côté d'elle", () => {
+  const conversation: Route = { tab: "messages", friend: "f1" };
+  const stack: Route[] = [{ tab: "profile" }, conversation];
+  const crumbs = trail(conversation, names);
+  assert.deepEqual(crumbs.map((crumb) => crumb.label), ["Messages", "Kanname"]);
+  assert.deepEqual(crumbs[0].to, { tab: "messages" });
+  assert.deepEqual(back(stack), [{ tab: "profile" }]);
+  // Ouverte depuis le menu : pas de page parente, donc pas de « Retour ».
+  assert.equal(canGoBack([conversation]), false);
+  assert.deepEqual(openFromCrumb(stack, { tab: "messages" }), [{ tab: "profile" }, { tab: "messages" }]);
+});
+
+test("un profil ouvert depuis le Classement y ramène, sous le seul pseudo du joueur", () => {
+  const player: Route = { tab: "player", name: "Kanname" };
+  const stack: Route[] = [{ tab: "leaderboard" }, player];
+  assert.deepEqual(trail(player, names).map((crumb) => crumb.label), ["Kanname"]);
+  assert.deepEqual(back(stack), [{ tab: "leaderboard" }]);
+  assert.equal(canGoBack([player]), false);
+});
+
+test("fiche d'un produit : Boutique › produit, « Retour » vers sa catégorie", () => {
+  const product: Route = { tab: "shop", category: "grades", product: { id: "vip", name: "VIP" } };
+  assert.deepEqual(trail(product, names).map((crumb) => crumb.label), ["Boutique", "VIP"]);
+  assert.deepEqual(trail(product, names)[0].to, { tab: "shop", category: "grades" });
+  assert.deepEqual(back([product]), [{ tab: "shop", category: "grades" }]);
+});
+
+test("article : Actualités › titre, « Retour » vers la liste", () => {
+  const article: Route = { tab: "news", article: { source: "clover", slug: "pvpsoup", title: "PvPSoup", category: null, publishedAt: "2026-09-20T10:00:00.000Z", url: "https://clovergames.fr/blog/pvpsoup" } };
+  assert.deepEqual(trail(article, names).map((crumb) => crumb.label), ["Actualités", "PvPSoup"]);
+  assert.deepEqual(trail(article, names)[0].to, { tab: "news" });
+  assert.deepEqual(back([{ tab: "home" }, article]), [{ tab: "home" }]);
+  assert.deepEqual(back([article]), [{ tab: "news" }]);
 });

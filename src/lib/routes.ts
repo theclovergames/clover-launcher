@@ -4,6 +4,7 @@
  * instance et son onglet compris).
  */
 import type { ContentKind } from "@/lib/content-kinds";
+import { readerTitle, type ReaderTarget } from "./news.ts";
 import type { ContentFolder, Tab } from "@/types";
 
 /** Onglet de la page d'une instance. */
@@ -16,12 +17,23 @@ export type OpenMod = { list: "catalogue" | "personal"; id: string };
 export type OpenProject = { id: string; title: string; icon: string | null };
 
 export type Route =
-  | { tab: Exclude<Tab, "instances" | "discover"> }
+  | { tab: Exclude<Tab, "instances" | "discover" | "messages" | "player" | "shop" | "news"> }
   | { tab: "instances"; instance?: string; section?: InstanceSection; mod?: OpenMod }
   /** `minecraft` : version de la nouvelle instance voulue, qui filtre les modpacks. */
-  | { tab: "discover"; kind: ContentKind; target?: string; world?: string; minecraft?: string; project?: OpenProject };
+  | { tab: "discover"; kind: ContentKind; target?: string; world?: string; minecraft?: string; project?: OpenProject }
+  /** `friend` : UUID de l'ami dont la conversation est ouverte. */
+  | { tab: "messages"; friend?: string }
+  /** Profil d'un autre joueur, ouvert depuis le Classement, les Messages ou les amis. */
+  | { tab: "player"; name: string }
+  /** `article` : article ouvert, lu dans le launcher. */
+  | { tab: "news"; article?: ReaderTarget }
+  /** `category` : slug de la catégorie ouverte ; `product` : fiche ouverte, son nom pour le fil d'Ariane. */
+  | { tab: "shop"; category?: string; product?: OpenProduct };
 
-export const route = (tab: Tab): Route => (tab === "discover" ? { tab, kind: "mod" } : { tab } as Route);
+/** Produit de la boutique dont la fiche est ouverte. */
+export type OpenProduct = { id: string; name: string };
+
+export const route = (tab: Exclude<Tab, "player">): Route => (tab === "discover" ? { tab, kind: "mod" } : { tab } as Route);
 
 /** Page qui contient celle-ci (la liste au-dessus d'une fiche, l'instance au-dessus de son mod). */
 export function parent(current: Route): Route | null {
@@ -30,6 +42,8 @@ export function parent(current: Route): Route | null {
     if (current.instance) return { tab: "instances" };
   }
   if (current.tab === "discover" && current.project) return { tab: "discover", kind: current.kind, target: current.target, world: current.world, minecraft: current.minecraft };
+  if (current.tab === "shop" && current.product) return { tab: "shop", category: current.category };
+  if (current.tab === "news" && current.article) return { tab: "news" };
   return null;
 }
 
@@ -49,12 +63,18 @@ export type Names = {
   section: (section: InstanceSection) => string;
   kind: (kind: ContentKind) => string;
   mod: (mod: OpenMod) => string;
+  /** Pseudo d'un ami, par son UUID. */
+  friend: (uuid: string) => string;
 };
 
 /** Maillon du fil d'Ariane : son nom, et la page qu'il ouvre (absente pour la page ouverte). */
 export type Crumb = { label: string; to?: Route };
 
-/** Chemin de la page dans le launcher : Instances › Survie 1.21 › Shaders, Découvrir › Mods › Sodium. */
+/**
+ * Chemin de la page dans le launcher : Instances › Survie 1.21 › Shaders, Découvrir › Mods › Sodium,
+ * Messages › Kanname. Une conversation n'a pas de page parente : la liste reste à côté d'elle. Le
+ * profil d'un joueur porte son pseudo seul : « Retour » ramène là d'où il a été ouvert.
+ */
 export function trail(current: Route, names: Names): Crumb[] {
   const crumbs: Crumb[] = [];
   if (current.tab === "instances") {
@@ -68,6 +88,17 @@ export function trail(current: Route, names: Names): Crumb[] {
     const list: Route = { tab: "discover", kind: current.kind, target: current.target, world: current.world, minecraft: current.minecraft };
     crumbs.push({ label: names.tab("discover"), to: list }, { label: names.kind(current.kind), to: list });
     if (current.project) crumbs.push({ label: current.project.title });
+  } else if (current.tab === "messages") {
+    crumbs.push({ label: names.tab("messages"), to: { tab: "messages" } });
+    if (current.friend) crumbs.push({ label: names.friend(current.friend) });
+  } else if (current.tab === "player") {
+    crumbs.push({ label: current.name });
+  } else if (current.tab === "shop") {
+    crumbs.push({ label: names.tab("shop"), to: { tab: "shop", category: current.category } });
+    if (current.product) crumbs.push({ label: current.product.name });
+  } else if (current.tab === "news") {
+    crumbs.push({ label: names.tab("news"), to: { tab: "news" } });
+    if (current.article) crumbs.push({ label: readerTitle(current.article) });
   } else {
     crumbs.push({ label: names.tab(current.tab) });
   }

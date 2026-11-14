@@ -305,6 +305,12 @@ pub async fn search(http: &reqwest::Client, kind: Kind, query: &str, minecraft: 
     Ok(page)
 }
 
+/// Modpack qui porte exactement ce nom (casse ignorée), s'il existe.
+pub async fn modpack_named(http: &reqwest::Client, name: &str) -> Result<Option<Hit>> {
+    let page = search(http, Kind::Modpack, name, "", &[], &Filters::default(), 0).await?;
+    Ok(page.hits.into_iter().find(|hit| hit.title.trim().eq_ignore_ascii_case(name.trim())))
+}
+
 /// Versions d'un modpack que le launcher sait installer, de la plus récente à la plus ancienne.
 pub async fn modpack_versions(http: &reqwest::Client, project: &str) -> Result<Vec<Version>> {
     if !valid_project(project) {
@@ -389,6 +395,11 @@ async fn author(http: &reqwest::Client, project_id: &str) -> Option<String> {
     let response = http.get(url).timeout(TIMEOUT).send().await.ok()?.error_for_status().ok()?;
     let page: SearchPage = response.json().await.ok()?;
     page.hits.into_iter().next().map(|hit| hit.author)
+}
+
+/// Projet d'un fichier du CDN de Modrinth, lu dans son adresse (`cdn.modrinth.com/data/<projet>/versions/…`).
+pub fn cdn_project(url: &str) -> Option<&str> {
+    url.strip_prefix("https://cdn.modrinth.com/data/")?.split('/').next()
 }
 
 /// Identifiant ou slug Modrinth, qui ne doit jamais sortir de `/project/` une fois dans l'URL.

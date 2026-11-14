@@ -4,7 +4,7 @@ import { memo, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, us
 import { ShareLogButton } from "@/components/ShareLogButton";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api } from "@/lib/api";
-import { secondaryButton } from "@/lib/buttons";
+import { secondaryButton, segment, segmentBar } from "@/lib/buttons";
 import { formatLog, logPrefix } from "@/lib/log";
 import { cn } from "@/lib/utils";
 import type { GameLogFile, LogEntry, LogLevel } from "@/types";
@@ -242,7 +242,7 @@ export function ConsoleScreen({
             className="h-9 w-full rounded-md border border-border bg-sunken pr-3 pl-9 text-sm text-foreground outline-none select-text placeholder:text-muted-foreground/70 focus:border-accent"
           />
         </label>
-        <div role="group" aria-label="Niveaux affichés" className="flex gap-1 rounded-lg border border-border bg-sunken p-1">
+        <div role="group" aria-label="Niveaux affichés" className={segmentBar}>
           {LEVELS.map((level) => {
             const on = levels.has(level.id);
             return (
@@ -251,10 +251,7 @@ export function ConsoleScreen({
                 type="button"
                 aria-pressed={on}
                 onClick={() => toggleLevel(level.id)}
-                className={cn(
-                  "flex items-center gap-2 rounded-md px-3 py-1 text-[13px] font-semibold transition-colors",
-                  on ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
+                className={cn(segment(on), "px-3")}
               >
                 {level.label}
                 <span className={cn("font-pixel text-[11px]", on ? level.tone : "")}>{counts[level.id]}</span>

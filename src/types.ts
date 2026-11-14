@@ -36,7 +36,7 @@ export type ModeStatus = {
   players?: number | null;
   /** Le manifeste donne une adresse qui connecte directement à ce mode. */
   quickPlay?: boolean;
-  /** Annoncé mais pas encore ouvert : carte grisée « Bientôt ». */
+  /** Annoncé mais pas encore ouvert : carte grisée « En développement ». */
   soon?: boolean;
 };
 
@@ -71,11 +71,25 @@ export type MinecraftNewsItem = {
 /** Page Actualités ; `null` : le site n'a pas répondu pour cette source. */
 export type NewsPage = {
   blog: NewsItem[] | null;
+  changelog: ChangelogItem[] | null;
   /** `translated: false` : annonces en anglais, comme Mojang les publie. */
   minecraft: { translated: boolean; items: MinecraftNewsItem[] } | null;
 };
 
 export type BlogArticle = { slug: string; title: string; category: string | null; image: string | null; author: string | null; publishedAt: string; url: string; html: string };
+
+export type ChangelogItem = {
+  slug: string;
+  title: string;
+  excerpt: string;
+  version: string | null;
+  category: "launcher" | "site" | "minecraft";
+  image: string | null;
+  url: string;
+  publishedAt: string;
+};
+
+export type ChangelogArticle = ChangelogItem & { author: string | null; html: string };
 
 export type MinecraftArticle = { id: string; title: string; html: string; publishedAt: string; image: string | null };
 
@@ -93,7 +107,7 @@ export type ModInfo = {
   enabled: boolean;
 };
 
-export type Tab = "home" | "news" | "instances" | "discover" | "skins" | "console" | "settings" | "profile";
+export type Tab = "home" | "news" | "instances" | "discover" | "skins" | "console" | "settings" | "profile" | "messages" | "leaderboard" | "shop" | "player";
 
 export type InstanceKind = "clover" | "vanilla" | "fabric" | "quilt" | "forge" | "neoforge";
 export type Instance = {
@@ -110,7 +124,8 @@ export type Instance = {
   /** Projet Modrinth du modpack dont l'instance a été créée ; absent pour un pack importé d'un fichier. */
   modpack?: string | null;
 };
-export type InstanceEntry = Instance & { gameDir: string; installed: boolean };
+/** `icon` : logo du modpack dont l'instance vient, en adresse `data:`. */
+export type InstanceEntry = Instance & { gameDir: string; installed: boolean; icon?: string | null };
 export type InstanceInput = Pick<Instance, "name" | "kind" | "minecraft" | "loader" | "separate" | "memoryMb">;
 export type AvailableVersion = { id: string; snapshot: boolean; released: string };
 /** Partie terminée (`history.rs`) : début en secondes Unix, code de sortie `null` si le jeu a été tué. */
@@ -239,6 +254,8 @@ export type DetectedInstance = {
   personalMods: string[];
   /** Mods d'un autre loader que Fabric : pas repris dans l'instance Clover Games. */
   otherMods: string[];
+  /** Logo du modpack (adresse `data:` ou image publiée), repris par l'instance créée. */
+  icon: string | null;
 };
 
 /** Avancement de la recherche (évènements `import-scan`) : installations annoncées, puis mods envoyés à Modrinth. */
@@ -306,6 +323,8 @@ export type ModrinthHit = {
 export type ModrinthPage = { hits: ModrinthHit[]; totalHits: number };
 /** Version d'un modpack que le launcher sait installer, de la plus récente à la plus ancienne. */
 export type ModpackVersion = { id: string; name: string; number: string; loaders: string[]; gameVersions: string[]; release: boolean; published: string };
+/** Mise à jour du modpack d'une instance : numéro installé, puis identifiant et numéro de la version proposée. */
+export type ModpackUpdate = { installed: string; id: string; number: string };
 /** Ordre des résultats de recherche ; sans texte, « relevance » classe par téléchargements. */
 export type SearchSort = "relevance" | "downloads" | "follows" | "newest" | "updated";
 /** Catégories Modrinth (« worldgen », « 16x »), toutes exigées à la fois. */
@@ -373,12 +392,20 @@ export type ModeStats =
   | { id: "practice"; rank: number | null; stats: PracticeStats }
   | { id: "skypvp" | "pvpsoup"; rank: number | null; stats: ArenaStats };
 
+/** Récompenses du launcher du compte actif : cadeau de bienvenue, puis série de jours joués (une clef tous les `keyEvery` jours). */
+export type LauncherRewards = { welcome: { received: boolean; vip: boolean }; today: { received: boolean; streak: number }; keyEvery: number };
+
 /** Statistiques Clover Games du compte actif ; chaque bloc vaut `null` si sa source est indisponible. */
 export type PlayerStats = {
   linked: boolean;
   grade: { label: string; color: string } | null;
+  /** Grade en jeu : groupe LuckPerms principal (sans accent) et son libellé. */
+  rank: { id: string; label: string } | null;
   level: { level: number; totalXp: number; into: number; needed: number; rank: number | null } | null;
+  /** Pièces, gagnées en jeu. */
   coins: number | null;
+  /** Crédits, achetés en euros. */
+  credits: number | null;
   votes: { total: number; month: number } | null;
   streak: { current: number; best: number } | null;
   /** Dates en millisecondes ; `online` : serveur où il joue en ce moment. */
@@ -401,4 +428,138 @@ export type Friend = {
   lastSeen: number | null;
   status: string | null;
   canJoin: boolean;
+  /** Statut choisi dans son launcher ; absent launcher fermé (ou invisible, ou site plus ancien). */
+  availability?: Exclude<Availability, "invisible"> | null;
 };
+
+/** Statut choisi dans Messages, vu des amis (sauf « invisible », vu hors ligne). */
+export type Availability = "online" | "busy" | "away" | "invisible";
+
+// ── Messages entre amis (`/api/launcher/messages`, filtrés par le cœur Rust) ──
+
+/** Ami d'une conversation : celui du Profil, sans favori. Un ancien ami garde sa conversation. */
+export type ChatFriend = Omit<Friend, "favorite">;
+export type MessageKind = "text" | "gif";
+/** Où le message a été écrit : en jeu (`/msg`), dans le launcher ou sur le site. */
+export type MessageSource = "game" | "launcher" | "site";
+/** Dernier message d'une conversation, ou message cité par une réponse. Dates en millisecondes. */
+export type MessagePreview = { id: number; fromMe: boolean; kind: MessageKind; preview: string; at: number; deleted: boolean };
+/** GIF de Giphy, hébergé sur `media*.giphy.com` (vérifié par le cœur Rust). */
+export type MessageGif = { id: string; url: string; width: number; height: number };
+/** Réaction de chacun des deux amis (un émoji), `null` sans réaction. */
+export type MessageReactions = { mine: string | null; theirs: string | null };
+export type ChatMessage = {
+  id: number;
+  fromMe: boolean;
+  kind: MessageKind;
+  /** Texte, ou titre d'un GIF (peut être vide). */
+  body: string;
+  /** `null` pour un texte, ou un GIF qui ne peut pas s'afficher. */
+  gif: MessageGif | null;
+  replyTo: MessagePreview | null;
+  source: MessageSource;
+  at: number;
+  editedAt: number | null;
+  /** Supprimé pour tous : la place reste, sans contenu. */
+  deleted: boolean;
+  reactions: MessageReactions;
+};
+/** `isFriend` : ami actuel, qu'on peut retirer (faux pour un ancien ami). */
+export type Conversation = { friend: ChatFriend; last: MessagePreview | null; unread: number; archived: boolean; muted: boolean; canWrite: boolean; isFriend: boolean };
+/** Demande d'ami en attente ; dates en millisecondes, elle expire d'elle-même à `expiresAt`. */
+export type FriendRequest = { uuid: string; name: string; at: number; expiresAt: number };
+/** `now` : heure du site ; `gifs` : recherche de GIF disponible ; `requests` : demandes d'amis en attente. */
+export type Inbox = { now: number; unread: number; gifs: boolean; conversations: Conversation[]; requests: { incoming: FriendRequest[]; outgoing: FriendRequest[] } };
+/** Évènement du flux des messages (`watch_messages`) : boîte changée, ou amis en train d'écrire. */
+export type InboxEvent = { kind: "change" } | { kind: "typing"; friends: string[] };
+/** Une page de conversation ; `updates` : messages modifiés ou supprimés depuis la page précédente. */
+export type Thread = {
+  now: number;
+  friend: ChatFriend;
+  messages: ChatMessage[];
+  updates: ChatMessage[];
+  lastReadId: number;
+  seenUpTo: number;
+  hasMore: boolean;
+  canWrite: boolean;
+  isFriend: boolean;
+  archived: boolean;
+  muted: boolean;
+};
+/** Temps qu'il fait chez le joueur (relais Clover, MET Norway), pour le ciel de l'accueil. */
+export type Weather = { sky: "clear" | "fair" | "cloudy" | "overcast" | "fog" | "rain" | "storm" | "snow"; heavy: boolean; temperature: number | null };
+/** Lien du compte actif avec un autre joueur : demande `outgoing` envoyée, `incoming` reçue. */
+export type Relation = "self" | "friend" | "outgoing" | "incoming" | "none";
+/** Profil d'un autre joueur (`/api/launcher/players`) : sans crédits, pièces ni amis, présence réservée à ses amis. */
+export type OtherPlayer = { uuid: string; name: string; relation: Relation; canRequest: boolean; stats: PlayerStats };
+/** Résultat d'une demande d'ami : `accepted` si ce joueur avait déjà demandé. */
+export type RequestSent = { result: "sent" | "accepted"; player: { uuid: string; name: string } };
+
+// ── Classement (`/api/launcher/leaderboard`, réglé dans l'administration du site) ──
+
+/** Colonne d'un tableau ; une durée est en secondes. */
+export type LeaderboardStat = { key: string; label: string; format: "number" | "duration" };
+export type LeaderboardRow = { uuid: string | null; name: string; values: Record<string, number | null> };
+/** Un tableau (un mode, le niveau, le temps de jeu…), déjà trié par `sortKey` et dédoublonné par le site. */
+export type LeaderboardBoard = {
+  id: string;
+  name: string;
+  /** Clés d'icône Lucide et de couleur du site. */
+  icon: string | null;
+  color: string | null;
+  stats: LeaderboardStat[];
+  sortKey: string;
+  ascending: boolean;
+  rows: LeaderboardRow[];
+};
+
+export type GifResult = { id: string; title: string; url: string; width: number; height: number };
+/** `next` : décalage de la page suivante, `null` à la fin. */
+export type GifPage = { gifs: GifResult[]; next: number | null };
+
+/** Boutique du serveur, lue sur le site. Prix en centimes d'euro. */
+export type ShopBadge = "popular" | "best-offer" | "new" | "sale";
+/** Ligne du tableau comparatif : coche ou texte. */
+export type ShopFeature = { label: string; value: boolean | string };
+export type ShopProduct = {
+  id: string;
+  slug: string | null;
+  /** Slug de la catégorie. */
+  category: string;
+  name: string;
+  description: string | null;
+  imageUrl: string | null;
+  priceCents: number;
+  /** Prix en crédits ; `null` si le produit ne se paie pas en crédits. */
+  credits: number | null;
+  /** Prix en pièces ; `null` si le produit ne se paie pas en pièces. */
+  pieces: number | null;
+  /** Payable en euros (par Stripe, dans le navigateur). */
+  euro: boolean;
+  type: "one_time" | "subscription";
+  interval: "month" | "year" | null;
+  badge: ShopBadge | null;
+  section: string | null;
+  features: ShopFeature[];
+  /** Grade : un seul par joueur. */
+  grade: boolean;
+  /** Fiche complète en HTML, seulement sur la page du produit. */
+  content?: string | null;
+};
+export type ShopCategory = { slug: string; name: string; description: string | null; color: string | null; icon: string | null };
+export type ShopCatalog = {
+  credits: { enabled: boolean; perEuro: number } | null;
+  pieces: { enabled: boolean; perCredit: number } | null;
+  banner: { text: string; url: string | null } | null;
+  /** Objectif du mois, en euros. */
+  goal: { label: string; target: number; current: number } | null;
+  topBuyer: { name: string } | null;
+  /** Derniers achats ; `at` : date ISO. */
+  recent: { name: string; product: string; at: string }[];
+  categories: ShopCategory[];
+  products: ShopProduct[];
+};
+/** Soldes de crédits et de pièces (`null` : économie du jeu injoignable) et produits que le joueur ne peut pas acheter pour lui, avec la raison. */
+export type ShopAccount = { credits: number | null; pieces: number | null; blocked: Record<string, string> };
+/** Achat payé en crédits ou en pièces : montant débité et solde restant dans cette monnaie. */
+export type ShopPaid = { productName: string; amount: number; remaining: number | null };

@@ -2,9 +2,10 @@ import type { Catalogue, SiteFeed } from "./api";
 
 export const SITE_URL = "https://clovergames.fr";
 export const DISCORD_URL = "https://discord.gg/theclovergames";
+export const VOTE_URL = `${SITE_URL}/vote`;
 
 /**
- * Total des modes du manifeste ; une donnée manquante ne vaut jamais zéro. Un mode « Bientôt » n'a
+ * Total des modes du manifeste ; une donnée manquante ne vaut jamais zéro. Un mode en développement n'a
  * pas encore de serveur : il ne compte pas.
  */
 export function networkPlayers(feed: SiteFeed, modes: Catalogue["modes"]): number | null {

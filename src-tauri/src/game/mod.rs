@@ -1,5 +1,6 @@
 //! Installation et lancement de Minecraft pour Clover Games.
 
+pub mod client_mod;
 pub mod console;
 pub mod content;
 pub mod curseforge;
@@ -208,15 +209,15 @@ pub fn installed_java(paths: &Paths) -> Option<String> {
     })
 }
 
-/// Réglages de départ du niveau de la machine (fichiers absents seulement, sauf `replace`) et pack
-/// de ressources des serveurs du réseau accepté d'office. Renvoie les fichiers écrits.
+/// Réglages de départ du niveau de la machine (fichiers absents seulement, sauf `replace`) et
+/// serveurs du réseau dans `servers.dat` (`servers_dat::prepare`). Renvoie les fichiers écrits.
 pub fn apply_presets(paths: &Paths, manifest: &manifest::Manifest, version_id: &str, replace: bool) -> Result<Vec<String>> {
     let mut written = Vec::new();
     if let Some(preset) = manifest.presets.get(crate::machine::profile().level.key()) {
         let data_version = presets::data_version(&paths.versions.join(version_id).join(format!("{version_id}.jar")));
         written = presets::apply(&paths.game, preset, data_version, replace)?;
     }
-    if servers_dat::accept_packs(&paths.game.join("servers.dat"), &manifest.hosts())? > 0 {
+    if servers_dat::prepare(&paths.game.join("servers.dat"), &manifest.server.host, &manifest.mode_hosts())? > 0 {
         written.push("servers.dat".into());
     }
     Ok(written)
@@ -274,7 +275,8 @@ pub async fn play(
     if let Err(error) = apply_presets(&paths, &manifest, &installation.vanilla.id, false) {
         eprintln!("[préréglages] non appliqués : {error}");
     }
-    for name in mods::adopt_unknown(&paths.mods, &paths.personal_mods, &manifest).await? {
+    let placed = crate::instances::personal_mods_dirs(&paths.root);
+    for name in mods::adopt_unknown(&paths.mods, &paths.personal_mods, &placed, Some(&manifest)).await? {
         eprintln!("[mods] {name} déposé dans mods/ : transféré dans « Mes mods »");
     }
     let personal = personal::loadable(&paths.personal_mods, &options.disabled_personal_mods, &manifest.minecraft.version, personal::ModLoader::Fabric);

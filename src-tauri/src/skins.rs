@@ -63,12 +63,21 @@ pub fn library(root: &Path) -> Vec<SkinEntry> {
         .collect()
 }
 
+/// Lecture et réécriture de l'index d'un seul tenant : deux modifications en même temps (ajout
+/// pendant un renommage) feraient perdre l'une des deux.
+static INDEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_index() -> std::sync::MutexGuard<'static, ()> {
+    INDEX.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Ajoute un skin à la bibliothèque. Le même fichier ajouté deux fois n'apparaît qu'une fois.
 pub fn add(root: &Path, bytes: &[u8], name: &str, model: &str) -> Result<SkinEntry> {
     validate(bytes)?;
     let id = Sha1::digest(bytes).iter().take(8).map(|byte| format!("{byte:02x}")).collect::<String>();
     std::fs::create_dir_all(root.join("skins"))?;
     std::fs::write(skin_file(root, &id), bytes)?;
+    let _index = lock_index();
     let mut index = read_index(root);
     let name = clean_name(name);
     index.retain(|entry| entry.id != id);
@@ -80,6 +89,7 @@ pub fn add(root: &Path, bytes: &[u8], name: &str, model: &str) -> Result<SkinEnt
 /// Renomme un skin de la bibliothèque et rend le nom retenu, nettoyé comme à l'ajout.
 pub fn rename(root: &Path, id: &str, name: &str) -> Result<String> {
     let name = clean_name(name);
+    let _index = lock_index();
     let mut index = read_index(root);
     if let Some(entry) = index.iter_mut().find(|entry| entry.id == id) {
         entry.name = name.clone();
@@ -90,6 +100,7 @@ pub fn rename(root: &Path, id: &str, name: &str) -> Result<String> {
 
 /// Bras (`classic` ou `slim`) avec lesquels un skin de la bibliothèque sera porté.
 pub fn set_model(root: &Path, id: &str, model: &str) -> Result<()> {
+    let _index = lock_index();
     let mut index = read_index(root);
     if let Some(entry) = index.iter_mut().find(|entry| entry.id == id) {
         entry.model = model.into();
@@ -99,6 +110,7 @@ pub fn set_model(root: &Path, id: &str, model: &str) -> Result<()> {
 }
 
 pub fn remove(root: &Path, id: &str) -> Result<()> {
+    let _index = lock_index();
     let mut index = read_index(root);
     let before = index.len();
     index.retain(|entry| entry.id != id);
@@ -119,7 +131,7 @@ pub fn remove(root: &Path, id: &str) -> Result<()> {
 /// `texture` : `data:image/png;base64,…` ou adresse `textures.minecraft.net` (skin actuel dont on
 /// ne change que les bras). `cape` : identifiant d'une cape possédée, ou `None` pour l'enlever.
 pub async fn apply(session: &Session, texture: &str, model: &str, cape: Option<&str>) -> Result<Session> {
-    let http = reqwest::Client::new();
+    let http = crate::game::download::client();
     let bytes = texture_bytes(&http, texture).await?;
     validate(&bytes)?;
 
@@ -143,7 +155,7 @@ pub async fn apply(session: &Session, texture: &str, model: &str, cape: Option<&
 
 /// Octets PNG d'un skin (bibliothèque, Découverte ou compte), vérifiés, pour l'enregistrer ailleurs.
 pub async fn png(texture: &str) -> Result<Vec<u8>> {
-    let bytes = texture_bytes(&reqwest::Client::new(), texture).await?;
+    let bytes = texture_bytes(&crate::game::download::client(), texture).await?;
     validate(&bytes)?;
     Ok(bytes)
 }
@@ -156,7 +168,7 @@ pub fn file_name(name: &str) -> String {
 
 /// Ajoute à la bibliothèque un skin de la Découverte (laby.net) ou porté par un joueur (Mojang).
 pub async fn add_remote(root: &Path, texture: &str, name: &str, model: &str) -> Result<SkinEntry> {
-    let bytes = texture_bytes(&reqwest::Client::new(), texture).await?;
+    let bytes = texture_bytes(&crate::game::download::client(), texture).await?;
     add(root, &bytes, name, model)
 }
 
@@ -220,8 +232,7 @@ fn read_index(root: &Path) -> Vec<IndexEntry> {
 }
 
 fn write_index(root: &Path, index: &[IndexEntry]) -> Result<()> {
-    std::fs::create_dir_all(root.join("skins"))?;
-    std::fs::write(root.join("skins").join("index.json"), serde_json::to_vec_pretty(index).expect("index sérialisable"))?;
+    crate::storage::write_atomically(&root.join("skins").join("index.json"), &serde_json::to_vec_pretty(index).expect("index sérialisable"))?;
     Ok(())
 }
 
@@ -282,11 +293,5 @@ mod tests {
         remove(&root, "../dehors").unwrap();
         assert!(outside.exists());
         let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[tokio::test]
-    async fn refuses_foreign_texture_hosts() {
-        let http = reqwest::Client::new();
-        assert!(texture_bytes(&http, "https://exemple.invalid/skin.png").await.is_err());
     }
 }

@@ -1,13 +1,13 @@
 {
-  "required": true,
+  "required": false,
   "package": "fr.clovergames.client.mixin",
-  "compatibilityLevel": "JAVA_25",
+  "compatibilityLevel": "JAVA_${java}",
   "client": [
-    "EntityRendererMixin",
+    "NameTagMixin",
     "PlayerTabOverlayMixin"
   ],
   "injectors": {
-    "defaultRequire": 1
+    "defaultRequire": ${require}
   },
   "overwrites": {
     "requireAnnotations": true

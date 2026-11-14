@@ -7,7 +7,7 @@
 //! Mojang (`hasJoined`) et rend un jeton court, gardé en mémoire le temps de la session du launcher.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -17,10 +17,13 @@ use crate::{auth, game::download, site, CurrentSession};
 
 const JOIN_URL: &str = "https://sessionserver.mojang.com/session/minecraft/join";
 const TIMEOUT: Duration = Duration::from_secs(10);
+/// Après une connexion manquée, délai avant la suivante pour ce compte.
+const LOGIN_RETRY: Duration = Duration::from_secs(60);
 
-/// Jetons du site par compte (UUID avec tirets).
+/// Jetons du site par compte (UUID avec tirets). Le second verrou fait passer une seule connexion à
+/// la fois et garde, par compte, l'heure et le message du dernier échec.
 #[derive(Default)]
-pub struct SiteTokens(Mutex<HashMap<String, String>>);
+pub struct SiteTokens(Mutex<HashMap<String, String>>, Mutex<HashMap<String, (Instant, String)>>);
 
 /// Notification affichée par la cloche. Mêmes noms que `LauncherNotification` du front.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,27 +99,74 @@ async fn login(http: &reqwest::Client, base: &str, session: &auth::Session) -> R
     Ok(token.token)
 }
 
+/// Jeton du site pour le compte : celui en mémoire, sinon une connexion, une seule à la fois. Après
+/// un échec, le même pendant `LOGIN_RETRY` : chaque rafraîchissement de l'interface referait sinon
+/// un `join` chez Mojang, qui limite alors l'adresse du joueur.
+async fn token(tokens: &SiteTokens, http: &reqwest::Client, base: &str, session: &auth::Session) -> Result<String, String> {
+    let uuid = &session.profile.uuid;
+    if let Some(token) = tokens.0.lock().await.get(uuid).cloned() {
+        return Ok(token);
+    }
+    let mut failed = tokens.1.lock().await;
+    // Connecté par un autre appel pendant l'attente du verrou.
+    if let Some(token) = tokens.0.lock().await.get(uuid).cloned() {
+        return Ok(token);
+    }
+    if let Some((_, error)) = failed.get(uuid).filter(|(at, _)| at.elapsed() < LOGIN_RETRY) {
+        return Err(error.clone());
+    }
+    match login(http, base, session).await {
+        Ok(token) => {
+            failed.remove(uuid);
+            tokens.0.lock().await.insert(uuid.clone(), token.clone());
+            Ok(token)
+        }
+        Err(error) => {
+            failed.insert(uuid.clone(), (Instant::now(), error.clone()));
+            Err(error)
+        }
+    }
+}
+
 /// Requête authentifiée ; un jeton refusé (expiré) est redemandé une fois.
 pub(crate) async fn authorized(
     tokens: &SiteTokens,
     session: &auth::Session,
     send: impl Fn(&reqwest::Client, &str, &str) -> reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, String> {
+    authorized_response(tokens, session, send).await?.error_for_status().map_err(failure)
+}
+
+/// Comme `authorized`, mais une erreur HTTP (hors 401) est rendue telle quelle : l'appelant lit le
+/// message d'erreur du site (`messages.rs`).
+pub(crate) async fn authorized_response(
+    tokens: &SiteTokens,
+    session: &auth::Session,
+    send: impl Fn(&reqwest::Client, &str, &str) -> reqwest::RequestBuilder,
+) -> Result<reqwest::Response, String> {
+    authorized_until(tokens, session, Some(TIMEOUT), send).await
+}
+
+/// Sans `timeout`, la réponse peut durer (flux d'évènements) : seul le délai de lecture du client
+/// coupe une connexion muette.
+pub(crate) async fn authorized_until(
+    tokens: &SiteTokens,
+    session: &auth::Session,
+    timeout: Option<Duration>,
+    send: impl Fn(&reqwest::Client, &str, &str) -> reqwest::RequestBuilder,
+) -> Result<reqwest::Response, String> {
     let http = download::client();
     let base = site::base();
-    for attempt in 0..2 {
-        let cached = tokens.0.lock().await.get(&session.profile.uuid).cloned();
-        let token = match cached {
-            Some(token) if attempt == 0 => token,
-            _ => {
-                let token = login(&http, &base, session).await?;
-                tokens.0.lock().await.insert(session.profile.uuid.clone(), token.clone());
-                token
-            }
+    for _ in 0..2 {
+        let token = token(tokens, &http, &base, session).await?;
+        let request = send(&http, &base, &token);
+        let request = match timeout {
+            Some(timeout) => request.timeout(timeout),
+            None => request,
         };
-        let response = send(&http, &base, &token).timeout(TIMEOUT).send().await.map_err(failure)?;
+        let response = request.send().await.map_err(failure)?;
         if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-            return response.error_for_status().map_err(failure);
+            return Ok(response);
         }
         tokens.0.lock().await.remove(&session.profile.uuid);
     }
@@ -124,7 +174,7 @@ pub(crate) async fn authorized(
 }
 
 pub(crate) async fn session(current: &CurrentSession) -> Result<auth::Session, String> {
-    current.0.lock().await.clone().ok_or_else(|| "Aucun compte connecté.".to_owned())
+    current.fresh().await.ok_or_else(|| "Aucun compte connecté.".to_owned())
 }
 
 #[tauri::command]

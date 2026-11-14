@@ -16,15 +16,20 @@ pub struct Settings {
     pub auto_update: bool,
     pub beta_channel: bool,
     pub system_notifications: bool,
+    /// Son des nouveaux messages et demandes d'amis (celui du site).
+    pub message_sound: bool,
     pub scale: u32,
     pub animations: String,
     pub animated_skin: bool,
-    pub show_votes: bool,
-    /// Couleur principale (`emerald`, `diamond`…), teinte du bandeau de l'accueil (`forest`…) et
-    /// forme des coins (`rounded` ou `square`) ; valeurs lues par le front.
+    /// Couleur principale (`emerald`, `diamond`…), teinte du bandeau de l'accueil (`forest`…),
+    /// forme des coins (`rounded` ou `square`) et style des blocs (`minecraft` ou `mira`, celui de
+    /// shadcn/ui) ; valeurs lues par le front.
     pub accent: String,
     pub hero: String,
     pub corners: String,
+    pub ui_style: String,
+    /// Météo réelle chez le joueur dans le ciel de l'accueil ; désactivée, le relais n'est plus appelé.
+    pub sky_weather: bool,
     pub memory_auto: bool,
     pub memory_gb: u32,
     pub fullscreen: bool,
@@ -56,13 +61,15 @@ impl Default for Settings {
             auto_update: true,
             beta_channel: false,
             system_notifications: true,
+            message_sound: true,
             scale: 100,
             animations: "system".into(),
             animated_skin: true,
-            show_votes: true,
             accent: "emerald".into(),
             hero: "forest".into(),
             corners: "rounded".into(),
+            ui_style: "minecraft".into(),
+            sky_weather: true,
             memory_auto: true,
             memory_gb: 4,
             fullscreen: false,
@@ -164,12 +171,7 @@ impl Stored {
 
     /// Écriture atomique : un plantage pendant l'écriture ne laisse jamais un fichier tronqué.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let temporary = path.with_extension("json.tmp");
-        std::fs::write(&temporary, serde_json::to_vec_pretty(self).expect("réglages sérialisables"))?;
-        std::fs::rename(temporary, path)
+        crate::storage::write_atomically(path, &serde_json::to_vec_pretty(self).expect("réglages sérialisables"))
     }
 
     /// Ajoute ou met à jour un compte ; le premier compte ajouté devient le compte actif.

@@ -8,6 +8,18 @@ use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
 
+/// Écriture atomique : un fichier temporaire puis un renommage, pour qu'un plantage pendant
+/// l'écriture ne laisse jamais un fichier tronqué à la place de l'ancien.
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".tmp");
+    std::fs::write(&temporary, bytes)?;
+    std::fs::rename(temporary, path)
+}
+
 /// Durée de conservation des journaux réglée dans les paramètres (`logRetentionDays`) ; `None` :
 /// gardés pour toujours.
 pub fn retention(days: u32) -> Option<Duration> {
@@ -33,7 +45,7 @@ pub struct Usage {
 /// âge au-delà duquel un journal est proposé au nettoyage.
 pub fn usage(root: &Path, keep: Option<&HashSet<String>>, retention: Option<Duration>) -> Usage {
     let game = root.join("game");
-    let size = |dirs: &[PathBuf]| -> u64 { dirs.iter().map(|dir| dir_size(dir)).sum() };
+    let size = |dirs: &[PathBuf]| -> u64 { dirs.iter().map(|dir| size(dir)).sum() };
     let logs = log_dirs(root);
     // Les journaux des instances personnelles sont comptés à part.
     let instance_logs: Vec<PathBuf> = logs.iter().filter(|dir| dir.starts_with(root.join("instances"))).cloned().collect();
@@ -112,7 +124,7 @@ fn unused_versions(root: &Path, keep: &HashSet<String>) -> Vec<(PathBuf, u64)> {
         found.extend(subdirs(dir).into_iter().filter(|path| !keep.contains(&name(path))));
     }
     found.extend(subdirs(root.join("runtimes")).into_iter().filter(|path| !runtimes.contains(&name(path))));
-    found.into_iter().map(|path| { let bytes = dir_size(&path); (path, bytes) }).collect()
+    found.into_iter().map(|path| { let bytes = size(&path); (path, bytes) }).collect()
 }
 
 fn subdirs(dir: PathBuf) -> Vec<PathBuf> {
@@ -149,16 +161,13 @@ fn old_files(root: &Path, retention: Duration) -> Vec<(PathBuf, u64)> {
         .collect()
 }
 
-fn dir_size(path: &Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(path) else { return 0 };
-    entries
-        .flatten()
-        .map(|entry| match entry.file_type() {
-            Ok(kind) if kind.is_dir() => dir_size(&entry.path()),
-            Ok(kind) if kind.is_file() => entry.metadata().map_or(0, |metadata| metadata.len()),
-            _ => 0,
-        })
-        .sum()
+/// Taille d'un fichier, ou d'un dossier et de tout son contenu ; les liens ne sont pas suivis.
+pub(crate) fn size(path: &Path) -> u64 {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => std::fs::read_dir(path).map_or(0, |entries| entries.flatten().map(|entry| size(&entry.path())).sum()),
+        Ok(metadata) if metadata.is_file() => metadata.len(),
+        _ => 0,
+    }
 }
 
 #[cfg(test)]

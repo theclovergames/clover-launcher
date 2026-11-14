@@ -176,8 +176,7 @@ fn hash(path: &Path) -> Result<(String, String)> {
         sha1.update(&buffer[..read]);
         sha512.update(&buffer[..read]);
     }
-    let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-    Ok((hex(&sha1.finalize()), hex(&sha512.finalize())))
+    Ok((super::download::hex(&sha1.finalize()), super::download::hex(&sha512.finalize())))
 }
 
 /// Archive écrite à côté puis renommée : jamais de modpack à moitié écrit à la place de `out`.

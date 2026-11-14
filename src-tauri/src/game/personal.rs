@@ -210,7 +210,8 @@ fn status(jar: &Jar, minecraft: &str, loader: ModLoader) -> Status {
     }
 }
 
-fn jars(dir: &Path) -> Vec<PathBuf> {
+/// `.jar` de `dir`, triés.
+pub(crate) fn jars(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
     let mut paths: Vec<PathBuf> = entries
         .flatten()
@@ -326,7 +327,7 @@ fn newer(latest: &modrinth::Version, current: &modrinth::Version) -> bool {
 }
 
 /// Nom de fichier acceptable dans le dossier : un `.jar`, sans chemin ni fichier caché.
-fn safe_filename(name: &str) -> Option<&str> {
+pub(crate) fn safe_filename(name: &str) -> Option<&str> {
     let ok = name.to_ascii_lowercase().ends_with(".jar") && !name.starts_with('.') && !name.contains(['/', '\\', ':']) && name.len() <= 200;
     ok.then_some(name)
 }
@@ -480,6 +481,11 @@ pub async fn install_dependencies(http: &reqwest::Client, dir: &Path, files: &[S
         }
     }
     Ok(resolved)
+}
+
+/// Le `fabric.mod.json` de ce `.jar` (en mémoire) accepte-t-il `minecraft` ?
+pub(crate) fn fabric_accepts(jar: &[u8], minecraft: &str) -> bool {
+    matches!(read_jar(std::io::Cursor::new(jar)), Some(Jar::Fabric(fabric)) if fabric.minecraft().is_some_and(|ranges| ranges.iter().any(|range| accepts(range, minecraft))))
 }
 
 /// Mods du joueur à charger au lancement : activés, faits pour `loader` et pour `minecraft`.

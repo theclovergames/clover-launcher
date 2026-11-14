@@ -13,6 +13,8 @@ use super::{java, GameError, Paths, Progress, Result};
 
 const VERSION_MANIFEST_URL: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 const RESOURCES_URL: &str = "https://resources.download.minecraft.net";
+/// Java des versions dont le profil n'en nomme aucun (les plus anciennes Alpha) : Java 8 de Mojang.
+const LEGACY_JAVA: &str = "jre-legacy";
 const FABRIC_META_URL: &str = "https://meta.fabricmc.net/v2/versions/loader";
 const QUILT_META_URL: &str = "https://meta.quiltmc.org/v3/versions/loader";
 
@@ -52,6 +54,12 @@ pub(crate) struct ManifestEntry {
 #[derive(Deserialize)]
 struct AssetIndex {
     objects: BTreeMap<String, AssetObject>,
+    /// 1.6 à 1.7.2 : le jeu lit les assets par leur nom, dans `assets/virtual/<index>`.
+    #[serde(default, rename = "virtual")]
+    by_name: bool,
+    /// Avant la 1.6 : le jeu les lit dans `resources/` de son dossier.
+    #[serde(default)]
+    map_to_resources: bool,
 }
 
 #[derive(Deserialize)]
@@ -106,7 +114,7 @@ pub(crate) async fn install_version(
     let component = vanilla
         .java_version
         .as_ref()
-        .map_or("java-runtime-epsilon", |java| java.component.as_str());
+        .map_or(LEGACY_JAVA, |java| java.component.as_str());
     let java = java::install(http, &paths.runtimes, component, &|done, total| {
         progress(Progress { phase: "java", done, total })
     })
@@ -129,9 +137,11 @@ pub(crate) async fn install_version(
                 generated.push(path);
             } else {
                 // fabric-loader et les anciennes bibliothèques de Forge sont publiés sans empreinte
-                // dans le profil : la lire sur le dépôt Maven, quand il la donne.
+                // dans le profil : la lire sur le dépôt Maven, quand il la donne. Déjà sur le disque,
+                // la bibliothèque a été vérifiée à son téléchargement : pas de requête à chaque lancement.
                 let sha1 = match resolved.sha1 {
                     Some(sha1) => Some(sha1),
+                    None if path.is_file() => None,
                     None => maven_sha1(http, &resolved.url).await.ok(),
                 };
                 downloads.push(Download { url: resolved.url, path, checksum: sha1.map(Checksum::Sha1), size: resolved.size, executable: false });
@@ -210,7 +220,7 @@ pub(crate) async fn install_version(
     })
     .await?;
     let index: AssetIndex = read_json(&index_path).await?;
-    let objects: BTreeMap<String, u64> = index.objects.into_values().map(|object| (object.hash, object.size)).collect();
+    let objects: BTreeMap<String, u64> = index.objects.values().map(|object| (object.hash.clone(), object.size)).collect();
     let downloads = objects
         .into_iter()
         .map(|(hash, size)| {
@@ -225,17 +235,50 @@ pub(crate) async fn install_version(
         })
         .collect();
     download_all(http, downloads, &|done, total| progress(Progress { phase: "assets", done, total })).await?;
+    if let Some(target) = named_assets_dir(paths, &index_ref.id, &index) {
+        copy_named_assets(&paths.assets, &target, &index)?;
+    }
 
     Ok(Installation { java, vanilla, loader, classpath, logging_argument })
+}
+
+/// Où les anciennes versions lisent leurs assets par leur nom ; `None` depuis la 1.7.3.
+fn named_assets_dir(paths: &Paths, index_id: &str, index: &AssetIndex) -> Option<PathBuf> {
+    if index.map_to_resources {
+        Some(paths.game.join("resources"))
+    } else if index.by_name {
+        Some(paths.assets.join("virtual").join(index_id))
+    } else {
+        None
+    }
+}
+
+/// Copie chaque asset sous son nom (`sound/step/grass1.ogg`), sauf s'il y est déjà à la bonne taille.
+fn copy_named_assets(assets: &Path, target: &Path, index: &AssetIndex) -> Result<()> {
+    for (name, object) in &index.objects {
+        let relative = Path::new(name);
+        // Noms venus de l'index de Mojang, vérifié par son empreinte ; on refuse quand même d'en sortir.
+        if !relative.components().all(|part| matches!(part, std::path::Component::Normal(_))) || object.hash.len() < 2 {
+            continue;
+        }
+        let path = target.join(relative);
+        if std::fs::metadata(&path).is_ok_and(|meta| meta.len() == object.size) {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(assets.join("objects").join(&object.hash[..2]).join(&object.hash), &path)?;
+    }
+    Ok(())
 }
 
 /// Le JSON d'une version publiée ne change jamais : une copie locale suffit, même hors ligne.
 async fn vanilla_json(http: &reqwest::Client, paths: &Paths, id: &str) -> Result<VersionJson> {
     let path = paths.versions.join(id).join(format!("{id}.json"));
     if tokio::fs::metadata(&path).await.is_err() {
-        let manifest: VersionManifest =
-            http.get(VERSION_MANIFEST_URL).send().await?.error_for_status()?.json().await?;
-        let entry = manifest
+        let entry = version_manifest(http)
+            .await?
             .versions
             .into_iter()
             .find(|entry| entry.id == id)
@@ -262,8 +305,7 @@ pub async fn download_size(http: &reqwest::Client, paths: &Paths, minecraft: &st
     let vanilla: VersionJson = if cached.is_file() {
         read_json(&cached).await?
     } else {
-        let manifest: VersionManifest = http.get(VERSION_MANIFEST_URL).send().await?.error_for_status()?.json().await?;
-        let entry = manifest.versions.into_iter().find(|entry| entry.id == minecraft).ok_or_else(|| GameError::InvalidVersion(format!("version {minecraft} inconnue de Mojang")))?;
+        let entry = version_manifest(http).await?.versions.into_iter().find(|entry| entry.id == minecraft).ok_or_else(|| GameError::InvalidVersion(format!("version {minecraft} inconnue de Mojang")))?;
         http.get(entry.url).send().await?.error_for_status()?.json().await?
     };
     let missing = |path: PathBuf, size: Option<u64>| if path.is_file() { 0 } else { size.unwrap_or(0) };
@@ -279,7 +321,7 @@ pub async fn download_size(http: &reqwest::Client, paths: &Paths, minecraft: &st
     if let Some(index) = &vanilla.asset_index {
         total += missing(paths.assets.join("indexes").join(format!("{}.json", index.id)), Some(index.total_size));
     }
-    let component = vanilla.java_version.as_ref().map_or("java-runtime-epsilon", |java| java.component.as_str());
+    let component = vanilla.java_version.as_ref().map_or(LEGACY_JAVA, |java| java.component.as_str());
     total += java::download_size(http, &paths.runtimes, component).await?;
     Ok(total)
 }
@@ -311,11 +353,19 @@ pub(crate) fn loader_version_ids(loader: Option<Loader<'_>>, minecraft: &str, in
 async fn meta_json(http: &reqwest::Client, paths: &Paths, meta: &str, name: &str, minecraft: &str, loader: &str) -> Result<VersionJson> {
     let id = meta_id(name, minecraft, loader);
     let path = paths.versions.join(&id).join(format!("{id}.json"));
+    let download = Download { url: format!("{meta}/{minecraft}/{loader}/profile/json"), path: path.clone(), checksum: None, size: None, executable: false };
     if tokio::fs::metadata(&path).await.is_err() {
-        let url = format!("{meta}/{minecraft}/{loader}/profile/json");
-        ensure(http, &Download { url, path: path.clone(), checksum: None, size: None, executable: false }).await?;
+        ensure(http, &download).await?;
     }
-    read_json(&path).await
+    match read_json(&path).await {
+        Ok(profile) => Ok(profile),
+        // Sans empreinte à vérifier, une page d'erreur (portail Wi-Fi) a pu être gardée : retéléchargé.
+        Err(_) => {
+            tokio::fs::remove_file(&path).await?;
+            ensure(http, &download).await?;
+            read_json(&path).await
+        }
+    }
 }
 
 pub(crate) async fn maven_sha1(http: &reqwest::Client, url: &str) -> Result<String> {
@@ -338,6 +388,8 @@ fn extract_natives(archives: &[(PathBuf, Vec<String>)], dir: &Path) -> Result<()
             if entry.is_dir() || entry.name().starts_with("META-INF/") || excluded.iter().any(|prefix| entry.name().starts_with(prefix)) { continue; }
             let relative = entry.enclosed_name().ok_or_else(|| GameError::InvalidVersion("chemin de bibliothèque native invalide".into()))?;
             let target = dir.join(relative);
+            // Déjà extraite : sous Windows, une DLL chargée par un jeu ouvert ne peut pas être réécrite.
+            if std::fs::metadata(&target).is_ok_and(|metadata| metadata.len() == entry.size()) { continue; }
             if let Some(parent) = target.parent() { std::fs::create_dir_all(parent)?; }
             std::io::copy(&mut entry, &mut std::fs::File::create(target)?)?;
         }
@@ -397,9 +449,10 @@ mod instance_tests {
         let http = super::super::download::client();
         let session = crate::auth::Session { profile: crate::auth::Profile { uuid: "test".into(), name: "Joueur".into(), skin: None, capes: vec![] }, minecraft_token: "synthetic-test-token".into(), expires_at: u64::MAX };
         let options = crate::game::LaunchOptions { memory_mb: Some(2048), java_args: vec![], fullscreen: false, resolution: None, graphics_backend: None, enabled_mods: None, disabled_personal_mods: vec![], clover_mods: vec![] };
-        for id in ["1.8.9", "1.12.2", "1.16.5", "1.17.1", "1.18.2", "1.19.4", "1.20.1", "1.21.11", "26.1.2"] {
+        for id in ["a1.2.6", "b1.7.3", "1.0", "1.5.2", "1.6.4", "1.7.10", "1.8.9", "1.12.2", "1.16.5", "1.17.1", "1.18.2", "1.19.4", "1.20.1", "1.21.11", "26.1.2"] {
             let vanilla = vanilla_json(&http, &paths, id).await.unwrap();
-            assert!(vanilla.java_version.is_some());
+            // Sans `javaVersion` (Alpha, 1.6.4…) : `LEGACY_JAVA`.
+            assert!(vanilla.java_version.is_some() || !matches!(id, "1.8.9" | "1.21.11" | "26.1.2"), "{id}");
             let classpath: Vec<_> = vanilla.libraries.iter().filter(|library| allowed(&library.rules, &[])).filter_map(|library| library.resolve()).map(|library| paths.libraries.join(library.path)).collect();
             if matches!(id, "1.8.9" | "1.12.2" | "1.16.5" | "1.17.1" | "1.18.2") { assert!(vanilla.libraries.iter().any(|library| library.native().is_some()), "{id}"); }
             let installation = Installation { java: "java".into(), vanilla, loader: None, classpath, logging_argument: None };

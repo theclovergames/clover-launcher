@@ -1,3 +1,4 @@
+import { Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -5,25 +6,30 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { NotificationBell } from "@/components/NotificationBell";
-import { SideNav, TAB_LABELS } from "@/components/SideNav";
+import { type NavTab, SideNav, TAB_LABELS } from "@/components/SideNav";
 import { AccountMenu } from "@/components/AccountMenu";
 import { TitleBar } from "@/components/TitleBar";
 import { type UpdateState, UpdateToast } from "@/components/UpdateToast";
-import { VoteTicker } from "@/components/VoteTicker";
+import { MessageToast } from "@/components/MessageToast";
 import { api, type Catalogue, type MachineLevel, type ServerStatus, type SiteFeed, type SkinEntry, type Stored, type StorageUsage, type SystemInfo } from "@/lib/api";
 import { ownedCapeText } from "@/lib/capes";
-import { accent, heroTone } from "@/lib/appearance";
+import { accent, sceneOf } from "@/lib/appearance";
+import { type ChosenStatus, ONLINE, readStatus, saveStatus } from "@/lib/availability";
 import { setCrashReports } from "@/lib/crash-reports";
 import { formatLog } from "@/lib/log";
-import { networkPlayers, SITE_URL } from "@/lib/site";
+import { freshIncoming, freshRequests, previewText, sortConversations, unreadCount } from "@/lib/messages";
+import { playMessageSound } from "@/lib/message-sound";
+import { networkPlayers, SITE_URL, VOTE_URL } from "@/lib/site";
+import { fold } from "@/lib/utils";
+import { useShopAccount } from "@/lib/use-shop-account";
 import { ConsoleScreen } from "@/screens/ConsoleScreen";
 import { CrashDialog, NameDialog } from "@/screens/Dialogs";
 import { Breadcrumb } from "@/components/Breadcrumb";
 import { HomeScreen } from "@/screens/HomeScreen";
 import { InstancePanel, type InstanceDraft, newInstance } from "@/screens/InstancePanel";
 import { InstancesScreen } from "@/screens/InstancesScreen";
+import { ArticleScreen } from "@/screens/ArticleScreen";
 import { NewsScreen } from "@/screens/NewsScreen";
-import { ArticleReader, type ReaderTarget } from "@/components/ArticleReader";
 import { InstanceSettings } from "@/screens/InstanceSettings";
 import { ownLoader } from "@/lib/instances";
 import { Page } from "@/components/Page";
@@ -32,11 +38,15 @@ import { back, canGoBack, type Names, openFromCrumb, route, type Route, trail } 
 import { DiscoverScreen } from "@/screens/DiscoverScreen";
 import { sectionLabel } from "@/screens/InstanceDetail";
 import { InstanceMods, ModDetail } from "@/screens/InstanceMods";
-import { DEFAULT_IMPORT, OnboardingAccounts, OnboardingDone, OnboardingImport, type LoginState } from "@/screens/OnboardingScreen";
+import { DEFAULT_IMPORT, defaultImportMode, OnboardingAccounts, OnboardingDone, OnboardingImport, type ImportMode, type LoginState } from "@/screens/OnboardingScreen";
 import { type Account, type Settings, SettingsScreen, type SettingsTab, type HiddenSetting, type SteamState } from "@/screens/SettingsScreen";
 import { type SkinStatus, SkinsScreen } from "@/screens/SkinsScreen";
 import { ProfileScreen } from "@/screens/ProfileScreen";
-import type { Cape, ConsoleSnapshot, DetectedInstance, GameExited, ImportItem, ImportResult, ImportScan, LauncherNotification, InstanceEntry, InstanceInput, ModInfo, PersonalMod, SearchFilters, PlaySession, PlayState, Profile, Progress, SavedSkin, SkinLook, SkinModel, Tab } from "@/types";
+import { MessagesScreen } from "@/screens/MessagesScreen";
+import { LeaderboardScreen } from "@/screens/LeaderboardScreen";
+import { PlayerScreen } from "@/screens/PlayerScreen";
+import { ShopScreen } from "@/screens/ShopScreen";
+import type { Cape, ConsoleSnapshot, DetectedInstance, GameExited, ImportItem, ImportResult, ImportScan, Inbox, InboxEvent, LauncherNotification, InstanceEntry, InstanceInput, MinecraftNewsItem, ModInfo, PersonalMod, SearchFilters, PlaySession, PlayState, Profile, Progress, SavedSkin, SkinLook, SkinModel } from "@/types";
 
 /** Paquet du Microsoft Store : le Store gère les mises à jour du launcher. */
 const STORE_HIDDEN: HiddenSetting[] = ["autoUpdate"];
@@ -52,15 +62,24 @@ const STORAGE_COLORS: Record<string, string> = {
 };
 
 const SERVER_POLL_MS = 60_000;
-/** Après un échec (souvent le premier ping, lancé pendant le démarrage), on réessaie plus vite. */
+/** Après un échec (souvent le premier ping, lancé pendant le démarrage), on réessaie plus vite,
+ * puis de plus en plus espacé : des milliers de launchers ne pilonnent pas un proxy qui redémarre. */
 const SERVER_RETRY_MS = 8_000;
-/** Actualités, joueurs par mode et votes : le site les met en cache 30 s à 5 min. */
+const SERVER_RETRY_MAX_MS = 5 * 60_000;
+/** Actualités et joueurs par mode : le site les met en cache 30 s à 5 min. */
 const SITE_POLL_MS = 60_000;
 /** Les réglages sont enregistrés 300 ms après le dernier changement. */
 const SETTINGS_SAVED_MS = 600;
 /** Notifications du site : toutes les minutes fenêtre ouverte, toutes les 5 min sinon. */
 const NOTIFICATIONS_POLL_MS = 60_000;
 const NOTIFICATIONS_HIDDEN_POLL_MS = 5 * 60_000;
+/** Messages et demandes d'amis : plus souvent que la cloche, une conversation n'attend pas. */
+const INBOX_POLL_MS = 15_000;
+/** Rappel du statut au site, qui l'oublie après 3 minutes sans nouvelle. */
+const AVAILABILITY_EVERY_MS = 60_000;
+const INBOX_HIDDEN_POLL_MS = 2 * 60_000;
+/** Alerte d'un message dans le launcher, fenêtre au premier plan. */
+const MESSAGE_TOAST_MS = 8_000;
 /** Compte Minecraft lié à aucun compte du site : la cloche explique comment le lier. */
 const LINK_NOTIFICATION: LauncherNotification = {
   id: "link-account",
@@ -139,11 +158,12 @@ export default function App() {
   const [importSelected, setImportSelected] = useState<string | null>(null);
   const [importChoices, setImportChoices] = useState<Record<ImportItem, boolean>>(DEFAULT_IMPORT);
   const [importing, setImporting] = useState<{ id: string; ratio: number } | null>(null);
-  /** Installations importées et une ligne de récapitulatif pour chacune. */
-  const [imports, setImports] = useState<{ id: string; summary: string }[]>([]);
-  /** Import ouvert depuis les Instances : chaque installation devient une nouvelle instance. */
-  const [importTarget, setImportTarget] = useState<"clover" | "instance">("clover");
-  const [importedInstances, setImportedInstances] = useState<string[]>([]);
+  /** Installations importées, comment, et une ligne de récapitulatif pour chacune. */
+  const [imports, setImports] = useState<{ id: string; mode: ImportMode; summary: string }[]>([]);
+  /** Import ouvert depuis les Instances : chaque installation devient d'office une nouvelle instance. */
+  const [importFromInstances, setImportFromInstances] = useState(false);
+  /** Choix du joueur, par installation ; sans lui, `defaultImportMode`. */
+  const [importModes, setImportModes] = useState<Record<string, ImportMode>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   /** Lecture des réglages impossible au démarrage : message affiché à la place du chargement figé. */
@@ -153,9 +173,14 @@ export default function App() {
   const [stack, setStack] = useState<Route[]>([{ tab: "home" }]);
   const current = stack[stack.length - 1];
   const tab = current.tab;
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+  /** Page ouverte, lue par la relève : la conversation affichée n'a pas d'alerte. */
+  const routeRef = useRef(current);
+  routeRef.current = current;
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   /** Menu, roue dentée : une pile neuve, sans fil d'Ariane. */
-  const navigate = useCallback((next: Tab | Route) => {
+  const navigate = useCallback((next: NavTab | Route) => {
     const target = typeof next === "string" ? route(next) : next;
     if (target.tab !== "instances") setInstanceDraft(null);
     setStack([target]);
@@ -171,7 +196,7 @@ export default function App() {
   const [catalogue, setCatalogue] = useState<Catalogue | null>(null);
   const [server, setServer] = useState<ServerStatus | null>(null);
   const [serverIcons, setServerIcons] = useState<Record<string, string>>({});
-  const [feed, setFeed] = useState<SiteFeed>({ news: null, modes: null, maintenance: null, votes: null });
+  const [feed, setFeed] = useState<SiteFeed>({ news: null, modes: null, maintenance: null });
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [storage, setStorage] = useState<StorageUsage | null>(null);
   /** Mods du joueur d'une instance : celle de la page ouverte, sinon celle choisie. */
@@ -351,43 +376,71 @@ export default function App() {
     return () => unlisten.forEach((promise) => promise.then((stop) => stop()));
   }, [refreshStored, pullConsole]);
 
-  // ── Statut du serveur ──
+  // ── Statut du serveur : seulement fenêtre visible, relevé dès qu'elle réapparaît ──
   useEffect(() => {
     if (!catalogue) return;
     let cancelled = false;
+    let running = false;
+    let failures = 0;
     let timer: number | undefined;
     const ping = async () => {
-      const status = await api.serverStatus(catalogue.server.host).catch(() => null);
-      if (cancelled) return;
-      if (status) setServer(status);
-      timer = window.setTimeout(ping, status?.online ? SERVER_POLL_MS : SERVER_RETRY_MS);
+      window.clearTimeout(timer);
+      if (running) return;
+      if (!document.hidden) {
+        running = true;
+        const status = await api.serverStatus(catalogue.server.host).catch(() => null);
+        running = false;
+        if (cancelled) return;
+        if (status) setServer(status);
+        failures = status?.online ? 0 : failures + 1;
+      }
+      timer = window.setTimeout(ping, failures ? Math.min(SERVER_RETRY_MS * 2 ** (failures - 1), SERVER_RETRY_MAX_MS) : SERVER_POLL_MS);
     };
-    ping();
+    const onVisible = () => {
+      if (!document.hidden) void ping();
+    };
+    void ping();
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [catalogue]);
 
-  // ── Contenu du site : une partie illisible garde la version précédente ──
+  // ── Contenu du site : une partie illisible garde la version précédente. Fenêtre cachée (zone de
+  // notification), rien n'est demandé ; il est relevé dès qu'elle réapparaît. ──
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
+      if (document.hidden) return;
       const next = await api.siteFeed().catch(() => null);
       if (cancelled || !next) return;
       setFeed((previous) => ({
         news: next.news ?? previous.news,
         modes: next.modes ?? previous.modes,
         maintenance: next.maintenance ?? previous.maintenance,
-        votes: next.votes ?? previous.votes,
       }));
     };
-    refresh();
+    const onVisible = () => void refresh();
+    void refresh();
     const timer = window.setInterval(refresh, SITE_POLL_MS);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
+  }, []);
+
+  // Annonces de Minecraft de l'accueil, sous les articles du site quand il reste de la place.
+  // shortcut: relevées une fois par lancement, les rafraîchir avec le fil du site si les joueurs gardent le launcher ouvert des jours.
+  const [minecraftNews, setMinecraftNews] = useState<MinecraftNewsItem[]>([]);
+  useEffect(() => {
+    api
+      .newsPage()
+      .then((page) => setMinecraftNews(page.minecraft?.items ?? []))
+      .catch(() => {});
   }, []);
 
   // ── Apparence : taille de l'interface et animations ──
@@ -399,7 +452,8 @@ export default function App() {
     document.documentElement.classList.toggle("reduce-motion", settings.animations === "reduced");
     document.documentElement.dataset.accent = accent(settings.accent);
     document.documentElement.dataset.corners = settings.corners === "square" ? "square" : "rounded";
-  }, [settings?.scale, settings?.animations, settings?.accent, settings?.corners]);
+    document.documentElement.dataset.style = settings.uiStyle === "mira" ? "mira" : "minecraft";
+  }, [settings?.scale, settings?.animations, settings?.accent, settings?.corners, settings?.uiStyle]);
 
   // ── Rapports de plantage de l'interface : démarrés ou arrêtés selon l'accord du joueur ──
   useEffect(() => {
@@ -487,7 +541,104 @@ export default function App() {
   const seenNotifications = useRef<Set<string> | null>(null);
   const desktopNotifications = useRef(true);
   desktopNotifications.current = settings?.systemNotifications ?? true;
+  const messageSound = useRef(true);
+  messageSound.current = settings?.messageSound ?? true;
+  /** Statut choisi dans Messages, par compte et gardé d'un lancement à l'autre ; « Occupé » coupe sons, bulles et alertes. */
+  const statusOwner = profile?.uuid ?? null;
+  const [chosenStatus, setChosenStatus] = useState<Record<string, ChosenStatus>>({});
+  const myStatus = statusOwner ? (chosenStatus[statusOwner] ?? readStatus(statusOwner)) : ONLINE;
+  const quiet = useRef(false);
+  quiet.current = myStatus.availability === "busy";
+  const changeStatus = useCallback(
+    (next: ChosenStatus) => {
+      if (!statusOwner) return;
+      saveStatus(statusOwner, next);
+      setChosenStatus((current) => ({ ...current, [statusOwner]: next }));
+    },
+    [statusOwner],
+  );
+
+  // ── Messages entre amis : liste des conversations, pastille de la colonne, bulles du système ──
+  const [inbox, setInbox] = useState<Inbox | null>(null);
+  /** Haut des classements du site, relevé une fois : les joueurs qui passent dans le ciel de l'accueil, après les amis. */
+  const [skyCrowd, setSkyCrowd] = useState<string[]>([]);
+  useEffect(() => {
+    api
+      .leaderboard()
+      .then((boards) => setSkyCrowd([...new Set(boards.flatMap((board) => board.rows.slice(0, 3).map((row) => row.name)))]))
+      .catch(() => {});
+  }, []);
+  const [inboxError, setInboxError] = useState<string | null>(null);
+  /** Dernier message connu de chaque conversation : seuls les nouveaux font une bulle. `null` avant la première relève. */
+  const knownMessages = useRef<Map<string, number> | null>(null);
+  /** Demandes d'amis reçues déjà vues, même règle que les messages. */
+  const knownRequests = useRef<Set<string> | null>(null);
+  /** Change avec le compte : une relève partie avant le changement est ignorée. */
+  const inboxGeneration = useRef(0);
+  /** Nouveau message ou demande d'ami, montré dans le launcher quand il est au premier plan. */
+  const [messageToast, setMessageToast] = useState<{ key: string; name: string; title: string; text: string; open: Route } | null>(null);
+  const refreshInbox = useCallback(async () => {
+    const generation = inboxGeneration.current;
+    try {
+      const next = await api.messageConversations();
+      if (generation !== inboxGeneration.current) return;
+      const { known, fresh } = freshIncoming(knownMessages.current, next.conversations);
+      knownMessages.current = known;
+      const requests = freshRequests(knownRequests.current, next.requests.incoming);
+      knownRequests.current = requests.known;
+      // Fenêtre cachée ou au second plan : une bulle du système, si le réglage le permet. Au premier
+      // plan : une alerte dans le launcher, sauf pour la conversation affichée.
+      const away = document.hidden || !document.hasFocus();
+      const page = routeRef.current;
+      const shown = (uuid: string) => !away && page?.tab === "messages" && page.friend !== undefined && page.friend.replace(/-/g, "") === uuid.replace(/-/g, "");
+      const unseen = fresh.filter((conversation) => !shown(conversation.friend.uuid));
+      // Le son du site, fenêtre au premier plan ou non (les bulles du système sont muettes).
+      if ((unseen.length > 0 || requests.fresh.length > 0) && messageSound.current && !quiet.current) playMessageSound();
+      if (quiet.current) {
+        // Occupé : la pastille de Messages suffit.
+      } else if (away) {
+        if (desktopNotifications.current) {
+          for (const conversation of unseen) void api.systemNotification(`Nouveau message de ${conversation.friend.name}`, conversation.last ? previewText(conversation.last) : "").catch(() => {});
+          for (const request of requests.fresh) void api.systemNotification(`Demande d'ami de ${request.name}`, "Accepte-la dans les Messages du launcher, sur le site ou en jeu.").catch(() => {});
+        }
+      } else if (unseen.length > 0) {
+        const conversation = unseen[unseen.length - 1];
+        setMessageToast({
+          key: `m${conversation.last?.id}`,
+          name: conversation.friend.name,
+          title: unseen.length > 1 ? `${unseen.length} nouvelles conversations` : `Nouveau message de ${conversation.friend.name}`,
+          text: conversation.last ? previewText(conversation.last) : "",
+          open: { tab: "messages", friend: conversation.friend.uuid },
+        });
+      } else if (requests.fresh.length > 0) {
+        const request = requests.fresh[0];
+        setMessageToast({ key: `r${request.uuid}${request.at}`, name: request.name, title: `Demande d'ami de ${request.name}`, text: "Accepte-la ou refuse-la dans les Messages.", open: { tab: "messages" } });
+      }
+      setInbox({ ...next, conversations: sortConversations(next.conversations) });
+      setInboxError(null);
+    } catch (reason) {
+      // Site injoignable ou messages pas encore en ligne : la liste gardée reste affichée.
+      if (generation === inboxGeneration.current) setInboxError(String(reason));
+    }
+  }, []);
+  const updateInbox = useCallback((change: (inbox: Inbox) => Inbox) => setInbox((current) => current && change(current)), []);
+
   const signedIn = phase === "app" && Boolean(profile);
+
+  // Statut redit au site chaque minute tant que le launcher est ouvert (il l'oublie après 3 sans
+  // nouvelle : launcher fermé, hors ligne) ; à son échéance, retour à « En ligne ».
+  useEffect(() => {
+    if (!signedIn) return;
+    const send = () => void api.setAvailability(myStatus.availability).catch(() => {});
+    send();
+    const timer = window.setInterval(send, AVAILABILITY_EVERY_MS);
+    const expiry = myStatus.until === null ? 0 : window.setTimeout(() => changeStatus(ONLINE), Math.max(0, myStatus.until - Date.now()));
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(expiry);
+    };
+  }, [signedIn, myStatus.availability, myStatus.until, changeStatus]);
+  const { account: shopAccount, error: shopAccountError, refresh: refreshShopAccount } = useShopAccount(signedIn ? profile?.uuid ?? null : null, api.shopAccount);
   useEffect(() => {
     if (!signedIn) return;
     let cancelled = false;
@@ -518,6 +669,60 @@ export default function App() {
       window.clearTimeout(timer);
     };
   }, [signedIn, profile?.uuid]);
+
+  // Messages et demandes d'amis, toutes les 15 s (2 min fenêtre cachée) ; la page Messages relève
+  // elle-même sa liste. Un autre compte repart d'une liste vide.
+  useEffect(() => {
+    if (!signedIn) return;
+    let cancelled = false;
+    let timer = 0;
+    inboxGeneration.current += 1;
+    knownMessages.current = null;
+    knownRequests.current = null;
+    setInbox(null);
+    setInboxError(null);
+    setMessageToast(null);
+    const poll = async () => {
+      if (tabRef.current !== "messages") await refreshInbox();
+      if (!cancelled) timer = window.setTimeout(poll, document.hidden ? INBOX_HIDDEN_POLL_MS : INBOX_POLL_MS);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [signedIn, profile?.uuid, refreshInbox]);
+
+  // Flux du site : un message ou une demande d'ami relit la boîte, et le fil ouvert, aussitôt ; il
+  // dit aussi quels amis écrivent. Les relèves ci-dessus restent le filet si le flux tombe.
+  const [inboxChanges, setInboxChanges] = useState(0);
+  const [typingFriends, setTypingFriends] = useState<string[]>([]);
+  useEffect(() => {
+    if (!signedIn) return;
+    // Unique d'un rechargement à l'autre : une écoute restée côté Rust s'efface devant la nouvelle.
+    const watchId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+    let stopped = false;
+    const channel = new Channel<InboxEvent>();
+    channel.onmessage = (event) => {
+      if (stopped) return;
+      if (event.kind === "typing") return setTypingFriends(event.friends);
+      void refreshInbox();
+      setInboxChanges((count) => count + 1);
+    };
+    api.watchMessages(watchId, channel).catch((reason) => console.error("[messages]", reason));
+    return () => {
+      stopped = true;
+      setTypingFriends([]);
+      api.stopWatchingMessages(watchId).catch(() => {});
+    };
+  }, [signedIn, profile?.uuid, refreshInbox]);
+
+  // L'alerte d'un message s'efface d'elle-même au bout de 8 s.
+  useEffect(() => {
+    if (!messageToast) return;
+    const timer = window.setTimeout(() => setMessageToast(null), MESSAGE_TOAST_MS);
+    return () => window.clearTimeout(timer);
+  }, [messageToast]);
 
   const openNotification = (item: LauncherNotification) => {
     if (item.url) open(item.url.startsWith("/") ? `${SITE_URL}${item.url}` : item.url);
@@ -706,6 +911,12 @@ export default function App() {
     };
   }, [trayAvailable, trayReady, selectedInstance, navigate, startGame]);
 
+  // Pastille de la barre des tâches et de la zone de notification, comme celle de Discord.
+  const pendingCount = unreadCount(inbox?.conversations ?? []) + (inbox?.requests.incoming.length ?? 0) + notifications.filter((item) => !item.read).length;
+  useEffect(() => {
+    api.setUnreadBadge(pendingCount).catch((reason) => console.error("[pastille]", reason));
+  }, [pendingCount]);
+
   const defaultMods = useMemo(() => (catalogue?.mods ?? []).filter((mod) => mod.default && !mod.hidden && mod.available).map((mod) => mod.id), [catalogue]);
   // Le catalogue est celui de l'instance dont on ouvre la page, pas de l'instance sélectionnée.
   const enabledIdsOf = (instanceId: string) =>
@@ -743,9 +954,10 @@ export default function App() {
    * ajoutés ou modifiés depuis, la mise à jour est presque immédiate.
    */
   const detection = useRef(0);
-  const openImport = (next: "onboarding-import" | "import", target: "clover" | "instance" = "clover") => {
+  const openImport = (next: "onboarding-import" | "import", fromInstances = false) => {
     const request = ++detection.current;
-    setImportTarget(target);
+    setImportFromInstances(fromInstances);
+    setImportModes({});
     setPhase(next);
     setImportScan({ found: [], identifying: null });
     api
@@ -777,14 +989,19 @@ export default function App() {
     return () => unlisten.forEach((promise) => void promise.then((stop) => stop()));
   }, []);
 
+  const importInstance = detected?.find((entry) => entry.id === importSelected);
+  const importMode = importInstance ? (importModes[importInstance.id] ?? defaultImportMode(importInstance, importFromInstances)) : "clover";
+  const recordImport = (id: string, mode: ImportMode, summary: string) =>
+    setImports((done) => [...done.filter((entry) => entry.id !== id || entry.mode !== mode), { id, mode, summary }]);
+
   const runImport = async () => {
-    const instance = detected?.find((entry) => entry.id === importSelected);
+    const instance = importInstance;
     if (!instance || importing) return;
     setImporting({ id: instance.id, ratio: 0 });
-    if (importTarget === "instance") {
+    if (importMode === "instance") {
       try {
         await api.importAsInstance(instance.id, importChoices);
-        setImportedInstances((done) => [...done.filter((id) => id !== instance.id), instance.id]);
+        recordImport(instance.id, "instance", `${instance.launcher} · ${instance.name} : nouvelle instance`);
         await refreshInstances();
         setNotice(`Instance « ${instance.name} » créée.`);
       } catch (reason) {
@@ -804,7 +1021,7 @@ export default function App() {
       if (result.dependenciesUnchecked) setNotice("Modrinth ne répond pas : les dépendances des mods copiés n'ont pas été vérifiées. Relance l'import plus tard.");
       else if (result.missingDependencies > 0)
         setNotice(`${result.missingDependencies} dépendance${result.missingDependencies > 1 ? "s" : ""} de tes mods n'existe${result.missingDependencies > 1 ? "nt" : ""} pas pour cette version de Minecraft : désactive les mods signalés si le jeu plante.`);
-      setImports((done) => [...done.filter((entry) => entry.id !== instance.id), { id: instance.id, summary }]);
+      recordImport(instance.id, "clover", summary);
     } catch (reason) {
       setNotice(String(reason));
     } finally {
@@ -855,6 +1072,9 @@ export default function App() {
     />
   );
 
+  /** Profil d'un joueur ; le sien ouvre la page Profil du compte. */
+  const openPlayer = (name: string) => push(profile && fold(name) === fold(profile.name) ? route("profile") : { tab: "player", name });
+
   /** Ouvre Découvrir sur `kind`, pour `target` (l'instance choisie sans elle) ; `world` : monde d'un datapack. */
   const openDiscover = (kind: ContentKind, target?: string, world?: string) => push({ tab: "discover", kind, target, world });
 
@@ -865,6 +1085,7 @@ export default function App() {
     section: sectionLabel,
     kind: (kind) => CONTENT_KINDS[kind].label,
     mod: (mod) => (mod.list === "catalogue" ? modInfosOf("clover").find((other) => other.id === mod.id)?.name : personal?.mods.find((other) => other.id === mod.id)?.name) ?? "Mod",
+    friend: (uuid) => inbox?.conversations.find((conversation) => conversation.friend.uuid.replace(/-/g, "") === uuid.replace(/-/g, "").toLowerCase())?.friend.name ?? "Conversation",
   };
 
   /** Fichiers posés pendant la création d'une instance depuis un modpack. */
@@ -1043,13 +1264,14 @@ export default function App() {
     }
   };
 
-  const applySkin = async (skin: SavedSkin) => {
+  /** `cape` : celle choisie avec le skin (`null` : sans cape) ; sinon la cape portée reste. */
+  const applySkin = async (skin: SavedSkin, cape?: Cape | null) => {
     const previous = wornBefore();
     const previousId = selectedSkin;
     setSelectedSkin(skin.id);
     setSkinStatus({ kind: "busy", message: `Application de « ${skin.name} » sur ton compte…` });
     try {
-      setProfile(await api.applySkin(skin.texture, skin.model, activeCape?.id ?? null));
+      setProfile(await api.applySkin(skin.texture, skin.model, cape === undefined ? (activeCape?.id ?? null) : (cape?.id ?? null)));
       await refreshStored();
       setSkinStatus({
         kind: "done",
@@ -1063,11 +1285,11 @@ export default function App() {
   };
 
   /** Skin de la Découverte ou du compte : rangé dans la bibliothèque, puis porté si demandé. */
-  const addRemoteSkin = async (skin: { texture: string; model: SkinModel; name: string }, wear: boolean) => {
+  const addRemoteSkin = async (skin: { texture: string; model: SkinModel; name: string }, wear: boolean, cape?: Cape | null) => {
     try {
       const entry = await api.addRemoteSkin(skin.texture, skin.name, skin.model);
       setSkins(await api.listSkins());
-      if (wear) await applySkin(entry);
+      if (wear) await applySkin(entry, cape);
       else setSkinStatus({ kind: "done", message: `« ${entry.name} » ajouté à Mes skins.` });
     } catch (reason) {
       setSkinStatus({ kind: "error", message: String(reason) });
@@ -1168,8 +1390,6 @@ export default function App() {
     onClose: () => void appWindow.close(),
   };
   const open = (url: string) => void openUrl(url).catch((reason) => setNotice(`Le lien n'a pas pu être ouvert : ${reason}`));
-  /** Article ouvert dans le lecteur (blog ou note de version), depuis l'accueil ou les Actualités. */
-  const [reading, setReading] = useState<ReaderTarget | null>(null);
 
   if (startupError) {
     return (
@@ -1203,7 +1423,8 @@ export default function App() {
         {phase === "onboarding-import" || phase === "import" ? (
           <OnboardingImport
             standalone={phase === "import"}
-            target={phase === "import" ? importTarget : "clover"}
+            mode={importMode}
+            onMode={(mode) => importInstance && setImportModes((modes) => ({ ...modes, [importInstance.id]: mode }))}
             instances={detected}
             scan={importScan}
             selectedId={importSelected}
@@ -1211,12 +1432,12 @@ export default function App() {
             choices={importChoices}
             onChoice={(item, value) => setImportChoices((choices) => ({ ...choices, [item]: value }))}
             importing={importing}
-            imported={phase === "import" && importTarget === "instance" ? importedInstances : imports.map((entry) => entry.id)}
+            imported={imports}
             onImport={() => void runImport()}
             onBack={() => setPhase("onboarding-accounts")}
             onContinue={() => {
               setPhase(phase === "import" ? "app" : "onboarding-done");
-              if (phase === "import" && importTarget === "instance") navigate("instances");
+              if (phase === "import" && (importFromInstances || imports.some((entry) => entry.mode === "instance"))) navigate("instances");
             }}
           />
         ) : phase === "onboarding-done" ? (
@@ -1280,33 +1501,49 @@ export default function App() {
       <TitleBar
         {...chrome}
         session={profile ? { tab, onTab: navigate } : undefined}
+        playing={running.length > 0}
         account={
           profile && (
             <AccountMenu
               profile={profile}
+              credits={shopAccount?.credits ?? null}
+              pieces={shopAccount?.pieces ?? null}
               skin={profile.skin?.url ?? activeAccount?.skinUrl ?? null}
               accounts={accounts}
               onUse={useAccount}
               onRemove={removeAccount}
               onAdd={addAccount}
               onRename={() => setRenaming(true)}
+              onOpenLink={open}
             />
           )
         }
-        activity={settings.showVotes && feed.votes ? <VoteTicker votes={feed.votes} onVote={() => open(`${SITE_URL}/vote`)} /> : undefined}
         notifications={<NotificationBell items={notifications} error={notificationsError} onOpen={openNotification} onReadAll={readAllNotifications} />}
       />
 
       {/* Panneaux flottants : l'accueil pose ses propres blocs, les autres écrans tiennent dans un seul. */}
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
-        <SideNav tab={tab} onTab={navigate} head={profile?.skin?.url ?? activeAccount?.skinUrl ?? null} />
-        <div className={tab === "home" ? "flex min-w-0 flex-1 flex-col gap-2" : "tile flex min-w-0 flex-1 flex-col overflow-hidden"}>
+        <SideNav
+          tab={stack[0].tab}
+          onTab={navigate}
+          head={profile?.skin?.url ?? activeAccount?.skinUrl ?? null}
+          unread={unreadCount(inbox?.conversations ?? [])}
+          requests={inbox?.requests.incoming.length ?? 0}
+        />
+        <div className={tab === "home" ? "flex min-h-0 min-w-0 flex-1 flex-col gap-2" : "tile flex min-w-0 flex-1 flex-col overflow-hidden"}>
           {tab !== "home" && canGoBack(stack) && <Breadcrumb crumbs={trail(current, names)} onBack={goBack} onOpen={openCrumb} />}
           {tab === "home" && (
             <HomeScreen
               playerName={profile?.name ?? activeAccount?.name ?? ""}
               look={look}
-              heroTone={heroTone(settings.hero)}
+              scene={sceneOf(settings.hero)}
+              skyWeather={settings.skyWeather}
+              skyPlayers={[
+                ...new Set([
+                  ...[...(inbox?.conversations ?? [])].sort((a, b) => Number(b.friend.online) - Number(a.friend.online)).map((conversation) => conversation.friend.name),
+                  ...skyCrowd,
+                ]),
+              ].filter((name) => name !== profile?.name)}
               animateSkin={settings.animatedSkin && settings.animations !== "reduced"}
               onOpenConsole={() => push(route("console"))}
               play={play}
@@ -1336,16 +1573,34 @@ export default function App() {
               onRenameError={setNotice}
               onPlayServer={(address) => { startGame("clover", () => selectInstance("clover").then(() => api.playServer(address))); }}
               news={feed.news ?? []}
+              minecraftNews={minecraftNews}
+              onReadMinecraft={(item) => {
+                if (item.readable) push({ tab: "news", article: { source: "minecraft", item } });
+                else if (item.url) open(item.url);
+              }}
+              sessions={sessions}
               maintenance={feed.maintenance === true}
-              onOpenLink={open}
               onOpenNews={() => push(route("news"))}
+              onOpenActivity={() => navigate("profile")}
+              onVote={() => open(VOTE_URL)}
+              friends={inbox && inbox.conversations.filter((conversation) => conversation.isFriend).map((conversation) => conversation.friend)}
+              onWrite={(friend) => push({ tab: "messages", friend })}
+              onOpenPlayer={openPlayer}
+              onOpenFriends={() => navigate("messages")}
+              onOpenLeaderboard={() => navigate("leaderboard")}
               onReadNews={(item) =>
-                item.slug ? setReading({ source: "clover", slug: item.slug, title: item.title, category: item.category ?? null, publishedAt: item.publishedAt, url: item.url }) : open(item.url)
+                item.slug ? push({ tab: "news", article: { source: "clover", slug: item.slug, title: item.title, category: item.category ?? null, publishedAt: item.publishedAt, url: item.url } }) : open(item.url)
               }
             />
           )}
 
-          {tab === "news" && <NewsScreen onOpenLink={open} onRead={setReading} />}
+          {/* Liste gardée sous l'article : filtre, défilement et actualités chargées restent au retour. */}
+          {current.tab === "news" && (
+            <div className={current.article ? "hidden" : "contents"}>
+              <NewsScreen onOpenLink={open} onRead={(article) => push({ tab: "news", article })} />
+            </div>
+          )}
+          {current.tab === "news" && current.article && <ArticleScreen target={current.article} onOpenLink={open} />}
 
           {current.tab === "instances" && current.mod && (
             <Page>
@@ -1388,9 +1643,27 @@ export default function App() {
                   .then((pack) => pack && setNotice(`Modpack exporté : ${pack.listed} fichier${pack.listed > 1 ? "s" : ""} pris sur Modrinth, ${pack.included} inclus.`))
                   .catch((reason) => setNotice(String(reason)))
               }
+              onUpdateModpack={(id, version) =>
+                api
+                  .updateModpack(id, version)
+                  .then(async () => {
+                    await refreshInstances();
+                    refreshPersonalMods(id);
+                    setContentRevision((value) => value + 1);
+                    setNotice("Modpack mis à jour : tes réglages et tes propres mods sont restés.");
+                  })
+                  .catch((reason) => {
+                    setNotice(String(reason));
+                    throw reason;
+                  })
+              }
               onCreate={(minecraft) => setInstanceDraft(newInstance(minecraft))}
               serverNames={stored.serverNames}
               onRenameServer={renameServer}
+              onOpenConsole={(id) => {
+                setConsoleInstance(id);
+                push(route("console"));
+              }}
               renderSettings={(entry) => (
                 <InstanceSettings
                   entry={entry}
@@ -1406,7 +1679,7 @@ export default function App() {
               renderMods={modsTab}
               contentRevision={contentRevision}
               onSearch={openDiscover}
-              onImport={() => openImport("import", "instance")}
+              onImport={() => openImport("import", true)}
               onPin={(id, pinned) => api.setInstancePinned(id, pinned).then(refreshInstances).catch((reason) => setNotice(String(reason)))}
               onDuplicate={(id) =>
                 api
@@ -1472,7 +1745,7 @@ export default function App() {
               onWornModel={(model) => void wearModel(model)}
               onSkinModel={(skin, model) => void setSkinModel(skin, model)}
               capes={(profile.capes ?? []).map(toCape)}
-              onRemoteSkin={(skin, wear) => void addRemoteSkin(skin, wear)}
+              onRemoteSkin={(skin, wear, cape) => void addRemoteSkin(skin, wear, cape)}
               onWearCape={(cape) => void wearCape(cape)}
               onExport={(skin) => void exportSkin(skin)}
               status={skinStatus}
@@ -1492,7 +1765,64 @@ export default function App() {
               onPlay={(mode) => startGame("clover", () => selectInstance("clover").then(() => (mode ? api.play(mode) : api.playInstance("clover"))))}
               onRename={() => setRenaming(true)}
               onOpenSkins={() => push(route("skins"))}
+              onWrite={(friend) => push({ tab: "messages", friend })}
+              onOpenPlayer={openPlayer}
               onOpenLink={open}
+            />
+          )}
+
+          {current.tab === "shop" && (
+            <ShopScreen
+              key={profile?.uuid}
+              account={shopAccount}
+              accountError={shopAccountError}
+              onRefreshAccount={refreshShopAccount}
+              category={current.category}
+              product={current.product}
+              onCategory={(category) => replace({ tab: "shop", category })}
+              onOpenProduct={(product) => push({ tab: "shop", category: current.category, product })}
+              onOpenPlayer={openPlayer}
+              onOpenLink={open}
+              onNotice={setNotice}
+            />
+          )}
+
+          {tab === "leaderboard" && profile && <LeaderboardScreen me={{ uuid: profile.uuid, name: profile.name }} onOpenPlayer={openPlayer} onOpenLink={open} />}
+
+          {current.tab === "player" && profile && (
+            <PlayerScreen
+              key={current.name.toLowerCase()}
+              name={current.name}
+              modes={(catalogue?.modes ?? []).map((mode) => ({ id: mode.id, name: mode.name, icon: mode.image, quickPlay: Boolean(mode.host) }))}
+              friend={inbox?.conversations.find((conversation) => conversation.canWrite && fold(conversation.friend.name) === fold(current.name))?.friend ?? null}
+              animateSkin={settings.animatedSkin && settings.animations !== "reduced"}
+              playBusy={playFor("clover").kind !== "ready" || Boolean(launching)}
+              onPlay={(mode) => startGame("clover", () => selectInstance("clover").then(() => api.play(mode)))}
+              onWrite={(friend) => push({ tab: "messages", friend })}
+              onOpenLink={open}
+              onFriendsChanged={() => void refreshInbox()}
+              onNotice={setNotice}
+            />
+          )}
+
+          {current.tab === "messages" && profile && (
+            <MessagesScreen
+              friend={current.friend ?? null}
+              onOpen={(friend) => replace({ tab: "messages", ...(friend ? { friend } : {}) })}
+              inbox={inbox}
+              inboxError={inboxError}
+              refreshInbox={refreshInbox}
+              updateInbox={updateInbox}
+              changes={inboxChanges}
+              typing={typingFriends}
+              modes={(catalogue?.modes ?? []).map((mode) => ({ id: mode.id, name: mode.name, quickPlay: Boolean(mode.host) }))}
+              playBusy={playFor("clover").kind !== "ready" || Boolean(launching)}
+              onPlay={(mode) => startGame("clover", () => selectInstance("clover").then(() => api.play(mode)))}
+              onNotice={setNotice}
+              onOpenPlayer={openPlayer}
+              me={profile?.name ?? activeAccount?.name ?? ""}
+              status={myStatus}
+              onStatus={changeStatus}
             />
           )}
 
@@ -1564,7 +1894,6 @@ export default function App() {
         />
       )}
 
-      <ArticleReader target={reading} onClose={() => setReading(null)} onOpenLink={open} />
 
       <CrashDialog
         open={crash !== null}
@@ -1583,6 +1912,19 @@ export default function App() {
 
       <div className="fixed right-4 bottom-4 z-50 flex flex-col items-end gap-3">
         {update && <UpdateToast update={update} onInstall={() => void installUpdate()} onDismiss={() => setUpdate(null)} />}
+        {messageToast && (
+          <MessageToast
+            key={messageToast.key}
+            name={messageToast.name}
+            title={messageToast.title}
+            text={messageToast.text}
+            onOpen={() => {
+              push(messageToast.open);
+              setMessageToast(null);
+            }}
+            onDismiss={() => setMessageToast(null)}
+          />
+        )}
         {noticeToast}
       </div>
     </div>

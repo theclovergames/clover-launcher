@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::storage::write_atomically;
+
 const APP_NAME: &str = "Clover Games";
 /// Images de la bibliothèque (scripts/steam-art.py) : suffixes de fichier attendus par Steam.
 const ART: [(&str, &[u8]); 5] = [
@@ -299,16 +301,6 @@ pub fn status() -> State {
     } else {
         State::Ready
     }
-}
-
-fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut temporary = path.as_os_str().to_owned();
-    temporary.push(".tmp");
-    std::fs::write(&temporary, bytes)?;
-    std::fs::rename(temporary, path)
 }
 
 /// Ajoute (`add`) ou retire le raccourci dans `config` (un compte Steam).

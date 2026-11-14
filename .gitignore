@@ -33,6 +33,10 @@ task_plan.md
 findings.md
 progress.md
 /design/
+PRODUCT.md
+DESIGN.md
+DESIGN.json
+omp.cache
 
 # Manifeste généré et signé par scripts/manifest.mjs
 /manifest/dist/

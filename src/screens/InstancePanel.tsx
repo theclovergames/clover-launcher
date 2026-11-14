@@ -182,7 +182,8 @@ function Form({ draft, onClose, onSave, existing, serverVersion, onImportModpack
   // Clover suit la version du serveur, celle de l'instance Clover Games.
   const shown = personal ? input.minecraft : (serverVersion ?? input.minecraft);
   // Clover ne se propose que sur la version du serveur ; ailleurs, on revient à Vanilla.
-  const cloverAllowed = Boolean(serverVersion && input.minecraft && versionFamily(input.minecraft) === versionFamily(serverVersion));
+  // Une préversion de la même famille ne suffit pas : les mods Clover visent la version sortie.
+  const cloverAllowed = Boolean(serverVersion && input.minecraft && versionFamily(input.minecraft) === versionFamily(serverVersion) && !versions.find((entry) => entry.id === input.minecraft)?.snapshot);
   const kinds = KIND_ORDER.filter((kind) => kind !== "clover" || cloverAllowed);
   useEffect(() => {
     if (input.minecraft && !cloverAllowed && input.kind === "clover") setInput((current) => ({ ...current, kind: "vanilla" }));

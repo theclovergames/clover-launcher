@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::Value;
-use sha1::{Digest, Sha1};
 
 use super::download::{download_all, ensure, Checksum, Download};
 use super::version::{maven_path, VersionJson};
@@ -29,6 +28,8 @@ const NEOFORGE_VERSIONS: &str = "https://maven.neoforged.net/api/maven/versions/
 const MOJANG_LIBRARIES: &str = "https://libraries.minecraft.net/";
 /// Installation terminée pour ce profil : les processeurs ne sont pas relancés.
 const DONE_MARKER: &str = ".clover-loader-installed";
+/// Durée maximale d'une étape de l'installateur ; la plus longue (décompilation) prend une minute ou deux.
+const PROCESSOR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flavor {
@@ -240,11 +241,12 @@ pub async fn prepare(http: &reqwest::Client, paths: &Paths, flavor: Flavor, mine
     let installer = paths.libraries.join(&relative);
     let url = format!("{repository}/{relative}");
     // L'installateur est exécuté : sans empreinte publiée par le dépôt, on refuse de le télécharger.
-    // Hors ligne, celui déjà sur le disque sert tel quel, pour lancer une instance installée.
-    let sha1 = match super::install::maven_sha1(http, &url).await {
-        Ok(sha1) => Some(Checksum::Sha1(sha1)),
-        Err(_) if installer.is_file() => None,
-        Err(_) => return Err(GameError::InvalidVersion(format!("empreinte de l'installateur {} {loader} introuvable", flavor.label()))),
+    // Déjà sur le disque, il a été vérifié à son téléchargement et sert tel quel (hors ligne compris).
+    let sha1 = if installer.is_file() {
+        None
+    } else {
+        let sha1 = super::install::maven_sha1(http, &url).await;
+        Some(Checksum::Sha1(sha1.map_err(|_| GameError::InvalidVersion(format!("empreinte de l'installateur {} {loader} introuvable", flavor.label())))?))
     };
     ensure(http, &Download { url, path: installer.clone(), checksum: sha1, size: None, executable: false })
         .await
@@ -267,9 +269,8 @@ pub async fn prepare(http: &reqwest::Client, paths: &Paths, flavor: Flavor, mine
     };
     let parsed: VersionJson = serde_json::from_value(version.clone())?;
     crate::instances::validate_version_id(&parsed.id)?;
-    let dir = paths.versions.join(&parsed.id);
-    tokio::fs::create_dir_all(&dir).await?;
-    tokio::fs::write(dir.join(format!("{}.json", parsed.id)), serde_json::to_vec_pretty(&version)?).await?;
+    // Écrit d'un coup : un JSON tronqué par une coupure empêcherait tout lancement suivant.
+    crate::storage::write_atomically(&paths.versions.join(&parsed.id).join(format!("{}.json", parsed.id)), &serde_json::to_vec_pretty(&version)?)?;
     Ok(Prepared { profile: parsed, flavor, installer, install, legacy_jar })
 }
 
@@ -291,18 +292,15 @@ fn extract_bundled(prepared: &Prepared, paths: &Paths) -> Result<()> {
         if target.is_file() {
             continue;
         }
-        let bytes = read_entry(&mut archive, &name)?;
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&target, bytes)?;
+        // Atomique : un jar coupé en pleine écriture serait gardé, `is_file` ne vérifiant rien d'autre.
+        crate::storage::write_atomically(&target, &read_entry(&mut archive, &name)?)?;
     }
     Ok(())
 }
 
+/// En flux : les sorties des processeurs sont des jars du jeu entier.
 fn sha1_of(path: &Path) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    Some(Sha1::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect())
+    super::download::sha1(path).ok()
 }
 
 /// Classe principale déclarée par le `MANIFEST.MF` d'un processeur.
@@ -431,7 +429,12 @@ pub async fn finish(
         command.arg("-cp").arg(&classpath).arg(&class).args(&arguments).current_dir(&work).stdin(std::process::Stdio::null());
         #[cfg(windows)]
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW : pas de console qui clignote.
-        let output = command.output().await.map_err(GameError::Spawn)?;
+        // Un processeur figé (antivirus, disque saturé) ne doit pas bloquer « Jouer » sans fin.
+        command.kill_on_drop(true);
+        let output = tokio::time::timeout(PROCESSOR_TIMEOUT, command.output())
+            .await
+            .map_err(|_| GameError::InvalidVersion(format!("l'installation de {} ne répond plus (étape {}/{}, plus de 10 minutes)", prepared.flavor.label(), index + 1, steps.len())))?
+            .map_err(GameError::Spawn)?;
         if !output.status.success() {
             let text = String::from_utf8_lossy(&output.stderr).into_owned() + &String::from_utf8_lossy(&output.stdout);
             let tail: Vec<&str> = text.lines().rev().filter(|line| !line.trim().is_empty()).take(4).collect();

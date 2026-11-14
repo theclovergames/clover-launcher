@@ -2,12 +2,11 @@
  * Appels au cœur Rust (commandes Tauri de `src-tauri/src/lib.rs`), typés pour l'interface.
  * Les erreurs arrivent en texte français, prêtes à afficher.
  */
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { type Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { Instance, InstanceEntry, InstanceInput, InstanceKind, AvailableVersion, ContentEntry, ContentFolder, PlaySession } from "@/types";
 
 import type { Settings, SteamState } from "@/screens/SettingsScreen";
-import type { RecentVote } from "@/components/VoteTicker";
-import type { ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats } from "@/types";
+import type { Availability, ConsoleSnapshot, DetectedInstance, ExportedModpack, ExportParts, GameLogFile, LaunchRequest, LogEntry, ImportItem, ImportResult, ImportedModpack, LauncherNotification, LauncherUpdate, ModCategory, ModpackUpdate, ModpackVersion, ModrinthKind, ModrinthPage, ModrinthProject, SearchFilters, BlogArticle, ChangelogArticle, MinecraftArticle, NewsItem, NewsPage, PersonalMod, Profile, RecentServer, SkinModel, SkinOrder, SkinTag, CommunitySkin, CatalogueCape, CapeWearers, PlayerLook, PlayerStats, ChatMessage, GifPage, Inbox, InboxEvent, LauncherRewards, Thread, LeaderboardBoard, OtherPlayer, RequestSent, ShopAccount, ShopCatalog, ShopProduct, ShopPaid, Weather } from "@/types";
 
 export type AccountRef = { uuid: string; name: string; skinUrl: string | null };
 
@@ -36,7 +35,7 @@ export type Catalogue = {
   presets?: Partial<Record<MachineLevel, unknown>>;
   fabric: { loader: string };
   server: { host: string };
-  /** `soon` : annoncé mais pas encore ouvert (carte « Bientôt »). */
+  /** `soon` : annoncé mais pas encore ouvert (carte « En développement »). */
   modes: { id: string; name: string; image: string | null; host?: string; soon?: boolean }[];
   mods: {
     id: string;
@@ -59,7 +58,6 @@ export type SiteFeed = {
   modes: { id: string; online: boolean | null; players: number | null }[] | null;
   /** Maintenance annoncée sur le site ; `null` si la route n'a pas répondu. */
   maintenance: boolean | null;
-  votes: RecentVote[] | null;
 };
 /** `store` : lancé depuis le paquet du Microsoft Store (mises à jour par le Store). */
 /** Niveau de la machine, qui choisit les réglages recommandés. */
@@ -93,6 +91,7 @@ export const api = {
   trayAction: (action: "open" | "play" | "instances" | "settings" | "quit") => invoke<void>("tray_menu_action", { action }),
   hideTrayMenu: () => invoke<void>("hide_tray_menu"),
   setTrayState: (available: boolean, canPlay: boolean) => invoke<void>("set_tray_state", { available, canPlay }),
+  setUnreadBadge: (count: number) => invoke<void>("set_unread_badge", { count }),
   listInstances: () => invoke<InstanceEntry[]>("list_instances"),
   instanceVersions: () => invoke<AvailableVersion[]>("instance_versions"),
   /** Octets à télécharger avant de jouer à cette version (0 si déjà installée). */
@@ -163,6 +162,7 @@ export const api = {
   siteFeed: () => invoke<SiteFeed>("site_feed"),
   /** Page Actualités : blog de Clover Games et annonces officielles de Minecraft. */
   newsPage: () => invoke<NewsPage>("news_page"),
+  changelogArticle: (slug: string) => invoke<ChangelogArticle>("changelog_article", { slug }),
   /** Article du blog de Clover Games, lu dans le launcher. */
   blogArticle: (slug: string) => invoke<BlogArticle>("blog_article", { slug }),
   /** Note de version Minecraft complète. */
@@ -221,10 +221,58 @@ export const api = {
   discoverCapes: () => invoke<CatalogueCape[]>("discover_capes"),
   capeWearers: (labyId: string) => invoke<CapeWearers>("cape_wearers", { labyId }),
   playerLook: (name: string) => invoke<PlayerLook | null>("player_look", { name }),
+  /** Temps qu'il fait chez le joueur ; `null` sans relais ni position. */
+  weather: () => invoke<Weather | null>("weather"),
   /** Pseudo du compte actif : Mojang n'en permet qu'un changement tous les 30 jours. */
   nameChangeInfo: () => invoke<NameChange>("name_change_info"),
   /** Statistiques Clover Games du compte actif (`/api/launcher/profile` du site). */
   playerStats: () => invoke<PlayerStats>("player_stats"),
+  /** Récompenses du launcher du compte actif : cadeau de bienvenue et série du jour (`/api/launcher/rewards`). */
+  launcherRewards: () => invoke<LauncherRewards>("launcher_rewards"),
+  /** Profil d'un autre joueur, par son pseudo, et son lien avec le compte actif ; `null` s'il n'est jamais venu sur le serveur. */
+  playerProfile: (name: string) => invoke<OtherPlayer | null>("player_profile", { name }),
+  /** Tableaux du classement du site (100 premiers de chacun). */
+  leaderboard: () => invoke<LeaderboardBoard[]>("leaderboard"),
+  shopCatalog: () => invoke<ShopCatalog>("shop_catalog"),
+  /** Fiche complète d'un produit ; `null` s'il n'est plus en vente. */
+  shopProduct: (id: string) => invoke<ShopProduct | null>("shop_product", { id }),
+  shopAccount: () => invoke<ShopAccount>("shop_account"),
+  /** Adresse de la page de paiement Stripe, à ouvrir dans le navigateur ; `gift` : pseudo du joueur à qui l'offrir. */
+  shopCheckout: (product: string, gift: string | null) => invoke<string>("shop_checkout", { product, gift }),
+  shopPayCredits: (product: string, gift: string | null) => invoke<ShopPaid>("shop_pay_credits", { product, gift }),
+  shopPayPieces: (product: string, gift: string | null) => invoke<ShopPaid>("shop_pay_pieces", { product, gift }),
+  /** Demande d'ami par pseudo ; `accepted` si ce joueur avait déjà demandé. */
+  sendFriendRequest: (name: string) => invoke<RequestSent>("send_friend_request", { name }),
+  /** Accepter ou refuser une demande reçue, annuler une demande envoyée. */
+  answerFriendRequest: (player: string, action: "accept" | "decline" | "cancel") => invoke<void>("answer_friend_request", { player, action }),
+  /** Retirer un ami, par son UUID ; la conversation reste, en lecture seule. */
+  removeFriend: (friend: string) => invoke<void>("remove_friend", { friend }),
+  /** Conversations avec les amis du compte actif (`messages.rs`), pour la page Messages et sa pastille. */
+  messageConversations: () => invoke<Inbox>("message_conversations"),
+  watchMessages: (watchId: number, onEvent: Channel<InboxEvent>) => invoke<void>("watch_messages", { watchId, onEvent }),
+  stopWatchingMessages: (watchId: number) => invoke<void>("stop_watching_messages", { watchId }),
+  /** Statut choisi dans Messages, redit chaque minute (`set_availability`). */
+  setAvailability: (availability: Availability) => invoke<void>("set_availability", { availability }),
+  /** Page d'une conversation : les 50 derniers messages, ceux d'avant `before` ou d'après `after` ; `since` ajoute les modifiés. */
+  messageThread: (friend: string, page: { before?: number; after?: number; since?: number } = {}) =>
+    invoke<Thread>("message_thread", { friend, before: page.before ?? null, after: page.after ?? null, since: page.since ?? null, limit: null }),
+  sendMessage: (friend: string, body: string, replyTo?: number) => invoke<ChatMessage>("send_message", { friend, body, replyTo: replyTo ?? null }),
+  /** GIF choisi dans la recherche : le site le retrouve chez Giphy par son identifiant. */
+  sendGif: (friend: string, gifId: string, replyTo?: number) => invoke<ChatMessage>("send_gif", { friend, gifId, replyTo: replyTo ?? null }),
+  editMessage: (friend: string, id: number, body: string) => invoke<ChatMessage>("edit_message", { friend, id, body }),
+  /** Un émoji (le même une seconde fois le retire, un autre le remplace), `null` retire sa réaction. */
+  reactMessage: (friend: string, id: number, emoji: string | null) => invoke<ChatMessage>("react_message", { friend, id, emoji }),
+  /** `forAll` : supprimé pour l'ami aussi (ses propres messages seulement). */
+  deleteMessage: (friend: string, id: number, forAll: boolean) => invoke<void>("delete_message", { friend, id, forAll }),
+  markMessagesRead: (friend: string, upTo: number) => invoke<void>("mark_messages_read", { friend, upTo }),
+  /** « En train d'écrire » à `friend`, redit au plus toutes les 3 s pendant la frappe ; `false` l'efface. */
+  sendTyping: (friend: string, typing: boolean) => invoke<void>("send_typing", { friend, typing }),
+  /** Archiver, couper les notifications, ou vider la conversation (pour soi). */
+  setConversationState: (friend: string, state: { archived?: boolean; muted?: boolean; clear?: boolean }) =>
+    invoke<void>("conversation_state", { friend, archived: state.archived ?? null, muted: state.muted ?? null, clear: state.clear ?? null }),
+  reportMessage: (friend: string, id: number, reason: string) => invoke<void>("report_message", { friend, id, reason }),
+  /** GIF de Giphy par le site ; les tendances sans recherche. */
+  searchGifs: (query: string, offset = 0) => invoke<GifPage>("search_gifs", { query: query.trim() || null, offset }),
   /** Enregistre une image PNG (carte de profil) là où le joueur le choisit ; `null` s'il annule. */
   savePng: async (png: Blob, name: string) =>
     invoke<string | null>("save_png", new Uint8Array(await png.arrayBuffer()), { headers: { "x-filename": encodeURIComponent(name) } }),
@@ -261,6 +309,10 @@ export const api = {
   modpackVersions: (project: string) => invoke<ModpackVersion[]>("modpack_versions", { project }),
   /** `version` : celle choisie sur la page du modpack ; la dernière stable sans elle. */
   installModpack: (project: string, version?: string) => invoke<string>("install_modpack", { project, version: version ?? null }),
+  /** Version plus récente du modpack de l'instance, pour sa version de Minecraft ; `null` si elle est à jour. */
+  modpackUpdate: (id: string) => invoke<ModpackUpdate | null>("modpack_update", { id }),
+  /** Installe la version `version` du modpack ; les réglages du joueur et ses propres mods restent. */
+  updateModpack: (id: string, version: string) => invoke<void>("update_modpack", { id, version }),
   /** Crée et choisit une instance depuis un `.mrpack` ou un `.zip` CurseForge choisi par le joueur ; `null` s'il annule. */
   importModpackFile: () => invoke<ImportedModpack | null>("import_modpack_file"),
   /** `mode` : identifiant d'un mode du manifeste à rejoindre directement, absent pour le menu du jeu. */

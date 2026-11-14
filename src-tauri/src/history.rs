@@ -76,7 +76,8 @@ impl History {
         let mut sessions = self.0.lock().expect("parties");
         let Some(mut session) = take_latest(&mut sessions, instance) else { return };
         write_pending(root, &sessions);
-        drop(sessions);
+        // Verrou gardé jusqu'à l'enregistrement : deux parties qui se ferment ensemble relisent
+        // chacune l'historique complété par l'autre.
         session.seconds = instances::now().saturating_sub(session.started);
         session.code = code;
         record(root, session);
@@ -92,7 +93,7 @@ impl History {
             sessions.remove(index);
             write_pending(root, &sessions);
         }
-        drop(sessions);
+        // Verrou gardé jusqu'à l'enregistrement, comme `finish`.
         recover(root, session, game_dir, last_server);
     }
 }
@@ -165,7 +166,7 @@ fn write_pending(root: &Path, sessions: &[Session]) {
             _ => Ok(()),
         }
     } else {
-        std::fs::create_dir_all(root).and_then(|()| std::fs::write(pending_path(root), serde_json::to_vec(sessions).expect("parties sérialisables")))
+        crate::storage::write_atomically(&pending_path(root), &serde_json::to_vec(sessions).expect("parties sérialisables"))
     };
     if let Err(e) = result {
         eprintln!("[history] partie en cours non notée : {e}");
@@ -176,12 +177,8 @@ fn load(root: &Path) -> Vec<Session> {
     std::fs::read(path(root)).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
 }
 
-/// Écriture atomique, comme `launcher.json`.
 fn save(root: &Path, sessions: &[Session]) -> std::io::Result<()> {
-    std::fs::create_dir_all(root)?;
-    let temporary = path(root).with_extension("json.tmp");
-    std::fs::write(&temporary, serde_json::to_vec(sessions)?)?;
-    std::fs::rename(temporary, path(root))
+    crate::storage::write_atomically(&path(root), &serde_json::to_vec(sessions)?)
 }
 
 /// Parties de l'instance, de la plus ancienne à la plus récente.
