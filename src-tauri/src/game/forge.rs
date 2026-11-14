@@ -284,8 +284,9 @@ fn extract_bundled(prepared: &Prepared, paths: &Paths) -> Result<()> {
     }
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|_| GameError::InvalidVersion("installateur illisible".into()))?;
-        if let Some(relative) = entry.name().strip_prefix("maven/").filter(|name| !name.is_empty() && !entry.is_dir()) {
-            wanted.push((entry.name().to_owned(), safe_join(&paths.libraries, relative)?));
+        let name = entry.name().map_err(|_| GameError::InvalidVersion("installateur illisible".into()))?;
+        if let Some(relative) = name.strip_prefix("maven/").filter(|name| !name.is_empty() && !entry.is_dir()) {
+            wanted.push((name.to_string(), safe_join(&paths.libraries, relative)?));
         }
     }
     for (name, target) in wanted {
