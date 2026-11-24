@@ -649,7 +649,14 @@ function Storage({ settings, onChange, storage, onOpenGameDir, onImport, onChang
         {!hidden.includes("changeGameDir") && (
           moving !== null ? (
             <div className="flex items-center gap-3" aria-live="polite">
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
+              <div
+                role="progressbar"
+                aria-label="Déplacement du dossier du launcher"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(moving * 100)}
+                className="h-2 flex-1 overflow-hidden rounded-full bg-secondary"
+              >
                 <div className="h-full bg-primary transition-[width]" style={{ width: `${Math.round(moving * 100)}%` }} />
               </div>
               <span className="font-pixel text-[12px]">{Math.round(moving * 100)} %</span>

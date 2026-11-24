@@ -175,6 +175,20 @@
   }
 }
 
+/* Spinner « bloc » (`ui/spinner`) : chaque case s'allume puis s'éteint, tour à tour. */
+@theme {
+  --animate-block-chase: block-chase 0.8s linear infinite;
+
+  @keyframes block-chase {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0.15;
+    }
+  }
+}
+
 /*
  * Ciel de l'accueil (`HomeSky`) : les nuages dérivent de gauche à droite et le soleil respire ; les
  * joueurs en élytres sont animés par le composant. Animations réduites (système ou réglage) : rien
@@ -603,6 +617,13 @@ html[data-surface="tray-menu"] #root {
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
     }
+  }
+  /* Spinner « bloc » : opacité seule, rien ne bouge. Il reste animé avec les animations réduites
+     (système ou réglage), sinon l'attente ne se voit plus. Dans `base` : un !important de calque
+     l'emporte sur le `.reduce-motion *` hors calque. */
+  [data-slot="spinner"] rect {
+    animation-duration: 0.8s !important;
+    animation-iteration-count: infinite !important;
   }
 }
 

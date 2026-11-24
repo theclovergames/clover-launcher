@@ -1,4 +1,5 @@
-import { Boxes, Check, Download, ExternalLink, FileUp, Globe, Layers, LoaderCircle, Palette, Play, Puzzle, SlidersHorizontal, Sun, X } from "lucide-react";
+import { Boxes, Check, Download, ExternalLink, FileUp, Globe, Layers, Palette, Play, Puzzle, SlidersHorizontal, Sun, X } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { type ComponentType, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { acceptsMods, InstancePicker } from "@/components/InstancePicker";
@@ -298,7 +299,7 @@ export function DiscoverScreen(props: Props) {
         aria-label={`${text.install} : ${hit.title}`}
         className={cn(primaryButton, "relative shrink-0")}
       >
-        {busy && <LoaderCircle className="size-4 animate-spin" aria-hidden />}
+        {busy && <Spinner className="size-4" aria-hidden />}
         {busy ? busyText() : text.install}
       </button>
     );
@@ -387,7 +388,7 @@ export function DiscoverScreen(props: Props) {
         />
         {kind === "modpack" && (
           <button type="button" onClick={() => void importFile()} disabled={imported?.busy} className={cn(secondaryButton, "h-10 shrink-0")}>
-            {imported?.busy ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <FileUp className="size-4" aria-hidden />}
+            {imported?.busy ? <Spinner className="size-4" aria-hidden /> : <FileUp className="size-4" aria-hidden />}
             {imported?.busy ? (progress?.modpack ? `${progress.modpack[0]} / ${progress.modpack[1]}` : "Import…") : "Importer un fichier"}
           </button>
         )}
@@ -453,7 +454,7 @@ export function DiscoverScreen(props: Props) {
         ) : !current ? (
           // Frappe en attente (300 ms) ou première recherche : pas de « Aucun résultat » qui clignote.
           <p role="status" className="flex items-center justify-center gap-2 px-3 py-10 text-sm text-muted-foreground">
-            <LoaderCircle className="size-4 animate-spin" aria-hidden />
+            <Spinner className="size-4" aria-hidden />
             Recherche…
           </p>
         ) : hits.length === 0 && !loading ? (
@@ -495,7 +496,7 @@ export function DiscoverScreen(props: Props) {
         {moreError?.key === searchKey && <p role="alert" className="px-3 py-3 text-center text-sm text-error">{moreError.message}</p>}
         {loading && hits.length > 0 && (
           <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
-            <LoaderCircle className="size-4 animate-spin" aria-hidden />
+            <Spinner className="size-4" aria-hidden />
             Recherche…
           </p>
         )}

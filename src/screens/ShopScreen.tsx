@@ -11,7 +11,6 @@ import {
   Gift,
   Heart,
   Layers,
-  LoaderCircle,
   Lock,
   type LucideIcon,
   Megaphone,
@@ -29,6 +28,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import { EmptyState } from "@/components/EmptyState";
@@ -423,7 +423,7 @@ function Purchase(props: { product: ShopProduct; catalog: ShopCatalog; account: 
       <div className="flex flex-col gap-2">
         {product.euro && (
           <button type="button" onClick={() => void payEuros()} disabled={!ready} className={cn(primaryButton, "h-10")}>
-            {busy === "euro" ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <CreditCard className="size-4" aria-hidden />}
+            {busy === "euro" ? <Spinner className="size-4" aria-hidden /> : <CreditCard className="size-4" aria-hidden />}
             Payer {priceLabel(product)}
           </button>
         )}
@@ -431,7 +431,7 @@ function Purchase(props: { product: ShopProduct; catalog: ShopCatalog; account: 
           const { format, Icon } = CURRENCIES[option.currency];
           return (
             <button key={option.currency} type="button" onClick={() => ask(option)} disabled={!ready || option.missing > 0} className={cn(product.euro || index > 0 ? secondaryButton : primaryButton, "h-10")}>
-              {busy === option.currency ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <Icon className="size-4" aria-hidden />}
+              {busy === option.currency ? <Spinner className="size-4" aria-hidden /> : <Icon className="size-4" aria-hidden />}
               Payer {format(option.price)}
             </button>
           );

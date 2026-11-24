@@ -1,4 +1,5 @@
-import { ArrowRight, BookmarkPlus, Check, CircleAlert, CircleCheck, Download, LoaderCircle, MoveHorizontal, Pencil, Plus, Search, Shirt, Trash2, Undo2, X } from "lucide-react";
+import { ArrowRight, BookmarkPlus, Check, CircleAlert, CircleCheck, Download, MoveHorizontal, Pencil, Plus, Search, Shirt, Trash2, Undo2, X } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { CharacterColumn } from "@/components/CharacterColumn";
@@ -263,7 +264,7 @@ function CapeTile({ cape, active, worn, disabled, onSelect }: { cape?: Cape; act
 }
 
 function StatusBanner({ status, onDismiss }: { status: SkinStatus; onDismiss: () => void }) {
-  const Icon = status.kind === "busy" ? LoaderCircle : status.kind === "error" ? CircleAlert : CircleCheck;
+  const Icon = status.kind === "busy" ? Spinner : status.kind === "error" ? CircleAlert : CircleCheck;
   return (
     <div
       role={status.kind === "error" ? "alert" : "status"}
@@ -274,7 +275,7 @@ function StatusBanner({ status, onDismiss }: { status: SkinStatus; onDismiss: ()
         status.kind === "busy" && "border-border bg-card text-muted-foreground",
       )}
     >
-      <Icon className={cn("size-4 shrink-0", status.kind === "busy" && "animate-spin", status.kind === "done" && "text-primary")} aria-hidden />
+      <Icon className={cn("size-4 shrink-0", status.kind === "done" && "text-primary")} aria-hidden />
       <span className="min-w-0 flex-1">{status.message}</span>
       {status.undo && (
         <button type="button" onClick={status.undo} className="flex items-center gap-1 font-semibold underline-offset-2 hover:underline">

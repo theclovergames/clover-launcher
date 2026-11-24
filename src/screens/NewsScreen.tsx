@@ -1,4 +1,5 @@
-import { ArrowUpRight, BookOpen, ClipboardList, Clover, CloudOff, LoaderCircle, Newspaper, Pickaxe, RefreshCw } from "lucide-react";
+import { ArrowUpRight, BookOpen, ClipboardList, Clover, CloudOff, Newspaper, Pickaxe, RefreshCw } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { SegmentBar } from "@/components/SegmentBar";
@@ -99,7 +100,7 @@ export function NewsScreen({
 
         {loading && page === null ? (
           <p className="mt-10 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <LoaderCircle className="size-4 animate-spin" aria-hidden />
+            <Spinner className="size-4" aria-hidden />
             Chargement des actualités…
           </p>
         ) : cards.length === 0 ? (

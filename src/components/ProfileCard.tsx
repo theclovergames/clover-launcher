@@ -1,4 +1,5 @@
-import { Check, Copy, Download, Link2, LoaderCircle } from "lucide-react";
+import { Check, Copy, Download, Link2 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useEffect, useState } from "react";
 
 import launcherLogo from "@/assets/brand/launcher.png";
@@ -380,7 +381,7 @@ export function ProfileCardDialog({ data, link, onOpenChange, onSave }: Props) {
             ) : card && "error" in card ? (
               <p className="px-6 text-center text-sm text-[#ffb3b0]">{card.error}</p>
             ) : (
-              <LoaderCircle className="size-6 animate-spin text-muted-foreground" aria-label="Création de la carte" />
+              <Spinner className="size-6 text-muted-foreground" aria-label="Création de la carte" />
             )}
           </div>
           <div role="radiogroup" aria-label="Fond de la carte" className="flex items-center gap-1.5">

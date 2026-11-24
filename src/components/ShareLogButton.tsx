@@ -1,5 +1,6 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { ExternalLink, LoaderCircle, Share2 } from "lucide-react";
+import { ExternalLink, Share2 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useState } from "react";
 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -71,7 +72,7 @@ export function ShareLogButton({ log, disabled, services = api }: { log: () => s
                   Annuler
                 </button>
                 <button type="button" onClick={() => void send()} disabled={step?.kind === "sending"} className={primaryButton}>
-                  {step?.kind === "sending" ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <Share2 className="size-4" aria-hidden />}
+                  {step?.kind === "sending" ? <Spinner className="size-4" aria-hidden /> : <Share2 className="size-4" aria-hidden />}
                   {step?.kind === "sending" ? "Publication…" : "Publier le journal"}
                 </button>
               </DialogFooter>

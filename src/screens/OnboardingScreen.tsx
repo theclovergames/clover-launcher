@@ -1,4 +1,5 @@
-import { ArrowRight, Check, Copy, Cpu, FolderInput, LoaderCircle, Puzzle, Star, Users } from "lucide-react";
+import { ArrowRight, Check, Copy, Cpu, FolderInput, Puzzle, Star, Users } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useState, type ReactNode } from "react";
 
 import { HeroBackdrop } from "@/components/Backdrop";
@@ -413,7 +414,7 @@ function ImportSearch({ scan }: { scan: ImportScan }) {
                     </span>
                   </span>
                   {reading ? (
-                    <LoaderCircle className="size-4 shrink-0 animate-spin text-accent" aria-label="Lecture en cours" />
+                    <Spinner className="size-4 shrink-0 text-accent" aria-label="Lecture en cours" />
                   ) : (
                     <Check className="size-4 shrink-0 animate-in text-primary duration-200 zoom-in-50" strokeWidth={3} aria-label="Lu" />
                   )}
@@ -530,7 +531,14 @@ function ImportDetails({ instance, mode, onMode, choices, onChoice, importing, i
         </div>
         {busy ? (
           <div className="flex w-40 shrink-0 items-center gap-2 pt-1" aria-live="polite">
-            <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-secondary">
+            <div
+              role="progressbar"
+              aria-label={`Import de ${instance.name}`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(importing!.ratio * 100)}
+              className="relative h-2 flex-1 overflow-hidden rounded-full bg-secondary"
+            >
               {/* Échelle animée par le compositeur : glisse entre deux évènements sans relayout. */}
               <div className="h-full origin-left bg-primary transition-transform duration-300 ease-out" style={{ transform: `scaleX(${importing!.ratio})` }} />
               {/* Avant la copie (Fabric, dossier) et après (dépendances), le ratio ne bouge pas : la barre reste vivante. */}
