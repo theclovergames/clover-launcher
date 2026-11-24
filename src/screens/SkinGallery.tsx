@@ -1,4 +1,5 @@
-import { Check, LoaderCircle, Plus, Search, Users } from "lucide-react";
+import { Check, Plus, Search, Users } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CapeFront } from "@/components/SkinFront";
@@ -268,7 +269,7 @@ function SkinsView({ trial, onTrial, onSave }: Pick<Props, "trial" | "onTrial" |
             ))}
           </ul>
           {results && results.skins.length === 0 && !loading && <p className="text-sm text-muted-foreground">Aucun skin trouvé.</p>}
-          {loading && <LoaderCircle className="size-5 animate-spin self-center text-muted-foreground" aria-label="Chargement" />}
+          {loading && <Spinner className="size-5 self-center text-muted-foreground" aria-label="Chargement" />}
           {results?.more && !loading && (
             <button type="button" onClick={() => void run(input, order, results.skins.length)} className={cn(secondaryButton, "self-center")}>
               Voir plus
@@ -318,7 +319,7 @@ function CapesView({ trial, onTrial, owned, activeCapeId }: Pick<Props, "trial" 
       </p>
     );
   }
-  if (!capes) return <LoaderCircle className="size-5 animate-spin text-muted-foreground" aria-label="Chargement" />;
+  if (!capes) return <Spinner className="size-5 text-muted-foreground" aria-label="Chargement" />;
 
   const text = selected && capeText(selected.id, selected.title);
   const availability = text && capeAvailability(text.status);
@@ -348,7 +349,7 @@ function CapesView({ trial, onTrial, owned, activeCapeId }: Pick<Props, "trial" 
                 {wearers?.id === selected.id && wearers.data && <span className="ml-1.5 font-normal text-muted-foreground">{shortCount(wearers.data.count)} joueurs</span>}
               </p>
               {wearers?.id === selected.id && wearers.error && <p className="text-xs text-muted-foreground">{wearers.error}</p>}
-              {wearers?.id === selected.id && !wearers.data && !wearers.error && <LoaderCircle className="size-4 animate-spin text-muted-foreground" aria-label="Chargement" />}
+              {wearers?.id === selected.id && !wearers.data && !wearers.error && <Spinner className="size-4 text-muted-foreground" aria-label="Chargement" />}
               {wearers?.id === selected.id && wearers.data && (
                 <ul className="flex flex-wrap gap-1.5">
                   {wearers.data.players.map((player) => (

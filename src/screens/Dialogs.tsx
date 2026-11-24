@@ -1,4 +1,5 @@
-import { ArrowRight, Check, Circle, Clock, Coins, Copy, Download, Flag, FolderOpen, LoaderCircle, PenLine, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowRight, Check, Circle, Clock, Coins, Copy, Download, Flag, FolderOpen, PenLine, RotateCcw, Trash2, X } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useEffect, useRef, useState } from "react";
 
 import { ModpackVersionSelect } from "@/components/ModpackVersionSelect";
@@ -142,7 +143,7 @@ const NAME_CHARS = /^[A-Za-z0-9_]*$/;
 const COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 
 type RuleState = "pending" | "checking" | "ok" | "error";
-const RULE_ICON = { pending: Circle, checking: LoaderCircle, ok: Check, error: X };
+const RULE_ICON = { pending: Circle, checking: Spinner, ok: Check, error: X };
 const RULE_TONE = { pending: "text-muted-foreground", checking: "text-muted-foreground", ok: "text-primary", error: "text-destructive" };
 
 /** Changement de pseudo Java du compte actif, depuis le menu du compte. */
@@ -291,7 +292,7 @@ export function NameDialog(props: {
                 const Icon = RULE_ICON[state];
                 return (
                   <li key={index} className={cn("flex items-center gap-2", RULE_TONE[state])}>
-                    <Icon className={cn("size-3.5 shrink-0", state === "checking" && "animate-spin")} aria-hidden />
+                    <Icon className="size-3.5 shrink-0" aria-hidden />
                     {text}
                   </li>
                 );
@@ -309,7 +310,7 @@ export function NameDialog(props: {
               Annuler
             </button>
             <button type="submit" disabled={!canSubmit} className={primaryButton}>
-              {saving ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <PenLine className="size-4" aria-hidden />}
+              {saving ? <Spinner className="size-4" aria-hidden /> : <PenLine className="size-4" aria-hidden />}
               Changer de pseudo
             </button>
           </DialogFooter>
@@ -528,7 +529,7 @@ export function ReportDialog(props: {
               Annuler
             </button>
             <button type="submit" disabled={!canSubmit} className={cn(primaryButton, "bg-destructive text-white")}>
-              {saving ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <Flag className="size-4" aria-hidden />}
+              {saving ? <Spinner className="size-4" aria-hidden /> : <Flag className="size-4" aria-hidden />}
               Signaler
             </button>
           </DialogFooter>

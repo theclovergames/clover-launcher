@@ -1,4 +1,5 @@
-import { Download, ExternalLink, LoaderCircle, RotateCcw } from "lucide-react";
+import { Download, ExternalLink, RotateCcw } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { LoaderBadges, loaderLabel } from "@/components/LoaderBadges";
@@ -93,7 +94,7 @@ export function ModPage({ project, name, icon, version, summary, notice, actions
         <section aria-label="Images" aria-busy={state.kind === "loading"}>
           {state.kind === "loading" && (
             <p className="flex aspect-video items-center justify-center gap-2 rounded-lg border border-border bg-sunken text-sm text-muted-foreground">
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              <Spinner className="size-4" aria-hidden />
               Chargement de la page…
             </p>
           )}

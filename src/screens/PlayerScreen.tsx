@@ -1,4 +1,5 @@
-import { ArrowUpRight, Check, CircleAlert, Clock, LoaderCircle, Play, RotateCcw, Send, UserMinus, UserPlus, UserRoundX, X } from "lucide-react";
+import { ArrowUpRight, Check, CircleAlert, Clock, Play, RotateCcw, Send, UserMinus, UserPlus, UserRoundX, X } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useCallback, useEffect, useState } from "react";
 
 import { CharacterColumn } from "@/components/CharacterColumn";
@@ -63,7 +64,7 @@ function FriendActions(props: {
   onRemove: () => void;
 }) {
   const { player, relation, busy } = props;
-  const spinner = busy && <LoaderCircle className="size-4 animate-spin" aria-hidden />;
+  const spinner = busy && <Spinner className="size-4" aria-hidden />;
   if (relation === "friend") {
     return (
       <>

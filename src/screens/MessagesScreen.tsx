@@ -15,7 +15,6 @@ import {
   Flag,
   Gamepad2,
   Globe,
-  LoaderCircle,
   type LucideIcon,
   Monitor,
   PenLine,
@@ -31,6 +30,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { type ComponentType, type FormEvent, type KeyboardEvent, type ReactNode, type UIEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { EmojiPanel, EmojiPicker } from "@/components/EmojiPicker";
@@ -457,7 +457,7 @@ function AddFriend({ onSend }: { onSend: (name: string) => Promise<boolean> }) {
           </label>
           <p className="text-[11px] leading-snug text-muted-foreground">Le joueur doit être déjà venu sur Clover Games. Il reçoit ta demande en jeu, sur le site et dans le launcher.</p>
           <button type="submit" disabled={!valid || sending} className={primaryButton}>
-            {sending ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <UserPlus className="size-4" aria-hidden />}
+            {sending ? <Spinner className="size-4" aria-hidden /> : <UserPlus className="size-4" aria-hidden />}
             Envoyer la demande
           </button>
         </form>
@@ -875,7 +875,7 @@ function MessageRow(props: {
                 </>
               ) : (
                 <span className="flex items-center gap-1">
-                  <LoaderCircle className="size-3 animate-spin" aria-hidden />
+                  <Spinner className="size-3" aria-hidden />
                   Envoi…
                 </span>
               )
@@ -1420,7 +1420,7 @@ function ThreadPane(props: {
             {loaded.hasMore && (
               <div className="flex justify-center py-2">
                 <button type="button" onClick={() => void loadOlder()} disabled={olderLoading} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground">
-                  {olderLoading && <LoaderCircle className="size-3.5 animate-spin" aria-hidden />}
+                  {olderLoading && <Spinner className="size-3.5" aria-hidden />}
                   {olderLoading ? "Chargement…" : "Messages plus anciens"}
                 </button>
               </div>
@@ -1537,7 +1537,7 @@ function ThreadPane(props: {
               title={editing ? "Enregistrer" : "Envoyer"}
               className="grid size-9 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground transition-[filter,opacity] enabled:hover:brightness-110 disabled:opacity-40"
             >
-              {saving ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <SendHorizontal className="size-4" aria-hidden />}
+              {saving ? <Spinner className="size-4" aria-hidden /> : <SendHorizontal className="size-4" aria-hidden />}
             </button>
           </div>
           <p id="messages-composer-help" className={cn("px-1 text-[11px]", composeError || tooLong ? "text-destructive" : "text-muted-foreground")} role={composeError ? "alert" : undefined}>
@@ -1796,7 +1796,7 @@ export function MessagesScreen({ friend, onOpen, inbox, inboxError, refreshInbox
       ) : (
         <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 px-10 text-center">
           {friend && !inbox ? (
-            <LoaderCircle className="size-6 animate-spin text-muted-foreground" aria-label="Chargement" />
+            <Spinner className="size-6 text-muted-foreground" aria-label="Chargement" />
           ) : (
             <>
               <Send className="size-10 text-muted-foreground/60" strokeWidth={1.75} aria-hidden />

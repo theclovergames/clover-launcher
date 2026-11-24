@@ -1,4 +1,5 @@
-import { CloudOff, LoaderCircle } from "lucide-react";
+import { CloudOff } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { type UIEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import poweredByGiphy from "@/assets/brand/powered-by-giphy.png";
@@ -112,7 +113,7 @@ export function GifPicker({ search, onPick, disabled }: { search: (query: string
           )}
           {loading && (
             <p className="flex justify-center py-3 text-muted-foreground">
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              <Spinner className="size-4" aria-hidden />
               <span className="sr-only">Chargement des GIF…</span>
             </p>
           )}

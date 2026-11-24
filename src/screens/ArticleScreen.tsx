@@ -1,4 +1,5 @@
-import { ArrowUpRight, LoaderCircle } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useEffect, useMemo, useState } from "react";
 
 import { Page } from "@/components/Page";
@@ -55,7 +56,7 @@ export function ArticleScreen({ target, onOpenLink, services = api }: { target: 
     >
       {!current ? (
         <p className="mt-16 flex items-center justify-center gap-2 text-sm text-muted-foreground" aria-live="polite">
-          <LoaderCircle className="size-4 animate-spin" aria-hidden />
+          <Spinner className="size-4" aria-hidden />
           {target.source === "minecraft" ? "Chargement de la note de version…" : target.source === "changelog" ? "Chargement du changelog…" : "Chargement de l'article…"}
         </p>
       ) : current.error ? (
