@@ -18,8 +18,8 @@ jobs:
       run:
         working-directory: mod
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: 25
@@ -29,7 +29,7 @@ jobs:
         run: |
           cd ../src-tauri/client-mods
           for jar in *.jar; do sha512sum "$jar" | tee "$jar.sha512"; done
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: cloverclient
           path: src-tauri/client-mods/*

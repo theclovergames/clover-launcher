@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifierSignature } from "./updater-signature.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CHANNEL = process.env.CLOVER_CHANNEL ?? "prod";
@@ -40,6 +41,14 @@ async function version() {
   const found = cargo.match(/^version\s*=\s*"([^"]+)"/m);
   if (!found) throw new Error("Version introuvable dans src-tauri/Cargo.toml.");
   return found[1];
+}
+
+/** Clé publique de l'updater embarquée dans le launcher : celle que les joueurs utiliseront. */
+async function pubkey() {
+  const conf = JSON.parse(await readFile(join(ROOT, "src-tauri", "tauri.conf.json"), "utf8"));
+  const cle = conf.plugins?.updater?.pubkey;
+  if (!cle) throw new Error("Clé publique de l'updater introuvable dans src-tauri/tauri.conf.json.");
+  return cle;
 }
 
 async function* walk(dir) {
@@ -70,6 +79,7 @@ async function collect(target, out) {
 
 async function index(dir) {
   const v = await version();
+  const cle = await pubkey();
   const latest = { version: v, pub_date: new Date().toISOString(), platforms: {} };
   const downloads = { schema: 1, version: v, date: latest.pub_date, files: [] };
   for (const pkg of PACKAGES) {
@@ -82,6 +92,12 @@ async function index(dir) {
     if (pkg.platforms) {
       const signature = (await readFile(`${file}.sig`, "utf8").catch(() => "")).trim();
       if (!signature) throw new Error(`Signature d'updater manquante pour ${name}.`);
+      // Même contrôle que le launcher installé : jamais d'index vers un paquet qu'il rejetterait.
+      try {
+        verifierSignature(bytes, signature, cle);
+      } catch (error) {
+        throw new Error(`${name} : ${error.message}`);
+      }
       for (const platform of pkg.platforms) latest.platforms[platform] = { signature, url };
     }
     if (pkg.download) {
