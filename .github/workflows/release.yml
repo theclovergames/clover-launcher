@@ -4,8 +4,12 @@
 # downloads.json (page /launcher du site). Canal `prod`, ou `beta` pour une préversion
 # (`v0.4.0-beta.1`) : seuls les testeurs du canal bêta la reçoivent, sans paquet Microsoft Store.
 #
-# Secrets : TAURI_SIGNING_PRIVATE_KEY (Sécurités/clover-launcher-updater.key, sans mot de passe),
-# R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY (jeton limité au bucket clover-launcher).
+# Secrets : TAURI_SIGNING_PRIVATE_KEY (Sécurités/clover-launcher-updater.key) et son mot de passe
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD (vide tant que la clé n'en a pas), R2_ACCOUNT_ID, R2_ACCESS_KEY_ID,
+# R2_SECRET_ACCESS_KEY (jeton limité au bucket clover-launcher). Procédure : scripts/CLE-UPDATER.md.
+#
+# Garde-fous : le tag doit pointer un commit de main, et l'environnement GitHub production
+# (relecteur obligatoire) doit approuver avant toute construction signée et avant l'envoi sur R2.
 name: Release
 
 on:
@@ -23,8 +27,26 @@ jobs:
   checks:
     uses: ./.github/workflows/ci.yml
 
-  build:
+  # Barrière humaine et contrôle de provenance, avant tout usage de la clé de signature.
+  autorisation:
     needs: checks
+    runs-on: ubuntu-22.04
+    environment: production
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Le tag pointe un commit de main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Le tag $GITHUB_REF_NAME ne pointe pas un commit de main : release refusée."
+            exit 1
+          fi
+
+  build:
+    needs: autorisation
     strategy:
       fail-fast: true
       matrix:
@@ -39,7 +61,7 @@ jobs:
             args: --bundles appimage,deb,rpm
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Tag, Cargo.toml et package.json à la même version
         shell: bash
@@ -55,7 +77,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
           cache: npm
@@ -73,17 +95,13 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.targets }}
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: src-tauri
-
       - run: npm ci
 
       - name: Construction et signature
         run: npm run tauri build -- ${{ matrix.args }}
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - run: node scripts/release.mjs collect src-tauri/target out
 
@@ -92,14 +110,14 @@ jobs:
         if: runner.os == 'Windows' && !contains(github.ref_name, '-')
         run: node scripts/msix.mjs msix
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: runner.os == 'Windows' && !contains(github.ref_name, '-')
         with:
           name: msix-store
           path: msix/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: paquets-${{ runner.os }}
           path: out/
@@ -108,14 +126,15 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    environment: production
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           path: out
           pattern: paquets-*
